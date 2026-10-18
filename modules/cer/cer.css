@@ -302,3 +302,18 @@ table.cc-tbl{min-width:0}
 @media (max-width:1100px){ .cc-grid{grid-template-columns:1fr} .cd-bar.cc-bar{grid-template-columns:repeat(2,minmax(0,1fr))} }
 @media (max-width:760px){ .cd-bar.cc-bar, .cd-entry.cc-entry{grid-template-columns:1fr} }
 .cc-grid table.af-reg{min-width:560px} .cc-grid .af-reg td, .cc-grid .af-reg th{padding:8px} .cc-grid .af-reg .input.cc-al{width:105px}
+/* ---------- Verification ---------- */
+table.vf-tbl{min-width:760px}
+.vf-tbl td small{display:block; color:var(--muted)}
+.af-reg tr.vf-sub td:first-child{padding-left:36px; color:var(--muted)}
+.vf-tbl .vf-grp{border-left:1px solid var(--line)}
+.vf-rc{width:130px; margin-left:auto}
+table.vf-find{min-width:980px}
+.vf-find td{vertical-align:middle}
+.vf-find .vf-dec{width:130px}
+.vf-find .vf-rem{min-width:220px}
+a.vf-area{text-decoration:none}
+.vf-status{padding:16px 20px; display:flex; flex-wrap:wrap; align-items:center; gap:14px}
+.vf-status > div:first-child{display:flex; flex-direction:column; gap:3px}
+.vf-status > div:first-child span{font-size:13.5px; color:var(--muted)}
+.vf-status .btn-row{margin-left:auto}

@@ -68,7 +68,7 @@ function rawUnused(b, date) {
 const unusedRanges = (b) => (b.status === 'lost' ? [] : rawUnused(b));
 function usedOf(b) { return b.qty - countRanges(rawUnused(b)); }
 // Unused numbers below the last number used: skipped ORs, for the auditor to confirm at the Physical Check.
-function skippedOf(b) {
+export function skippedOf(b) {
   const un = rawUnused(b); if (!un.length || usedOf(b) === 0) return [];
   let last = b.to;   // highest used number
   for (const [a, z] of un.slice().sort((x, y) => y[0] - x[0])) { if (z === last) last = a - 1; else break; }

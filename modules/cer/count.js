@@ -11,7 +11,7 @@ import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
 import { loadForms, unusedFormsOf, exportXlsx, registerOf } from './forms.js';
-import { figuresOf, fundsOf } from './collections.js';
+import { figuresOf, fundsOf, kindOfForm } from './collections.js';
 
 const canCount = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
 const BILLS = [1000, 500, 200, 100, 50, 20];
@@ -23,13 +23,22 @@ const BEG_CA = ['ca', 'sdo', 'pcf'];
 const DRAFT = { key: '', data: null };   // unsaved count survives a screen refresh
 
 // Balance per books of each accountability, as of the cash count.
-function booksOf(f, o, exam, audit, advs, liqs) {
+export function booksOf(refs, f, o, exam, audit, advs, liqs) {
   const out = [];
   const fns = exam.functions || [];
   if (fns.includes('collecting') || fns.includes('liquidating') || f.ors.some((x) => x.officerId === o.id)) {
-    const fig = figuresOf(f, o, fundsOf(f, audit.lguId), audit.countDate);
-    const bal = r2(fig.funds.reduce((n, fd) => n + fig.chains[fd].pend.end, 0));
-    out.push({ key: 'col', label: fns.includes('liquidating') && !fns.includes('collecting') ? 'Collections (Liquidating)' : 'Collections', books: bal, note: 'Undeposited collections, from Collections & Deposits' });
+    const lgu = refs.lgu[audit.lguId];
+    const fig = figuresOf(f, o, fundsOf(f, audit.lguId), audit.countDate, lgu);
+    const forms = exam.forms || [];
+    // One column per report type: barangays AF 51 (SCD) and CTC (SCR); LGU and PLGU one Collections (RCD).
+    fig.kinds.forEach((kind) => {
+      const chains = Object.values(fig.chains).filter((c) => c.kind === kind);
+      const used = forms.some((x) => kindOfForm(lgu, x) === kind) || chains.some((c) => c.figs.length || c.pend.nOrs || c.pend.dep || c.pend.beg);
+      if (!used && fig.kinds.length > 1) return;
+      const bal = r2(chains.reduce((n, c) => n + c.pend.end, 0));
+      const label = kind === 'SCD' ? 'AF 51 (SCD)' : kind === 'SCR' ? 'CTC (SCR)' : fns.includes('liquidating') && !fns.includes('collecting') ? 'Collections (Liquidating)' : 'Collections (RCD)';
+      out.push({ key: 'col-' + kind, kind, label, books: bal, note: kind === 'SCR' ? 'Unremitted CTC, from Collections & Deposits' : 'Undeposited collections, from Collections & Deposits' });
+    });
   }
   const mine = advs.filter((a) => a.officerId === o.id);
   if (fns.some((k) => ['disbursing', 'special', 'pettycash'].includes(k)) || mine.length) {
@@ -67,14 +76,14 @@ export async function countView(ctx) {
   const saved = counts0.map(flat).find((c) => c.id === exam.id) || null;
   if (DRAFT.key !== exam.id) DRAFT.key = exam.id, DRAFT.data = JSON.parse(JSON.stringify({ bills: {}, coins: '', items: [], split: {}, ...(saved || {}) }));
   const d = DRAFT.data;
-  const books = booksOf(f, o, exam, audit, advs, liqs);
+  const books = booksOf(refs, f, o, exam, audit, advs, liqs);
   const forms = unusedFormsOf(f, o.id, exam, audit.countDate);
   const enc = canCount(refs);
   const dis = enc ? '' : 'disabled';
   const caChecks = advs.filter((a) => a.officerId === o.id).map((a) => a.checkNo);
 
   const billRows = BILLS.map((v) => `<tr><td>₱ ${v.toLocaleString('en-US')}</td><td class="r"><label class="sr-only" for="b${v}">₱${v} pieces</label><input class="input af-sm r cc-pc" id="b${v}" data-bill="${v}" inputmode="numeric" value="${esc(d.bills[v] || '')}" placeholder="0" ${dis}></td><td class="r" data-amt="${v}"></td></tr>`).join('');
-  const itemRow = (it, i) => `<tr data-it="${i}"><td>${esc(it.particulars)}</td><td>${it.appliesTo === 'col' ? 'Collections' : 'Cash advance'}</td><td class="r">${money(it.presented)}</td>
+  const itemRow = (it, i) => `<tr data-it="${i}"><td>${esc(it.particulars)}</td><td>${esc(books.find((b) => b.key === it.appliesTo)?.label || (it.appliesTo === 'ca' ? 'Cash advance' : 'Collections'))}</td><td class="r">${money(it.presented)}</td>
       <td class="r"><label class="sr-only" for="al${i}">Allowed: ${esc(it.particulars)}</label><input class="input af-sm r cc-al" id="al${i}" inputmode="decimal" value="${esc(money(it.allowed ?? it.presented))}" ${dis}></td><td class="r cc-dis"></td>
       <td class="r">${enc ? `<button class="btn sm" type="button" data-rmit="${i}" aria-label="Remove ${esc(it.particulars)}">Remove</button>` : ''}</td></tr>`;
   const body = `${hello}${top}
@@ -135,10 +144,10 @@ export async function countView(ctx) {
   return { crumb, body, wire: () => { wireTop(); wireCount({ rerender: ctx.rerender, refs, audit, exam, o, d, books, forms, saved, enc, lgu: refs.lgu[audit.lguId] }); } };
 }
 
-function compute(d, books) {
+export function compute(d, books) {
   const cash = r2(BILLS.reduce((n, v) => n + v * (parseInt(d.bills[v], 10) || 0), 0) + (num(d.coins) || 0));
   const allowed = (it) => { const a = num(it.allowed ?? it.presented); return a === null ? 0 : a; };
-  const ai = {}; books.forEach((b) => { ai[b.key] = r2(d.items.filter((it) => (it.appliesTo === b.key) || (!books.some((x) => x.key === it.appliesTo) && b === books[0])).reduce((n, it) => n + allowed(it), 0)); });
+  const ai = {}; books.forEach((b) => { ai[b.key] = r2(d.items.filter((it) => (it.appliesTo === b.key) || (!books.some((x) => x.key === it.appliesTo) && b === (it.appliesTo === 'ca' ? books[books.length - 1] : books[0]))).reduce((n, it) => n + allowed(it), 0)); });
   const typed = (k) => d.split[k] !== undefined && d.split[k] !== null && d.split[k] !== '';
   const sp = {}; let left = cash;
   books.filter((b) => typed(b.key)).forEach((b) => { sp[b.key] = num(d.split[b.key]) || 0; left = r2(left - sp[b.key]); });
@@ -214,7 +223,7 @@ function wireCount(c) {
     exportXlsx(`Cash Count ${o.name} ${audit.countDate}.xlsx`, 'Cash Count', [
       ...BILLS.map((v) => ({ Part: 'Cash on hand', Item: `₱${v}`, Pieces: parseInt(d.bills[v], 10) || 0, Amount: v * (parseInt(d.bills[v], 10) || 0) })),
       { Part: 'Cash on hand', Item: 'Coins', Pieces: '', Amount: num(d.coins) || 0 }, { Part: 'Cash on hand', Item: 'Total', Pieces: '', Amount: k.cash },
-      ...d.items.map((it) => ({ Part: 'Cash item', Item: it.particulars, Pieces: '', Amount: +it.presented || 0, Allowed: num(it.allowed ?? it.presented) ?? 0, 'Applies to': it.appliesTo === 'col' ? 'Collections' : 'Cash advance' })),
+      ...d.items.map((it) => ({ Part: 'Cash item', Item: it.particulars, Pieces: '', Amount: +it.presented || 0, Allowed: num(it.allowed ?? it.presented) ?? 0, 'Applies to': books.find((b) => b.key === it.appliesTo)?.label || it.appliesTo })),
       ...c.forms.map((x) => ({ Part: 'Unused forms', Item: `${x.name} ${x.from}–${x.to}`, Pieces: x.qty, Amount: '', Allowed: '', 'Applies to': x.text })),
       ...books.map((b) => ({ Part: 'Split', Item: b.label, Pieces: '', Amount: b.books, Allowed: k.inv[b.key], 'Applies to': `Shortage/(Overage) ${money(k.sh[b.key])}` }))]);
   };

@@ -1,6 +1,6 @@
 // Cash Examination Report module (AMS) – practice copy.
-// Built so far: Audit Setup, Accountable Forms, Collections & Deposits, Cash Advances, Bank Statements, Cash Count.
-// Verification and Reports come next.
+// Built so far: Audit Setup, Accountable Forms, Collections & Deposits, Cash Advances, Bank Statements, Cash Count, Verification.
+// Reports come next.
 //
 // Records:
 //   cer_officers  one accountable officer of an auditee           { lguId, name, designation }
@@ -91,7 +91,7 @@ function balanceRows(st) {
   return rows;
 }
 // Bond checks, worded for the auditor. Each: { kind: 'bad' | 'warn', text }.
-function bondChecks(st) {
+export function bondChecks(st) {
   const b = st.bond || {}, out = [];
   const amt = num(b.amount), max = num(b.maxCash);
   if (!b.amount && !b.riskNo && !b.from && !b.to) out.push({ kind: 'warn', text: '<strong>No fidelity bond entered.</strong> Enter the bond details, or note that the officer has no bond.' });
@@ -113,7 +113,7 @@ function navItems() {
     { key: 'banks', label: 'Bank Statements', icon: 'building', href: '#/cer/banks' },
     { section: true, label: 'EXAMINATION' },
     { key: 'count', label: 'Cash Count', icon: 'grid', href: '#/cer/count' },
-    { key: 'verify', label: 'Verification', icon: 'book', soon: true },
+    { key: 'verify', label: 'Verification', icon: 'book', href: '#/cer/verify' },
     { key: 'reports', label: 'Reports', icon: 'overview', soon: true }];
 }
 
@@ -140,11 +140,11 @@ export async function render(ctx) {
   installGuard();
   const me = refs.me ? refs.me.data : { name: ctx.session.name || ctx.session.email };
   const roleText = [refs.me?.data.position, roleLine(refs)].filter(Boolean).join(' · ');
-  if (parts[0] === 'forms' || parts[0] === 'collections' || parts[0] === 'advances' || parts[0] === 'banks' || parts[0] === 'count') {
+  if (parts[0] === 'forms' || parts[0] === 'collections' || parts[0] === 'advances' || parts[0] === 'banks' || parts[0] === 'count' || parts[0] === 'verify') {
     // Accountable Forms (Forms Register, Accountable Officer view, RAAF Reconciliation) and Collections & Deposits.
     DRAFT = null;
     const { body, crumb, wire } = parts[0] === 'forms' ? await (await import('./forms.js')).formsView(ctx)
-      : parts[0] === 'collections' ? await (await import('./collections.js')).collectionsView(ctx) : parts[0] === 'advances' ? await (await import('./advances.js')).advancesView(ctx) : parts[0] === 'banks' ? await (await import('./banks.js')).banksView(ctx) : await (await import('./count.js')).countView(ctx);
+      : parts[0] === 'collections' ? await (await import('./collections.js')).collectionsView(ctx) : parts[0] === 'advances' ? await (await import('./advances.js')).advancesView(ctx) : parts[0] === 'banks' ? await (await import('./banks.js')).banksView(ctx) : parts[0] === 'count' ? await (await import('./count.js')).countView(ctx) : await (await import('./verify.js')).verifyView(ctx);
     app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: parts[0], crumb, me, roleText, body });
     $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
     if (wire) wire();

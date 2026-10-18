@@ -64,7 +64,7 @@ export async function banksView(ctx) {
   const otherAccts = accounts.filter((x) => x.id !== acct.id).map((x) => `${audit.id}|${x.id}`);
   const foundElsewhere = new Set(recs0.map(flat).filter((r) => otherAccts.includes(r.id)).flatMap((r) => Object.keys(r.found || {})));
   const items = [];
-  reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund).forEach((r) => (r.deposits || []).forEach((d) => {
+  reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => (r.deposits || []).forEach((d) => {
     const key = `dep|${r.id}|${d.date}|${d.ref}|${d.amount}`;
     items.push({ key, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0,
       from: `${r.pending ? 'Not yet reported' : `${r.kind || 'RCD'} No. ${r.no}`} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });
