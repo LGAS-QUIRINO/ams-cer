@@ -8,7 +8,7 @@
 const CLIENT_ID = 'PASTE-THE-CLIENT-ID-HERE.apps.googleusercontent.com';   // from Google Cloud → Credentials
 const FIRST_ADMIN_EMAIL = 'paste.the.admin.gmail@gmail.com';               // the Gmail that will be the first Admin
 
-const TABLES = ['users', 'teams', 'lgus', 'cer_officers', 'cer_audits', 'cer_exams', 'cer_booklets', 'cer_formcheck', 'cer_raaf', 'cer_settings', 'cer_ors', 'cer_reports', 'cer_cashadv', 'cer_liquid'];
+const TABLES = ['users', 'teams', 'lgus', 'cer_officers', 'cer_audits', 'cer_exams', 'cer_booklets', 'cer_formcheck', 'cer_raaf', 'cer_settings', 'cer_ors', 'cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_bankrec'];
 const ADMIN_TABLES = { users: true, teams: true, lgus: true };            // only the Admin may change these
 // CER Audit Setup: auditors only (Team Member, ATL, SA, Admin). Team Staff (JO) and OSA Staff may view but not change it.
 const AUDITOR_TABLES = { cer_officers: true, cer_audits: true, cer_exams: true, cer_formcheck: true };

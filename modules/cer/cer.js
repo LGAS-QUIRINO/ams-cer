@@ -1,6 +1,6 @@
 // Cash Examination Report module (AMS) – practice copy.
-// Built so far: Audit Setup, Accountable Forms, Collections & Deposits, Cash Advances.
-// Bank Statements, Cash Count, Verification and Reports come next.
+// Built so far: Audit Setup, Accountable Forms, Collections & Deposits, Cash Advances, Bank Statements.
+// Cash Count, Verification and Reports come next.
 //
 // Records:
 //   cer_officers  one accountable officer of an auditee           { lguId, name, designation }
@@ -110,7 +110,7 @@ function navItems() {
     { key: 'forms', label: 'Accountable Forms', icon: 'library', href: '#/cer/forms' },
     { key: 'collections', label: 'Collections & Deposits', icon: 'inbox', href: '#/cer/collections' },
     { key: 'advances', label: 'Cash Advances', icon: 'swap', href: '#/cer/advances' },
-    { key: 'bank', label: 'Bank Statements', icon: 'building', soon: true },
+    { key: 'banks', label: 'Bank Statements', icon: 'building', href: '#/cer/banks' },
     { section: true, label: 'EXAMINATION' },
     { key: 'count', label: 'Cash Count', icon: 'grid', soon: true },
     { key: 'verify', label: 'Verification', icon: 'book', soon: true },
@@ -140,11 +140,11 @@ export async function render(ctx) {
   installGuard();
   const me = refs.me ? refs.me.data : { name: ctx.session.name || ctx.session.email };
   const roleText = [refs.me?.data.position, roleLine(refs)].filter(Boolean).join(' · ');
-  if (parts[0] === 'forms' || parts[0] === 'collections' || parts[0] === 'advances') {
+  if (parts[0] === 'forms' || parts[0] === 'collections' || parts[0] === 'advances' || parts[0] === 'banks') {
     // Accountable Forms (Forms Register, Accountable Officer view, RAAF Reconciliation) and Collections & Deposits.
     DRAFT = null;
     const { body, crumb, wire } = parts[0] === 'forms' ? await (await import('./forms.js')).formsView(ctx)
-      : parts[0] === 'collections' ? await (await import('./collections.js')).collectionsView(ctx) : await (await import('./advances.js')).advancesView(ctx);
+      : parts[0] === 'collections' ? await (await import('./collections.js')).collectionsView(ctx) : parts[0] === 'advances' ? await (await import('./advances.js')).advancesView(ctx) : await (await import('./banks.js')).banksView(ctx);
     app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: parts[0], crumb, me, roleText, body });
     $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
     if (wire) wire();

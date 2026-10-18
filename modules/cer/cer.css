@@ -270,3 +270,16 @@ small.cd-issues{display:block; color:#8a4b00; margin-top:4px; max-width:340px}
 @media (max-width:1100px){ .cd-entry.ca-entry, .cd-entry.lq-entry{grid-template-columns:repeat(2,minmax(0,1fr))} }
 @media (max-width:760px){ .cd-entry.ca-entry, .cd-entry.lq-entry{grid-template-columns:1fr} }
 .af-reg tr.cd-begrow td{background:#f8fafe}
+/* ---------- Bank Statements ---------- */
+.cd-bar.bk-bar{grid-template-columns:1.1fr 1.4fr .9fr}
+.cd-entry.bk-entry{display:grid; grid-template-columns:1fr 1.3fr 2fr 1fr auto; gap:12px; align-items:end}
+.bk-items td{vertical-align:middle}
+.bk-items .bk-chk{width:20px; height:20px}
+.bk-items .input.bk-bd{width:150px}
+.cd-sum.bk-rc{max-width:none}
+.bk-book{align-items:center}
+.bk-book .input{width:170px; padding:6px 9px}
+details.cd-acc > summary .pill{margin-left:auto}
+details.cd-acc > summary .pill + ::after{margin-left:12px}
+@media (max-width:1100px){ .cd-bar.bk-bar, .cd-entry.bk-entry{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media (max-width:760px){ .cd-bar.bk-bar, .cd-entry.bk-entry{grid-template-columns:1fr} }
