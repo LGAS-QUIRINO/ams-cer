@@ -12,7 +12,7 @@ import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer } from './cer.js';
 
-const FORM_SHORT = { af51: 'AF 51', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate', af54: 'AF 54', af56: 'AF 56' };
+export const FORM_SHORT = { af51: 'AF 51', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate', af54: 'AF 54', af56: 'AF 56' };
 const custOf = (l) => (l && l.data.kind === 'province' ? 'PTO' : 'MTO');   // the custodian's office
 const RECEIVED_FROM = ['Provincial Treasurer', 'National Printing Office', 'Others'];
 const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
@@ -30,14 +30,18 @@ const monthLabel = (m) => (m ? `${MONTHS[+m.slice(5, 7) - 1]} ${m.slice(0, 4)}` 
 const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
 
 /* ---------- data ---------- */
-async function loadForms() {
+export async function loadForms() {
   const cer = await loadCer();
-  const [booklets, checks, raaf, settings] = await Promise.all([store.list('cer_booklets'), store.list('cer_formcheck'), store.list('cer_raaf'), store.list('cer_settings')]);
+  const [booklets, checks, raaf, settings, ors] = await Promise.all([store.list('cer_booklets'), store.list('cer_formcheck'), store.list('cer_raaf'), store.list('cer_settings'), store.list('cer_ors')]);
   const flat = (r) => ({ id: r.id, ...r.data });
-  return { ...cer, booklets: booklets.map(flat), checks: checks.map(flat), raaf: raaf.map(flat), settings: Object.fromEntries(settings.map((s) => [s.id, s.data])) };
+  const out = { ...cer, booklets: booklets.map(flat), checks: checks.map(flat), raaf: raaf.map(flat), settings: Object.fromEntries(settings.map((s) => [s.id, s.data])), ors: ors.map(flat) };
+  // Numbers encoded in Collections & Deposits (issued or cancelled) are used numbers of their booklet.
+  const byBk = {}; out.ors.forEach((o) => { if (o.bookletId) (byBk[o.bookletId] = byBk[o.bookletId] || []).push({ n: o.serial, d: o.date }); });
+  out.booklets.forEach((b) => { b.orNos = byBk[b.id] || []; });
+  return out;
 }
 // Custodian LGUs: the province and the municipalities. A barangay's booklets are in its municipality's register.
-const registerOf = (refs, lguId) => { const l = refs.lgu[lguId]; return l && l.data.kind === 'barangay' ? l.data.parentId : lguId; };
+export const registerOf = (refs, lguId) => { const l = refs.lgu[lguId]; return l && l.data.kind === 'barangay' ? l.data.parentId : lguId; };
 function registers(refs) {
   return refs.lgus.filter((l) => (l.data.kind === 'municipality' || l.data.kind === 'province') && mayView(refs, l))
     .sort((a, b) => (a.data.kind === 'province' ? -1 : b.data.kind === 'province' ? 1 : a.data.name.localeCompare(b.data.name)));
@@ -47,14 +51,18 @@ const officerLabel = (refs, o) => o ? `${o.name}${o.designation ? ' · ' + o.des
 
 /* ---------- booklet figures ---------- */
 // Unused numbers of a booklet, as ranges [[from, to], …]. Unused numbers may sit between used ones (skipped ORs).
-// Source for now: "Unused on Hand (as of last cash exam)" from the Issue import; Collections Entry will add the encoded receipts.
+// Source for now: "Unused on Hand (as of last cash exam)" from the Issue import; plus the receipts encoded in Collections & Deposits.
 const countRanges = (rs) => rs.reduce((n, [a, z]) => n + z - a + 1, 0);
-const rangesText = (rs) => rs.map(([a, z]) => (a === z ? `${a}` : `${a} – ${z}`)).join(', ');
-function rawUnused(b) {
+export const rangesText = (rs) => rs.map(([a, z]) => (a === z ? `${a}` : `${a} – ${z}`)).join(', ');
+// date (optional): only the receipts encoded on or before that date are taken out.
+function rawUnused(b, date) {
   if (b.exhaustedDate) return [];   // marked exhausted from the logbook ("Exh" date)
-  if (Array.isArray(b.unusedAtStart)) return b.unusedAtStart.map((r) => [r[0], r[1]]);
-  if (b.usedBefore) return b.usedBefore <= b.to ? [[Math.max(b.from, b.usedBefore), b.to]] : [];   // older entries: first unused number
-  return [[b.from, b.to]];
+  let base;
+  if (Array.isArray(b.unusedAtStart)) base = b.unusedAtStart.map((r) => [r[0], r[1]]);
+  else if (b.usedBefore) base = b.usedBefore <= b.to ? [[Math.max(b.from, b.usedBefore), b.to]] : [];   // older entries: first unused number
+  else base = [[b.from, b.to]];
+  const cut = (b.orNos || []).filter((x) => !date || x.d <= date).map((x) => [x.n, x.n]);
+  return cut.length ? subtractRanges(base, cut) : base;
 }
 const unusedRanges = (b) => (b.status === 'lost' ? [] : rawUnused(b));
 function usedOf(b) { return b.qty - countRanges(rawUnused(b)); }
@@ -154,11 +162,12 @@ function registerView(ctx, f, lguId) {
   const old = aging ? withAo.filter((b) => daysWithAo(b, asOf) > +aging) : [];
   const skipped = mine.filter(held).filter((b) => skippedOf(b).length);
   const forCheck = new Set([...oos, ...old.map((b) => b.id), ...skipped.map((b) => b.id)]);
+  const wrong = f.ors.map((x) => ({ ...x, bk: mine.find((b) => b.id === x.bookletId) })).filter((x) => x.bk && x.bk.officerId !== x.officerId);
   const enc = canEncode(refs);
   const pick = (name, opts, sel) => `<select class="input af-sm" data-filter="${name}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   const formsUsed = [...new Set(mine.map((b) => b.form))];
   const longest = withAo.slice().sort((a, b) => daysWithAo(b, asOf) - daysWithAo(a, asOf))[0];
-  const body = `<div class="hello"><div><h1>Accountable Forms</h1><p>Each booklet is encoded once, from receipt by the custodian to its last number used. Status follows Collections Entry. Unused forms are counted, never treated as missing.</p></div>
+  const body = `<div class="hello"><div><h1>Accountable Forms</h1><p>Each booklet is encoded once, from receipt by the custodian to its last number used. Status follows Collections &amp; Deposits. Unused forms are counted, never treated as missing.</p></div>
       <div class="btn-row"><a class="btn" href="#/cer/forms/raaf?lgu=${esc(lguId)}">RAAF Reconciliation</a><a class="btn" href="#/cer/forms/officer?lgu=${esc(lguId)}">By Accountable Officer</a>
         <button class="btn" type="button" id="af-xls">Export to Excel</button></div></div>
 
@@ -214,8 +223,8 @@ function registerView(ctx, f, lguId) {
         ${result(overlapCount(mine) ? 'warn' : 'ok', overlapCount(mine) ? `Overlapping serial ranges · ${overlapCount(mine)}` : 'No overlapping serial ranges', 'No number may appear in two booklets.')}
         ${result('info', longest ? `Longest with an AO · ${daysWithAo(longest, asOf)} days` : 'No booklet with an AO', longest ? `${esc(f.officers.find((o) => o.id === longest.officerId)?.name || '')}, ${FORM_SHORT[longest.form]} ${rangeText(longest.from, longest.to)}, issued ${esc(fmtDate(longest.issuedDate))}.` : 'Issue booklets to the accountable officers to start counting.')}
         ${result('info', `${withAo.reduce((n, b) => n + unusedOf(b), 0)} unused forms with AOs`, 'To be confirmed in each officer\'s Physical Check at the cash count.')}
-        ${result('dim', 'Gaps in used numbers', 'Checked once Collections Entry is built (every number before the last one used must be encoded or cancelled).')}
-        ${result('dim', 'Receipts used by the wrong officer', 'Checked once Collections Entry is built (every encoded number must be in a booklet issued to the officer who used it).')}
+        ${result(wrong.length ? 'warn' : 'ok', wrong.length ? `Receipts used by another officer · ${wrong.length}` : 'No receipt used by another officer',
+          wrong.length ? wrong.slice(0, 12).map((x) => `${esc(f.officers.find((o) => o.id === x.officerId)?.name || '')} encoded ${FORM_SHORT[x.form] || x.form} ${x.serial}, in a booklet ${x.bk.status === 'issued' ? 'issued to ' + esc(f.officers.find((o) => o.id === x.bk.officerId)?.name || 'another officer') : 'not issued to anyone'}.`).join('<br>') + (wrong.length > 12 ? '<br>…' : '') : 'Every receipt encoded in Collections is in a booklet issued to the officer who used it.')}
       </div>
     </section>`;
   const exportRows = () => rows.map((b) => { const o = f.officers.find((x) => x.id === b.officerId); const d = daysWithAo(b, asOf);
@@ -406,7 +415,7 @@ function historyHtml(refs, f, b) {
   const name = (id) => f.officers.find((o) => o.id === id)?.name || '';
   return `<ol class="af-hist">${(b.history || []).map((h) => `<li><b>${esc(ACTION[h.action] || h.action)}${h.officerId ? ' · ' + esc(name(h.officerId)) : ''}</b>
       <small>${esc(fmtDate(h.date))}${h.note ? ' · ' + esc(h.note) : ''}${h.by ? ' · by ' + esc(refs.users.find((u) => u.data.email === h.by)?.data.name || h.by) : ''}</small></li>`).join('')}
-    ${usedOf(b) && !b.exhaustedDate ? `<li><b>${usedOf(b)} used · unused ${rangesText(rawUnused(b)) || 'none'}</b><small>${b.unusedAtStart || b.usedBefore ? 'as of the last cash exam, from the issuance record' : 'from Collections Entry'}</small></li>` : ''}
+    ${usedOf(b) && !b.exhaustedDate ? `<li><b>${usedOf(b)} used · unused ${rangesText(rawUnused(b)) || 'none'}</b><small>${b.unusedAtStart || b.usedBefore ? 'as of the last cash exam, from the issuance record' : 'from Collections &amp; Deposits'}</small></li>` : ''}
     ${skippedOf(b).length ? `<li><b>Skipped numbers · ${rangesText(skippedOf(b))}</b><small>unused numbers below the last one used; confirm at the Physical Check</small></li>` : ''}</ol>`;
 }
 async function bookletModal(ctx, f, b, offs) {
@@ -567,7 +576,7 @@ function wireOfficer(ctx, f, lguId, o, exam, offs) {
 // for the custodian (MTO / PTO), each accountable officer, or all of them consolidated. Accountable forms are not reported by fund.
 // Issued = what was on hand or received but is no longer on hand at month end (issued to AOs, used, returned, lost).
 const NO_FUND = 'No fund indicated';
-function mergeRanges(rs) {
+export function mergeRanges(rs) {
   const out = [];
   rs.slice().sort((x, y) => x[0] - y[0]).forEach(([a, z]) => { const l = out[out.length - 1]; if (l && a <= l[1] + 1) l[1] = Math.max(l[1], z); else out.push([a, z]); });
   return out;
@@ -596,8 +605,8 @@ const holderAt = (evs, date) => { let h = null; evs.forEach((e) => { if (e.date 
 function piecesAt(b, holder, date) {
   if (!holder || holder === 'gone') return [];
   if (b.exhaustedDate && b.exhaustedDate <= date) return [];
-  if (holder === 'mto') return (b.history || []).some((h) => h.action === 'returned' && h.date <= date) ? rawUnused(b) : [[b.from, b.to]];
-  return rawUnused(b);
+  if (holder === 'mto') return (b.history || []).some((h) => h.action === 'returned' && h.date <= date) ? rawUnused(b, date) : [[b.from, b.to]];
+  return rawUnused(b, date);
 }
 const prevDay = (d) => new Date(Date.parse(d) - 864e5).toISOString().slice(0, 10);
 function raafFigures(list, who, start, end) {
@@ -661,7 +670,7 @@ function raafView(ctx, f, lguId) {
         <thead><tr class="g"><th rowspan="2" scope="col" class="l">Name of Form</th><th colspan="3" scope="colgroup">Beginning Balance</th><th colspan="3" scope="colgroup">Receipt</th><th colspan="3" scope="colgroup">Issued</th><th colspan="3" scope="colgroup">Ending Balance</th><th rowspan="2" scope="col" class="l">Result</th></tr>
           <tr>${cols.map(() => '<th scope="col" class="r">Qty</th><th scope="col">From</th><th scope="col">To</th>').join('')}</tr></thead>
         <tbody>${sections.map(sectionHtml).join('')}</tbody></table></div>
-        <div class="af-foot af-noprint"><p class="af-note">${who !== 'mto' && who !== 'all' ? 'For an accountable officer, Issued is filled in from Collections Entry (ORs used); until then it shows only booklets returned, transferred, lost or marked exhausted. ' : ''}Ending = Beginning + Receipt − Issued.</p>
+        <div class="af-foot af-noprint"><p class="af-note">${who !== 'mto' && who !== 'all' ? 'For an accountable officer, Issued includes the ORs encoded in Collections &amp; Deposits. ' : ''}Ending = Beginning + Receipt − Issued.</p>
           ${enc ? '<button class="btn primary" type="button" id="r-save">Save Submitted Figures</button>' : ''}</div>`
       : '<div class="empty"><b>Nothing to report for this month.</b>No booklet was on hand, received or issued.</div>'}
     </section>`;
@@ -688,7 +697,7 @@ function raafView(ctx, f, lguId) {
 }
 // Prints only the part with id "cer-print".
 function printPart() { document.body.classList.add('af-printing'); const p = $('#cer-print'); const was = p.hidden; p.hidden = false; window.print(); p.hidden = was; document.body.classList.remove('af-printing'); }
-async function exportXlsx(file, sheet, rows) {
+export async function exportXlsx(file, sheet, rows) {
   try {
     if (!rows.length) { toast('Nothing to export.', 'bad'); return; }
     const XLSX = await loadXlsx();
