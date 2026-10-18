@@ -7,7 +7,6 @@
 //                                          status: 'stock' | 'issued' | 'lost', officerId, issuedDate, usedBefore, history[] }
 //   cer_formcheck  Physical Check of one booklet at one cash examination   id = examId|bookletId   { examId, bookletId, seen, unusedFrom, unusedTo }
 //   cer_raaf       the custodian's RAAF for a month and form             id = lguId|YYYY-MM|form   { lguId, month, form, beg, rec, iss, end, receivedDate }
-//   cer_settings   'aging|<lguId>'  { days }  flag a booklet held by an AO after this many days (blank = no flag)
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer } from './cer.js';
@@ -146,7 +145,6 @@ function registerView(ctx, f, lguId) {
   const { refs, q } = ctx;
   const lgu = refs.lgu[lguId];
   const asOf = q.get('asof') || today();
-  const aging = f.settings['aging|' + lguId]?.days || '';
   const offs = officersOf(refs, f, lguId);
   const mine = f.booklets.filter((b) => b.lguId === lguId);
   const oos = outOfSequence({ booklets: mine });
@@ -159,9 +157,8 @@ function registerView(ctx, f, lguId) {
   const stock = mine.filter((b) => b.status === 'stock');
   const withAo = mine.filter(held);
   const done = mine.filter((b) => statusOf(b).key === 'done');
-  const old = aging ? withAo.filter((b) => daysWithAo(b, asOf) > +aging) : [];
   const skipped = mine.filter(held).filter((b) => skippedOf(b).length);
-  const forCheck = new Set([...oos, ...old.map((b) => b.id), ...skipped.map((b) => b.id)]);
+  const forCheck = new Set([...oos, ...skipped.map((b) => b.id)]);
   const wrong = f.ors.map((x) => ({ ...x, bk: mine.find((b) => b.id === x.bookletId) })).filter((x) => x.bk && x.bk.officerId !== x.officerId);
   const enc = canEncode(refs);
   const pick = (name, opts, sel) => `<select class="input af-sm" data-filter="${name}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
@@ -174,8 +171,7 @@ function registerView(ctx, f, lguId) {
     <div class="panel af-bar">
       <div class="field"><label for="af-lgu">Forms Register of</label><select class="input" id="af-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
       <div class="field"><label for="af-asof">Days counted up to</label><input class="input" type="date" id="af-asof" value="${esc(asOf)}"></div>
-      <div class="field"><label for="af-aging">"Held too long" after (days with AO)</label><input class="input" id="af-aging" inputmode="numeric" placeholder="Blank = no mark" value="${esc(aging)}" ${isAuditor(refs) ? '' : 'disabled'}></div>
-      <div class="field"><label for="af-find">Find a Serial No.</label><div class="af-pair af-findbox"><input class="input mono" id="af-find" inputmode="numeric" placeholder="e.g. 7311510" autocomplete="off"><button class="btn" type="button" id="af-findgo">Find</button></div></div>
+      <div class="field af-span2"><label for="af-find">Find a Serial No.</label><div class="af-pair af-findbox"><input class="input mono" id="af-find" inputmode="numeric" placeholder="e.g. 7311510" autocomplete="off"><button class="btn" type="button" id="af-findgo">Find</button></div></div>
     </div>
     <div id="af-found" aria-live="polite"></div>
 
@@ -183,7 +179,7 @@ function registerView(ctx, f, lguId) {
       <div class="stat"><span>In Stock · Custodian</span><b>${stock.length}</b><small>booklets · ${stock.reduce((n, b) => n + b.qty, 0)} pcs</small></div>
       <div class="stat"><span>With Accountable Officers</span><b style="color:#1d4fb8">${withAo.length}</b><small>booklets · ${withAo.reduce((n, b) => n + unusedOf(b), 0)} unused pcs</small></div>
       <div class="stat"><span>Exhausted</span><b style="color:var(--ok)">${done.length}</b><small>every number used or cancelled</small></div>
-      <div class="stat"><span>For Checking</span><b class="${forCheck.size ? 'warn' : 'dim'}">${forCheck.size}</b><small>out of sequence, skipped numbers${aging ? ', held too long' : ''}</small></div>
+      <div class="stat"><span>For Checking</span><b class="${forCheck.size ? 'warn' : 'dim'}">${forCheck.size}</b><small>out of sequence, skipped numbers</small></div>
     </div>
 
     ${enc ? encodeHtml(refs, Object.assign(offs, { lguId, f }), q) : ''}
@@ -200,16 +196,16 @@ function registerView(ctx, f, lguId) {
         <thead><tr><th scope="col">Form</th><th scope="col">Serial Range</th><th scope="col" class="r">Qty</th><th scope="col">Received</th><th scope="col">Custody</th><th scope="col">Issued</th><th scope="col" class="r">Days with AO</th><th scope="col" class="r">Used</th><th scope="col">Unused</th><th scope="col">Status</th></tr></thead>
         <tbody>${rows.map((b) => {
           const o = f.officers.find((x) => x.id === b.officerId); const st = statusOf(b); const d = daysWithAo(b, asOf); const sk = skippedOf(b);
-          const flagOld = aging && d !== null && d > +aging, flagSeq = oos.has(b.id);
-          return `<tr class="${flagOld || flagSeq ? 'flag' : ''}" data-bk="${esc(b.id)}" tabindex="0">
+          const flagSeq = oos.has(b.id);
+          return `<tr class="${flagSeq ? 'flag' : ''}" data-bk="${esc(b.id)}" tabindex="0">
             <td>${esc(FORM_SHORT[b.form] || b.form)}</td><td class="mono">${rangeText(b.from, b.to)}</td><td class="r">${b.qty}</td>
             <td>${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${b.receivedDirect ? `<b class="af-direct">Received directly</b> · ` : ''}${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'import' ? 'Imported from Excel' : b.source === 'starting' ? 'Starting inventory' : ''))}</small></td>
             <td>${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock<small>Custodian (${custOf(lgu)})</small>`}</td>
             <td>${b.status !== 'stock' && b.issuedDate ? esc(fmtDate(b.issuedDate)) : '<span class="dim">—</span>'}</td>
-            <td class="r">${d === null ? '<span class="dim">—</span>' : `<b class="${flagOld ? 'warn-t' : ''}">${d}</b>`}</td>
+            <td class="r">${d === null ? '<span class="dim">—</span>' : `<b>${d}</b>`}</td>
             <td class="r">${usedOf(b)}</td>
             <td class="mono">${unusedCell(b)}</td>
-            <td><span class="pill ${st.cls}">${st.label}</span>${flagSeq ? '<br><span class="pill p-flag">Out of sequence</span>' : ''}${sk.length ? '<br><span class="pill p-flag">Skipped numbers</span>' : ''}${flagOld ? '<br><span class="pill p-flag">Held too long</span>' : ''}</td></tr>`;
+            <td><span class="pill ${st.cls}">${st.label}</span>${flagSeq ? '<br><span class="pill p-flag">Out of sequence</span>' : ''}${sk.length ? '<br><span class="pill p-flag">Skipped numbers</span>' : ''}</td></tr>`;
         }).join('')}</tbody></table></div>
         <p class="af-note">Click a booklet to see its history and to Issue, Transfer, Return or report it Lost.</p>`
       : `<div class="empty"><b>${mine.length ? 'No booklet matches these filters.' : 'No booklets in this register yet.'}</b>${mine.length ? '' : 'Encode the custodian\'s booklets with <b>Receive</b>, or the forms already out with <b>Starting Inventory</b>.'}</div>`}
@@ -292,12 +288,6 @@ function wireRegister(ctx, f, lguId, offs) {
   const doFind = () => findSerial(ctx, f, lguId, offs, findIn.value);
   $('#af-findgo').onclick = doFind;
   findIn.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doFind(); } };
-  const ag = $('#af-aging');
-  if (ag && !ag.disabled) ag.onchange = async () => {
-    const v = int(ag.value);
-    await store.save('cer_settings', 'aging|' + lguId, { days: v || '' }, by(refs));
-    toast(v ? `Booklets held more than ${v} days are flagged.` : 'No flag for days held.', 'ok');
-  };
   $$('[data-filter]').forEach((s) => { s.onchange = () => go({ [s.dataset.filter]: s.value }); });
   $$('[data-mv]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); go({ mv: a.dataset.mv }); }; });
   const kind = $('.seg a.on')?.dataset.mv === 'receive' ? 'receive' : 'issue';
