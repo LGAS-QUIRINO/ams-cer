@@ -234,11 +234,11 @@ function encodeHtml(refs, offs, q) {
   const per = `<div class="field"><label for="e-per">Per Booklet</label><input class="input r" id="e-per" inputmode="numeric" value="${LAST.per}"></div>`;
   const offSel = (id, label, extra = '') => `<div class="field"><label for="${id}">${label}</label><select class="input" id="${id}">${extra.replace(`value="${LAST.off}"`, `value="${LAST.off}" selected`)}<option value="">— Choose the officer —</option>${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.off)}>${esc(officerLabel(refs, o))}</option>`).join('')}</select></div>`;
   let fields = '';
-  const custName = refs.lgu[offs.lguId]?.data.kind === 'province' ? 'Provincial Treasurer' : 'Municipal Treasurer';
+  const custName = refs.lgu[offs.lguId]?.data.kind === 'province' ? 'PTO' : 'MTO';
   if (mv === 'receive') fields = `<div class="af-enc g9">${formSel}${range}${per}
       <div class="field"><label for="e-date">Date Received</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
       <div class="field"><label for="e-rby">Received By</label><select class="input" id="e-rby"><option value="custodian">Custodian (${custName})</option>
-        <optgroup label="Directly by an accountable officer">${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.rby)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
+        <optgroup label="Directly by AO">${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.rby)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
       <div class="field"><label for="e-src">Received From</label><select class="input" id="e-src">${RECEIVED_FROM.map((s) => `<option ${sel(s, LAST.src)}>${esc(s)}</option>`).join('')}</select></div>
       <div class="field"><label for="e-ref">Reference (optional)</label><input class="input" id="e-ref" placeholder="e.g. RIS No."></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>`;
