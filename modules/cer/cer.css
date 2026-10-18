@@ -147,3 +147,8 @@ table.af-raaf{width:100%; border-collapse:collapse; font-size:13.5px; min-width:
 .af-direct{color:#5b2bb5; font-weight:700}
 @media (max-width:1500px){ .af-enc.g9{grid-template-columns:repeat(5,minmax(0,1fr))} }
 @media (max-width:760px){ .af-enc.g9{grid-template-columns:1fr} }
+.af-enc.g6s{grid-template-columns:1.4fr 1fr 1fr .7fr 1fr auto}
+.af-reg td small.warn-t{color:#b4540a; white-space:normal; font-family:"Segoe UI",system-ui,sans-serif}
+.af-reg .input.af-ur{width:100%; min-width:220px}
+@media (max-width:1100px){ .af-enc.g6s{grid-template-columns:repeat(3,minmax(0,1fr))} }
+@media (max-width:760px){ .af-enc.g6s{grid-template-columns:1fr} }

@@ -41,12 +41,43 @@ const officersOf = (refs, f, lguId) => f.officers.filter((o) => registerOf(refs,
 const officerLabel = (refs, o) => o ? `${o.name}${o.designation ? ' · ' + o.designation : ''}` : '';
 
 /* ---------- booklet figures ---------- */
-// Numbers used. For now from the Starting Inventory (first unused number); Collections Entry adds the encoded receipts.
-function usedOf(b) {
-  if (b.exhaustedDate) return b.qty;   // marked exhausted from the logbook ("Exh" date)
-  const before = b.usedBefore ? Math.max(0, Math.min(b.qty, b.usedBefore - b.from)) : 0;
-  return before;
+// Unused numbers of a booklet, as ranges [[from, to], …]. Unused numbers may sit between used ones (skipped ORs).
+// Source for now: "Unused on Hand (as of last cash exam)" from the Issue import; Collections Entry will add the encoded receipts.
+const countRanges = (rs) => rs.reduce((n, [a, z]) => n + z - a + 1, 0);
+const rangesText = (rs) => rs.map(([a, z]) => (a === z ? `${a}` : `${a} – ${z}`)).join(', ');
+function rawUnused(b) {
+  if (b.exhaustedDate) return [];   // marked exhausted from the logbook ("Exh" date)
+  if (Array.isArray(b.unusedAtStart)) return b.unusedAtStart.map((r) => [r[0], r[1]]);
+  if (b.usedBefore) return b.usedBefore <= b.to ? [[Math.max(b.from, b.usedBefore), b.to]] : [];   // older entries: first unused number
+  return [[b.from, b.to]];
 }
+const unusedRanges = (b) => (b.status === 'lost' ? [] : rawUnused(b));
+function usedOf(b) { return b.qty - countRanges(rawUnused(b)); }
+// Unused numbers below the last number used: skipped ORs, for the auditor to confirm at the Physical Check.
+function skippedOf(b) {
+  const un = rawUnused(b); if (!un.length || usedOf(b) === 0) return [];
+  let last = b.to;   // highest used number
+  for (const [a, z] of un.slice().sort((x, y) => y[0] - x[0])) { if (z === last) last = a - 1; else break; }
+  return un.filter(([a]) => a < last).map(([a, z]) => [a, Math.min(z, last)]);
+}
+// Reads "7311510, 7311516-7311550" into ranges inside the booklet. Returns { ranges } or { error }.
+function parseRanges(text, from, to) {
+  const t = String(text ?? '').trim();
+  if (!t) return { ranges: [] };
+  const out = [];
+  for (const part of t.split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean)) {
+    const m = /^(\d+)\s*(?:[-–—]|to)\s*(\d+)$/i.exec(part) || /^(\d+)$/.exec(part);
+    if (!m) return { error: `"${part}" is not a number or a range.` };
+    const a = +m[1], z = m[2] ? +m[2] : a;
+    if (z < a) return { error: `${part}: From is after To.` };
+    if (a < from || z > to) return { error: `${part} is outside the booklet ${from} – ${to}.` };
+    out.push([a, z]);
+  }
+  out.sort((x, y) => x[0] - y[0]);
+  for (let i = 1; i < out.length; i++) if (out[i][0] <= out[i - 1][1]) return { error: 'The unused ranges overlap.' };
+  return { ranges: out };
+}
+const sameRanges = (x, y) => x.length === y.length && x.every((r, i) => r[0] === y[i][0] && r[1] === y[i][1]);
 function statusOf(b) {
   if (b.status === 'lost') return { key: 'lost', label: 'Lost / Destroyed', cls: 'p-flag' };
   if (b.status === 'stock') return { key: 'stock', label: 'In stock', cls: 'p-stock' };
@@ -55,8 +86,8 @@ function statusOf(b) {
   if (u > 0) return { key: 'part', label: 'Partly used', cls: 'p-part' };
   return { key: 'new', label: 'Issued, not yet used', cls: 'p-new' };
 }
-const unusedOf = (b) => (b.status === 'lost' ? 0 : b.qty - usedOf(b));
-const unusedRange = (b) => { const n = unusedOf(b); return n > 0 ? [b.to - n + 1, b.to] : null; };
+const unusedOf = (b) => countRanges(unusedRanges(b));
+const unusedCell = (b) => { const rs = unusedRanges(b); return rs.length ? `${rangesText(rs)} <span class="dim">(${countRanges(rs)})</span>` : '<span class="dim">None</span>'; };
 const held = (b) => b.status === 'issued' && statusOf(b).key !== 'done';
 const daysWithAo = (b, asOf) => (held(b) && b.issuedDate ? Math.max(0, days(b.issuedDate, asOf)) : null);
 const rangeText = (a, z) => `${a} – ${z}`;
@@ -116,7 +147,8 @@ function registerView(ctx, f, lguId) {
   const withAo = mine.filter(held);
   const done = mine.filter((b) => statusOf(b).key === 'done');
   const old = aging ? withAo.filter((b) => daysWithAo(b, asOf) > +aging) : [];
-  const forCheck = new Set([...oos, ...old.map((b) => b.id)]);
+  const skipped = mine.filter(held).filter((b) => skippedOf(b).length);
+  const forCheck = new Set([...oos, ...old.map((b) => b.id), ...skipped.map((b) => b.id)]);
   const enc = canEncode(refs);
   const pick = (name, opts, sel) => `<select class="input af-sm" data-filter="${name}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   const formsUsed = [...new Set(mine.map((b) => b.form))];
@@ -134,7 +166,7 @@ function registerView(ctx, f, lguId) {
       <div class="stat"><span>In Stock · Custodian</span><b>${stock.length}</b><small>booklets · ${stock.reduce((n, b) => n + b.qty, 0)} pcs</small></div>
       <div class="stat"><span>With Accountable Officers</span><b style="color:#1d4fb8">${withAo.length}</b><small>booklets · ${withAo.reduce((n, b) => n + unusedOf(b), 0)} unused pcs</small></div>
       <div class="stat"><span>Exhausted</span><b style="color:var(--ok)">${done.length}</b><small>every number used or cancelled</small></div>
-      <div class="stat"><span>For Checking</span><b class="${forCheck.size ? 'warn' : 'dim'}">${forCheck.size}</b><small>out of sequence${aging ? ', held too long' : ''}</small></div>
+      <div class="stat"><span>For Checking</span><b class="${forCheck.size ? 'warn' : 'dim'}">${forCheck.size}</b><small>out of sequence, skipped numbers${aging ? ', held too long' : ''}</small></div>
     </div>
 
     ${enc ? encodeHtml(refs, Object.assign(offs, { lguId }), q) : ''}
@@ -150,7 +182,7 @@ function registerView(ctx, f, lguId) {
       ${rows.length ? `<div class="af-tbl"><table class="af-reg">
         <thead><tr><th scope="col">Form</th><th scope="col">Serial Range</th><th scope="col" class="r">Qty</th><th scope="col">Received</th><th scope="col">Custody</th><th scope="col">Issued</th><th scope="col" class="r">Days with AO</th><th scope="col" class="r">Used</th><th scope="col">Unused</th><th scope="col">Status</th></tr></thead>
         <tbody>${rows.map((b) => {
-          const o = f.officers.find((x) => x.id === b.officerId); const st = statusOf(b); const d = daysWithAo(b, asOf); const ur = unusedRange(b);
+          const o = f.officers.find((x) => x.id === b.officerId); const st = statusOf(b); const d = daysWithAo(b, asOf); const sk = skippedOf(b);
           const flagOld = aging && d !== null && d > +aging, flagSeq = oos.has(b.id);
           return `<tr class="${flagOld || flagSeq ? 'flag' : ''}" data-bk="${esc(b.id)}" tabindex="0">
             <td>${esc(FORM_SHORT[b.form] || b.form)}</td><td class="mono">${rangeText(b.from, b.to)}</td><td class="r">${b.qty}</td>
@@ -159,8 +191,8 @@ function registerView(ctx, f, lguId) {
             <td>${b.status !== 'stock' && b.issuedDate ? esc(fmtDate(b.issuedDate)) : '<span class="dim">—</span>'}</td>
             <td class="r">${d === null ? '<span class="dim">—</span>' : `<b class="${flagOld ? 'warn-t' : ''}">${d}</b>`}</td>
             <td class="r">${usedOf(b)}</td>
-            <td class="mono">${ur ? `${rangeText(ur[0], ur[1])} <span class="dim">(${unusedOf(b)})</span>` : '<span class="dim">None</span>'}</td>
-            <td><span class="pill ${st.cls}">${st.label}</span>${flagSeq ? '<br><span class="pill p-flag">Out of sequence</span>' : ''}${flagOld ? '<br><span class="pill p-flag">Held too long</span>' : ''}</td></tr>`;
+            <td class="mono">${unusedCell(b)}</td>
+            <td><span class="pill ${st.cls}">${st.label}</span>${flagSeq ? '<br><span class="pill p-flag">Out of sequence</span>' : ''}${sk.length ? '<br><span class="pill p-flag">Skipped numbers</span>' : ''}${flagOld ? '<br><span class="pill p-flag">Held too long</span>' : ''}</td></tr>`;
         }).join('')}</tbody></table></div>
         <p class="af-note">Click a booklet to see its history and to Issue, Transfer, Return or report it Lost.</p>`
       : `<div class="empty"><b>${mine.length ? 'No booklet matches these filters.' : 'No booklets in this register yet.'}</b>${mine.length ? '' : 'Encode the custodian\'s booklets with <b>Receive</b>, or the forms already out with <b>Starting Inventory</b>.'}</div>`}
@@ -171,6 +203,8 @@ function registerView(ctx, f, lguId) {
       <div class="af-res">
         ${result(oos.size ? 'warn' : 'ok', oos.size ? `Out-of-sequence use · ${oos.size}` : 'No out-of-sequence use',
           oos.size ? [...oos].map((id) => { const b = mine.find((x) => x.id === id); const o = f.officers.find((x) => x.id === b.officerId); return `${esc(o ? o.name : 'An officer')} used ${FORM_SHORT[b.form]} ${rangeText(b.from, b.to)} while an earlier booklet still has unused numbers.`; }).join('<br>') : 'Each officer uses the earlier booklet of a form before starting the next.')}
+        ${result(skipped.length ? 'warn' : 'ok', skipped.length ? `Skipped numbers between used ORs · ${skipped.reduce((n, b) => n + countRanges(skippedOf(b)), 0)}` : 'No skipped numbers between used ORs',
+          skipped.length ? skipped.map((b) => `${esc(f.officers.find((o) => o.id === b.officerId)?.name || '')}, ${FORM_SHORT[b.form]} ${rangeText(b.from, b.to)}: ${rangesText(skippedOf(b))}`).join('<br>') + '<br>Confirm each at the Physical Check: on hand, cancelled, or not on hand.' : 'Unused numbers come after the last number used in each booklet.')}
         ${result(overlapCount(mine) ? 'warn' : 'ok', overlapCount(mine) ? `Overlapping serial ranges · ${overlapCount(mine)}` : 'No overlapping serial ranges', 'No number may appear in two booklets.')}
         ${result('info', longest ? `Longest with an AO · ${daysWithAo(longest, asOf)} days` : 'No booklet with an AO', longest ? `${esc(f.officers.find((o) => o.id === longest.officerId)?.name || '')}, ${FORM_SHORT[longest.form]} ${rangeText(longest.from, longest.to)}, issued ${esc(fmtDate(longest.issuedDate))}.` : 'Issue booklets to the accountable officers to start counting.')}
         ${result('info', `${withAo.reduce((n, b) => n + unusedOf(b), 0)} unused forms with AOs`, 'To be confirmed in each officer\'s Physical Check at the cash count.')}
@@ -211,17 +245,15 @@ function encodeHtml(refs, offs, q) {
   if (mv === 'issue') fields = `<div class="af-enc g6">${formSel}${range}${offSel('e-off', 'Issued To')}
       <div class="field"><label for="e-date">Date Issued</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>`;
-  if (mv === 'starting') fields = `<div class="af-enc g8">${formSel}${range}${per}
-      ${offSel('e-off', 'Custody', '<option value="stock">In stock (custodian)</option>')}
-      <div class="field"><label for="e-date">Date Issued / As of</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
-      <div class="field"><label for="e-next">First Unused No. (optional)</label><input class="input r" id="e-next" inputmode="numeric" placeholder="If partly used"></div>
+  if (mv === 'starting') fields = `<div class="af-enc g6s">${formSel}${range}${per}
+      <div class="field"><label for="e-date">As of</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>`;
   const help = mv === 'receive' ? 'The range is split into booklets. Received by the custodian: the booklets go into stock. Received directly by an accountable officer (e.g. a barangay treasurer supplied by the Provincial Treasurer): they go straight into that officer\'s custody and are left out of the custodian\'s RAAF. A serial already in the register is refused, except a booklet first encoded from a logbook: it is matched by serial and gets its receipt details.'
     : mv === 'issue' ? 'Every booklet in stock within the range is issued to the officer. Barangay treasurers are listed with the municipality\'s officers.'
-    : 'Use once, to start the register: the custodian\'s stock and each officer\'s outstanding booklets as of one date. Also for a barangay treasurer\'s booklets copied from the logbook before the municipality\'s side is encoded.';
+    : 'Only the custodian\'s stock on the start date. Every issuance is recorded through Issue: new ones one by one, and past issuances (issuance list, logbook) with the Issue import.';
   return `<section class="panel" aria-labelledby="enc-h"><div class="af-encbox">
     <div class="af-headrow"><h2 id="enc-h" class="cer-h2">Encode</h2>
-      <div class="af-headr"><a href="#" class="af-tpl" id="af-tpl">Download Template</a><button class="btn" type="button" id="af-import">Import from Excel</button>
+      <div class="af-headr">${mv !== 'starting' ? `<a href="#" class="af-tpl" id="af-tpl">Download ${mv === 'receive' ? 'Receive' : 'Issue'} Template</a><button class="btn" type="button" id="af-import">Import ${mv === 'receive' ? 'Receipts' : 'Issuances'} from Excel</button>` : ''}
       <div class="seg" role="group" aria-label="Movement">${MOVES.map(([k, l]) => `<a href="#" data-mv="${k}" class="${k === mv ? 'on' : ''}" aria-pressed="${k === mv}">${l}</a>`).join('')}</div></div></div>
     ${fields}
     <p class="af-note" id="e-help">${esc(help)}</p></div></section>`;
@@ -239,8 +271,9 @@ function wireRegister(ctx, f, lguId, offs) {
   };
   $$('[data-filter]').forEach((s) => { s.onchange = () => go({ [s.dataset.filter]: s.value }); });
   $$('[data-mv]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); go({ mv: a.dataset.mv }); }; });
-  const imp = $('#af-import'); if (imp) imp.onclick = () => importModal(refs, f, lguId);
-  const tpl = $('#af-tpl'); if (tpl) tpl.onclick = async (e) => { e.preventDefault(); try { await downloadTemplate(); } catch (err) { toast(err.message || String(err), 'bad'); } };
+  const kind = $('.seg a.on')?.dataset.mv === 'receive' ? 'receive' : 'issue';
+  const imp = $('#af-import'); if (imp) imp.onclick = () => importModal(refs, f, lguId, kind);
+  const tpl = $('#af-tpl'); if (tpl) tpl.onclick = async (e) => { e.preventDefault(); try { await downloadTemplate(kind); } catch (err) { toast(err.message || String(err), 'bad'); } };
   $$('tr[data-bk]').forEach((tr) => {
     const open = () => bookletModal(ctx, f, f.booklets.find((b) => b.id === tr.dataset.bk), offs);
     tr.onclick = open; tr.onkeydown = (e) => { if (e.key === 'Enter') open(); };
@@ -265,7 +298,7 @@ function wireRegister(ctx, f, lguId, offs) {
       src: $('#e-src') ? $('#e-src').value : LAST.src, off: $('#e-off') ? $('#e-off').value : LAST.off, rby: $('#e-rby') ? $('#e-rby').value : LAST.rby });
     try {
       const ok = mv === 'receive' ? await doReceive(refs, f, lguId) : mv === 'issue' ? await doIssue(refs, f, lguId) : await doStarting(refs, f, lguId);
-      if (ok) ['#e-from', '#e-to', '#e-next', '#e-ref'].forEach((s) => { const el = $(s); if (el) el.value = ''; });
+      if (ok) ['#e-from', '#e-to', '#e-ref'].forEach((s) => { const el = $(s); if (el) el.value = ''; });
     } finally { enter.disabled = false; }
   };
 }
@@ -334,23 +367,18 @@ async function doIssue(refs, f, lguId) {
   return true;
 }
 async function doStarting(refs, f, lguId) {
-  const form = $('#e-form').value, a = int($('#e-from').value), z = int($('#e-to').value), p = int($('#e-per').value) || PER_BOOKLET, cust = $('#e-off').value, date = $('#e-date').value, next = int($('#e-next').value);
+  const form = $('#e-form').value, a = int($('#e-from').value), z = int($('#e-to').value), p = int($('#e-per').value) || PER_BOOKLET, date = $('#e-date').value;
   if (!a || !z || z < a) return bad('Enter the serial range (From must not be after To).');
   if (z - a + 1 > MAX_PCS) return bad(`That range has ${z - a + 1} pieces. Check the serial numbers (one entry takes up to ${MAX_PCS}).`);
-  if (!cust) return bad('Choose the custody: in stock or the officer holding it.');
-  if (!date) return bad('Enter the date issued (or the as-of date for stock).');
+  if (!date) return bad('Enter the as-of date.');
   const parts = splitRange(a, z, p);
-  if (next && (next < a || next > z + 1)) return bad('The first unused number must be inside the range.');
-  if (next && parts.length > 1) return bad('Enter a partly used booklet one at a time, with its own first unused number.');
   for (const [x, y] of parts) { const hit = overlaps(f, form, x, y); if (hit.length) return bad(`${FORM_SHORT[form]} ${rangeText(x, y)} overlaps ${rangeText(hit[0].from, hit[0].to)} already in the register.`); }
-  const officer = cust !== 'stock' ? f.officers.find((o) => o.id === cust) : null;
-  const fromLogbook = !!officer && refs.lgu[officer.lguId]?.data.kind === 'barangay';
   for (const [x, y] of parts) {
     await store.save('cer_booklets', newId('cerb'), { lguId, form, from: x, to: y, qty: y - x + 1, receivedDate: '', receivedFrom: '', reference: '',
-      source: fromLogbook ? 'logbook' : 'starting', status: officer ? 'issued' : 'stock', officerId: officer ? officer.id : '', issuedDate: officer ? date : '',
-      usedBefore: next || null, history: [hist(refs, officer ? (fromLogbook ? 'logbook' : 'starting') : 'starting', date, { officerId: officer ? officer.id : '', note: next ? `First unused number ${next}` : '' })] }, by(refs));
+      source: 'starting', status: 'stock', officerId: '', issuedDate: '', history: [hist(refs, 'starting', date, { note: 'Custodian\'s stock on the start date' })] }, by(refs), { quiet: true });
   }
-  toast(`${parts.length} booklet${parts.length > 1 ? 's' : ''} added to the register.`, 'ok');
+  emitChange('local');
+  toast(`${parts.length} booklet${parts.length > 1 ? 's' : ''} added to the custodian's stock.`, 'ok');
   return true;
 }
 const strip = (b) => { const { id, ...rest } = b; return rest; };
@@ -364,7 +392,8 @@ function historyHtml(refs, f, b) {
   const name = (id) => f.officers.find((o) => o.id === id)?.name || '';
   return `<ol class="af-hist">${(b.history || []).map((h) => `<li><b>${esc(ACTION[h.action] || h.action)}${h.officerId ? ' · ' + esc(name(h.officerId)) : ''}</b>
       <small>${esc(fmtDate(h.date))}${h.note ? ' · ' + esc(h.note) : ''}${h.by ? ' · by ' + esc(refs.users.find((u) => u.data.email === h.by)?.data.name || h.by) : ''}</small></li>`).join('')}
-    ${usedOf(b) ? `<li><b>${usedOf(b)} used · ${rangeText(b.from, b.from + usedOf(b) - 1)}</b><small>${b.usedBefore ? 'before the register started' : 'from Collections Entry'}</small></li>` : ''}</ol>`;
+    ${usedOf(b) && !b.exhaustedDate ? `<li><b>${usedOf(b)} used · unused ${rangesText(rawUnused(b)) || 'none'}</b><small>${b.unusedAtStart || b.usedBefore ? 'as of the last cash exam, from the issuance record' : 'from Collections Entry'}</small></li>` : ''}
+    ${skippedOf(b).length ? `<li><b>Skipped numbers · ${rangesText(skippedOf(b))}</b><small>unused numbers below the last one used; confirm at the Physical Check</small></li>` : ''}</ol>`;
 }
 async function bookletModal(ctx, f, b, offs) {
   const { refs } = ctx;
@@ -426,7 +455,7 @@ function officerView(ctx, f, lguId) {
   const asOf = exam ? exam.audit.countDate : today();   // days in hand are counted up to the cash count
   const tab = ['check', 'hand', 'all'].includes(q.get('tab')) ? q.get('tab') : 'check';
   const longest = inHand.map((b) => daysWithAo(b, asOf)).sort((a, b) => b - a)[0];
-  const checkRows = exam ? mine.filter((b) => b.status !== 'stock' && b.issuedDate && b.issuedDate <= exam.audit.countDate && statusOf(b).key !== 'done' && b.status !== 'lost') : [];
+  const checkRows = exam ? mine.filter((b) => b.status !== 'stock' && b.issuedDate && b.issuedDate <= exam.audit.countDate && statusOf(b).key !== 'done' && b.status !== 'lost').sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from) : [];
   const chk = (b) => f.checks.find((c) => c.id === exam.id + '|' + b.id) || null;
   const seen = checkRows.filter((b) => chk(b)?.seen).length;
   const byForm = {}; inHand.forEach((b) => { byForm[b.form] = (byForm[b.form] || 0) + unusedOf(b); });
@@ -437,18 +466,18 @@ function officerView(ctx, f, lguId) {
   if (tab === 'check') {
     tabBody = !exam ? '<div class="empty"><b>No cash examination for this officer yet.</b>Set one up in Audit Setup; the Physical Check is done at its cash count.</div>'
       : `<div class="af-note top">Cash count of ${esc(fmtDate(exam.audit.countDate))}${exams.length > 1 ? ` · <label for="af-exam" class="sr-only">Cash examination</label><select class="input af-sm" id="af-exam">${exams.map((e) => `<option value="${esc(e.id)}" ${e.id === exam.id ? 'selected' : ''}>${esc(fmtDate(e.audit.countDate))}</option>`).join('')}</select>` : ''}.
-          Tick each booklet seen and type the unused range actually on hand. This fills the SAAF (Annex B) and the unused forms in the GF-74A.</div>
+          Tick each booklet seen and type the unused numbers actually on hand, as ranges (e.g. 7311510, 7311516-7311550). This fills the SAAF (Annex B) and the unused forms in the GF-74A.</div>
         ${checkRows.length ? `<div class="af-tbl"><table class="af-reg">
           <thead><tr><th scope="col">Seen</th><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col" class="r">Days in Hand</th><th scope="col">Unused per Register</th><th scope="col">Unused per Count</th><th scope="col" class="r">Difference</th><th scope="col">Result</th></tr></thead>
           <tbody>${checkRows.map((b) => {
-            const c = chk(b) || {}; const ur = unusedRange(b); const n = unusedOf(b);
-            const cnt = c.unusedFrom && c.unusedTo ? c.unusedTo - c.unusedFrom + 1 : null;
-            const diff = cnt === null ? null : n - cnt;
-            const res = !c.seen ? (c.id ? ['p-flag', 'Not seen'] : ['p-stock', 'Not yet checked']) : diff === 0 && (!ur || (c.unusedFrom === ur[0] && c.unusedTo === ur[1])) ? ['p-done', 'Agrees'] : cnt === null && !n ? ['p-done', 'Agrees'] : ['p-flag', 'For checking'];
+            const c = chk(b) || {}; const reg = unusedRanges(b); const n = countRanges(reg); const sk = skippedOf(b);
+            const counted = Array.isArray(c.ranges) ? c.ranges : (c.unusedFrom && c.unusedTo ? [[c.unusedFrom, c.unusedTo]] : null);
+            const diff = counted === null ? null : n - countRanges(counted);
+            const res = !c.seen ? (c.id ? ['p-flag', 'Not seen'] : ['p-stock', 'Not yet checked']) : counted && sameRanges(counted, reg) ? ['p-done', 'Agrees'] : ['p-flag', 'For checking'];
             return `<tr data-ck="${esc(b.id)}"><td><input type="checkbox" class="af-seen" ${c.seen ? 'checked' : ''} ${auditor ? '' : 'disabled'} aria-label="Seen: ${esc(FORM_SHORT[b.form])} ${b.from} to ${b.to}"></td>
               <td>${esc(FORM_SHORT[b.form])}</td><td class="mono">${rangeText(b.from, b.to)}</td><td class="r">${days(b.issuedDate, exam.audit.countDate)}</td>
-              <td class="mono">${ur ? `${rangeText(ur[0], ur[1])} (${n})` : 'None'}</td>
-              <td><div class="af-pair"><input class="input af-sm mono af-uf" value="${esc(c.unusedFrom ?? (ur ? ur[0] : ''))}" aria-label="Unused from" ${auditor ? '' : 'disabled'}><span>–</span><input class="input af-sm mono af-ut" value="${esc(c.unusedTo ?? (ur ? ur[1] : ''))}" aria-label="Unused to" ${auditor ? '' : 'disabled'}></div></td>
+              <td class="mono">${reg.length ? `${rangesText(reg)} (${n})` : 'None'}${sk.length ? `<small class="warn-t">Skipped: ${rangesText(sk)} · on hand, cancelled or not on hand?</small>` : ''}</td>
+              <td><input class="input af-sm mono af-ur" value="${esc(counted ? rangesText(counted).replace(/ – /g, '-') : rangesText(reg).replace(/ – /g, '-'))}" aria-label="Unused per count" ${auditor ? '' : 'disabled'}></td>
               <td class="r">${diff === null ? '<span class="dim">—</span>' : diff}</td><td><span class="pill ${res[0]}">${res[1]}</span></td></tr>`;
           }).join('')}</tbody></table></div>
           <div class="af-foot"><p class="af-note">A booklet not seen, or a difference, goes to Verification for the auditor's judgment. It is never concluded as missing by the system.</p>
@@ -457,9 +486,9 @@ function officerView(ctx, f, lguId) {
   } else {
     const list = tab === 'hand' ? inHand : mine.slice().sort((a, b) => String(b.issuedDate).localeCompare(String(a.issuedDate)));
     tabBody = list.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col">Issued</th><th scope="col" class="r">Days in Hand</th><th scope="col" class="r">Used</th><th scope="col">Unused</th><th scope="col">Status</th></tr></thead>
-      <tbody>${list.map((b) => { const st = statusOf(b); const ur = unusedRange(b); const d = daysWithAo(b, asOf);
+      <tbody>${list.map((b) => { const st = statusOf(b); const d = daysWithAo(b, asOf);
         return `<tr data-bk="${esc(b.id)}" tabindex="0"><td>${esc(FORM_SHORT[b.form])}</td><td class="mono">${rangeText(b.from, b.to)}</td><td>${esc(fmtDate(b.issuedDate))}</td><td class="r">${d ?? '<span class="dim">—</span>'}</td><td class="r">${usedOf(b)}</td>
-          <td class="mono">${ur ? `${rangeText(ur[0], ur[1])} <span class="dim">(${unusedOf(b)})</span>` : '<span class="dim">None</span>'}</td><td><span class="pill ${st.cls}">${st.label}</span></td></tr>`; }).join('')}</tbody></table></div>
+          <td class="mono">${unusedCell(b)}</td><td><span class="pill ${st.cls}">${st.label}</span>${skippedOf(b).length ? '<br><span class="pill p-flag">Skipped numbers</span>' : ''}</td></tr>`; }).join('')}</tbody></table></div>
       <p class="af-note">Click a booklet to see its history and to Transfer, Return or report it Lost.</p>`
       : `<div class="empty"><b>${tab === 'hand' ? 'No booklets in this officer\'s hands.' : 'No booklets issued to this officer yet.'}</b></div>`;
   }
@@ -483,7 +512,7 @@ function clearanceHtml(refs, f, o, mine, lguId) {
   return `<h2>Accountable Forms in the Officer's Hands</h2>
     <p><b>${esc(o.name)}</b>, ${esc(o.designation || '')} · ${esc(agencyName(refs, refs.lgu[o.lguId]))} · as of ${esc(fmtDate(today()))}</p>
     <table><thead><tr><th>Form</th><th>Booklet</th><th>Date Issued</th><th>Used</th><th>Unused Range</th><th>Unused Qty</th></tr></thead>
-    <tbody>${list.length ? list.map((b) => { const ur = unusedRange(b); return `<tr><td>${esc(FORM_SHORT[b.form])}</td><td>${rangeText(b.from, b.to)}</td><td>${esc(fmtDate(b.issuedDate))}</td><td>${usedOf(b)}</td><td>${ur ? rangeText(ur[0], ur[1]) : 'None'}</td><td>${unusedOf(b)}</td></tr>`; }).join('')
+    <tbody>${list.length ? list.map((b) => `<tr><td>${esc(FORM_SHORT[b.form])}</td><td>${rangeText(b.from, b.to)}</td><td>${esc(fmtDate(b.issuedDate))}</td><td>${usedOf(b)}</td><td>${rangesText(unusedRanges(b)) || 'None'}</td><td>${unusedOf(b)}</td></tr>`).join('')
       : '<tr><td colspan="6">No accountable forms in this officer\'s hands.</td></tr>'}</tbody></table>
     <p>Total unused: ${list.reduce((n, b) => n + unusedOf(b), 0)} pcs. From the Forms Register of ${esc(agencyName(refs, refs.lgu[lguId]))}.</p>`;
 }
@@ -498,10 +527,12 @@ function wireOfficer(ctx, f, lguId, o, exam, offs) {
     try {
       for (const tr of $$('tr[data-ck]')) {
         const id = exam.id + '|' + tr.dataset.ck;
-        const uf = int($('.af-uf', tr).value), ut = int($('.af-ut', tr).value);
-        if ((uf && !ut) || (!uf && ut) || (uf && ut && ut < uf)) { toast('Check an unused range: both numbers, From not after To.', 'bad'); return; }
-        await store.save('cer_formcheck', id, { examId: exam.id, bookletId: tr.dataset.ck, seen: $('.af-seen', tr).checked, unusedFrom: uf, unusedTo: ut }, by(refs));
+        const b = f.booklets.find((x) => x.id === tr.dataset.ck);
+        const p = parseRanges($('.af-ur', tr).value, b.from, b.to);
+        if (p.error) { toast(`${FORM_SHORT[b.form]} ${rangeText(b.from, b.to)}: ${p.error}`, 'bad'); return; }
+        await store.save('cer_formcheck', id, { examId: exam.id, bookletId: b.id, seen: $('.af-seen', tr).checked, ranges: p.ranges }, by(refs), { quiet: true });
       }
+      emitChange('local');
       toast('Physical Check saved.', 'ok');
     } finally { save.disabled = false; }
   };
@@ -517,7 +548,7 @@ function stockFlows(list, start, end) {
     (b.history || []).slice().sort((x, y) => String(x.date).localeCompare(String(y.date))).forEach((h) => {
       const into = h.action === 'received' || h.action === 'matched' || h.action === 'returned' || (h.action === 'starting' && !h.officerId);
       const outof = (h.action === 'issued' || h.action === 'logbook' || h.action === 'lost') && inStock;
-      const pcs = h.action === 'returned' ? b.qty - usedOf(b) : b.qty;
+      const pcs = h.action === 'returned' ? countRanges(rawUnused(b)) : b.qty;
       if (h.date < start) { if (into) inStock = true; if (outof) inStock = false; return; }
       if (h.date > end) return;
       // Starting inventory in stock was already on hand: it counts in the beginning balance, not as received.
@@ -594,8 +625,8 @@ function raafView(ctx, f, lguId) {
 }
 
 /* ================= Import from Excel ================= */
-// Reads an issuance list or a typed logbook (one row per booklet) and adds only the booklets not yet in the register.
-// Columns are found by their headings: Date Issued, Series From, Series To, Accountable Officer, Agency, Position, Date Exhausted (Exh), No.
+// Two imports, each with its own template: Receive (booklets received) and Issue (issuances: new ones from stock, and past
+// issuances from the issuance list or logbook). Only booklets not yet in the register are added; the rest are skipped.
 let xlsxReady = null;
 function loadXlsx() {
   if (window.XLSX) return Promise.resolve(window.XLSX);
@@ -606,13 +637,39 @@ function loadXlsx() {
   });
   return xlsxReady;
 }
-const COLS = [
-  ['no', /^\s*no\.?\s*$|^\s*#\s*$/i], ['issued', /date\s*iss|^\s*date\s*$/i], ['from', /series\s*fr|^\s*from\s*$/i], ['to', /series\s*t|^\s*to\s*$/i],
-  ['officer', /officer|^\s*name/i], ['agency', /agency/i], ['position', /position|designation/i], ['exh', /exh/i]];
-function findColumns(rows) {
+const KINDS = {
+  receive: {
+    title: 'Import Receipts from Excel', file: 'Receive Import Template.xlsx',
+    heads: ['Date Received', 'Series From', 'Series To', 'Per Booklet', 'Received From', 'Reference', 'Received By'],
+    widths: [14, 12, 12, 11, 26, 16, 30],
+    cols: [['date', /date\s*rec|^\s*date\s*$/i], ['from', /series\s*fr|^\s*from\s*$/i], ['to', /series\s*t|^\s*to\s*$/i], ['per', /per\s*book/i],
+      ['src', /received\s*fr|^\s*source/i], ['ref', /ref/i], ['rby', /received\s*by/i]],
+    notes: ['One row per receipt. A row may cover several booklets: it is split by Per Booklet (blank = 50).',
+      'Date Received: an Excel date or mm/dd/yyyy.',
+      'Received From: Provincial Treasurer, National Printing Office or Others.',
+      'Received By: leave blank when the custodian (Municipal / Provincial Treasurer) received the booklets.',
+      'Received By: type the accountable officer\'s name when the officer received them directly (e.g. a barangay treasurer). The officer must already be in the app (Audit Setup or an earlier Issue import).',
+      'Reference (optional): e.g. RIS No.',
+      'The Form Type (AF 51, CTC…) is chosen in the app when importing; use one file per form type.'] },
+  issue: {
+    title: 'Import Issuances from Excel', file: 'Issue Import Template.xlsx',
+    heads: ['No.', 'Date Issued', 'Series From', 'Series To', 'Accountable Officer', 'Agency', 'Position', 'Unused on Hand (as of last cash exam)', 'Date Exhausted'],
+    widths: [6, 12, 12, 12, 28, 30, 32, 34, 14],
+    cols: [['no', /^\s*no\.?\s*$|^\s*#\s*$/i], ['issued', /date\s*iss|^\s*date\s*$/i], ['from', /series\s*fr|^\s*from\s*$/i], ['to', /series\s*t|^\s*to\s*$/i],
+      ['officer', /officer|^\s*name/i], ['agency', /agency/i], ['position', /position|designation/i], ['unused', /unused/i], ['exh', /exh/i]],
+    notes: ['One booklet per row.',
+      'A booklet already in stock in the app (received or starting inventory) is issued to the officer on Date Issued.',
+      'A booklet not yet in the app (issued before the register started, e.g. from the logbook) is recorded as a past issuance.',
+      'Unused on Hand (as of last cash exam): only for a booklet the officer already held at the last cash exam. Type the unused numbers as ranges, e.g. 7311510, 7311516-7311550 (this is the ending balance of the last SAAF). Leave blank for a booklet issued after the last cash exam.',
+      'Date Exhausted: the logbook "Exh" date, if the booklet is already used up.',
+      'Agency: for a barangay treasurer, the barangay (e.g. BLGU - Abbag), so a new officer is placed under the right barangay.',
+      'No.: the logbook line number (optional), to trace a row back to the logbook.',
+      'The Form Type (AF 51, CTC…) is chosen in the app when importing; use one file per form type.'] }
+};
+function findColumns(rows, cols) {
   for (let r = 0; r < Math.min(rows.length, 15); r++) {
     const map = {};
-    rows[r].forEach((cell, c) => { const t = String(cell || ''); COLS.forEach(([k, re]) => { if (map[k] === undefined && re.test(t) && !(k === 'issued' && /exh/i.test(t))) map[k] = c; }); });
+    rows[r].forEach((cell, c) => { const t = String(cell || ''); cols.forEach(([k, re]) => { if (map[k] === undefined && re.test(t) && !(k === 'issued' && /exh/i.test(t)) && !(k === 'officer' && /unused/i.test(t))) map[k] = c; }); });
     if (map.from !== undefined && map.to !== undefined) return { header: r, map };
   }
   return null;
@@ -628,65 +685,127 @@ function excelDate(XLSX, v) {
   return null;   // not a date
 }
 const nameKey = (s) => String(s || '').toUpperCase().replace(/\s+/g, ' ').replace(/\s*\.\s*/g, '. ').trim();
-
-function planImport(XLSX, wb, f, refs, lguId, form) {
-  let rows = null, cols = null;
+function readSheet(XLSX, wb, cols) {
   for (const n of wb.SheetNames) {
-    const r = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
-    const c = findColumns(r);
-    if (c) { rows = r; cols = c; break; }
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
+    const c = findColumns(rows, cols);
+    if (c) return { rows, ...c };
   }
-  if (!cols) return { error: 'No sheet with "Series From" and "Series To" headings was found.' };
-  const M = cols.map, get = (row, k) => (M[k] === undefined ? '' : row[M[k]]);
+  return null;
+}
+// A barangay named in the Agency column (e.g. "BLGU - Abbag", "Barangay Abbag", "Abbag") under this municipality.
+function barangayFromAgency(refs, lguId, agency) {
+  const k = String(agency || '').toUpperCase().replace(/^\s*(BLGU|BRGY\.?|BARANGAY)\s*[-–:]?\s*/, '').trim();
+  if (!k) return null;
+  return refs.lgus.find((l) => l.data.kind === 'barangay' && l.data.parentId === lguId && (l.data.name.toUpperCase() === k || String(l.data.formerName || '').toUpperCase() === k)) || null;
+}
+
+function planReceive(XLSX, sheet, f, refs, lguId, form) {
+  const M = sheet.map, get = (row, k) => (M[k] === undefined ? '' : row[M[k]]);
+  const offs = officersOf(refs, f, lguId);
+  const known = new Map(offs.map((o) => [nameKey(o.name), o]));
+  const taken = f.booklets.filter((b) => b.form === form).map((b) => ({ ...b }));
+  const plan = { kind: 'receive', form, add: [], same: [], problems: [] };
+  for (let i = sheet.header + 1; i < sheet.rows.length; i++) {
+    const row = sheet.rows[i], line = i + 1;
+    const a = int(get(row, 'from')), z = int(get(row, 'to'));
+    if (!a && !z && !String(get(row, 'date')).trim()) continue;
+    const date = excelDate(XLSX, get(row, 'date'));
+    const p = int(get(row, 'per')) || PER_BOOKLET;
+    const srcIn = String(get(row, 'src') || '').trim();
+    const src = RECEIVED_FROM.find((x) => x.toUpperCase() === srcIn.toUpperCase());
+    const rbyIn = String(get(row, 'rby') || '').trim();
+    const bad = (why) => plan.problems.push({ line, text: `${a || '?'} – ${z || '?'}`, why });
+    if (!a || !z) { bad('Series From or Series To is missing.'); continue; }
+    if (z < a) { bad('Series From is after Series To.'); continue; }
+    if (z - a + 1 > MAX_PCS) { bad(`${z - a + 1} pieces in one row. Check the series.`); continue; }
+    if (!date) { bad(date === null ? 'Date Received is not a date.' : 'Date Received is missing.'); continue; }
+    if (!src) { bad(srcIn ? `Received From "${srcIn}" is not in the list (Provincial Treasurer, National Printing Office, Others).` : 'Received From is missing.'); continue; }
+    const officer = rbyIn ? known.get(nameKey(rbyIn)) : null;
+    if (rbyIn && !officer) { bad(`Received By "${rbyIn}" is not an officer of this LGU or its barangays. Add the officer first.`); continue; }
+    const parts = splitRange(a, z, p), items = [];
+    let why = '';
+    for (const [x, y] of parts) {
+      const hit = taken.filter((b) => b.from <= y && x <= b.to);
+      const exact = hit.length === 1 && hit[0].from === x && hit[0].to === y ? hit[0] : null;
+      if (exact && exact.receivedDate) { plan.same.push({ line, text: rangeText(x, y) }); continue; }
+      if (exact && !exact.receivedDate) {
+        if (officer && exact.officerId && exact.officerId !== officer.id) { why = `${rangeText(x, y)} is recorded with another officer.`; break; }
+        if (officer && exact.issuedDate && exact.issuedDate < date) { why = `${rangeText(x, y)} was in the officer's hands on ${fmtDate(exact.issuedDate)}, before this receipt date.`; break; }
+        if (!officer && exact.status !== 'stock' && exact.issuedDate && exact.issuedDate < date) { why = `${rangeText(x, y)} was issued on ${fmtDate(exact.issuedDate)}, before this receipt date.`; break; }
+        items.push({ x, y, match: exact.id }); continue;
+      }
+      if (hit.length) { why = `${rangeText(x, y)} overlaps ${rangeText(hit[0].from, hit[0].to)} already in the register.`; break; }
+      items.push({ x, y });
+    }
+    if (why) { bad(why); continue; }
+    items.forEach((it) => { plan.add.push({ line, ...it, date, src, ref: String(get(row, 'ref') || '').trim(), officerId: officer ? officer.id : '' }); if (!it.match) taken.push({ form, from: it.x, to: it.y, receivedDate: date }); else taken.find((b) => b.id === it.match).receivedDate = date; });
+  }
+  return plan;
+}
+
+function planIssue(XLSX, sheet, f, refs, lguId, form) {
+  const M = sheet.map, get = (row, k) => (M[k] === undefined ? '' : row[M[k]]);
   const offs = officersOf(refs, f, lguId);
   const known = new Map(offs.map((o) => [nameKey(o.name), o]));
   const newOff = new Map();
-  const taken = f.booklets.filter((b) => b.form === form);
-  const plan = { add: [], same: [], problems: [], newOfficers: [] };
-  for (let i = cols.header + 1; i < rows.length; i++) {
-    const row = rows[i], line = i + 1;
+  const taken = f.booklets.filter((b) => b.form === form).map((b) => ({ ...b }));
+  const plan = { kind: 'issue', form, add: [], same: [], problems: [], newOfficers: [] };
+  for (let i = sheet.header + 1; i < sheet.rows.length; i++) {
+    const row = sheet.rows[i], line = i + 1;
     const a = int(get(row, 'from')), z = int(get(row, 'to'));
     const nm = String(get(row, 'officer') || '').trim();
-    if (!a && !z && !nm) continue;   // empty row
+    if (!a && !z && !nm) continue;
     const issued = excelDate(XLSX, get(row, 'issued')), exh = excelDate(XLSX, get(row, 'exh'));
     const no = String(get(row, 'no') || '').trim();
     const bad = (why) => plan.problems.push({ line, no, text: `${a || '?'} – ${z || '?'}${nm ? ' · ' + nm : ''}`, why });
     if (!a || !z) { bad('Series From or Series To is missing.'); continue; }
     if (z < a) { bad('Series From is after Series To.'); continue; }
     if (z - a + 1 > MAX_PCS) { bad(`${z - a + 1} pieces in one row. Check the series.`); continue; }
+    if (!nm) { bad('Accountable Officer is missing. Booklets in stock are recorded with Receive or Starting Inventory.'); continue; }
     if (issued === null) { bad('Date Issued is not a date.'); continue; }
+    if (!issued) { bad('Date Issued is missing.'); continue; }
     if (exh === null) { bad('Date Exhausted is not a date.'); continue; }
-    if (nm && !issued) { bad('Date Issued is missing.'); continue; }
-    if (exh && !nm) { bad('Exhausted, but no accountable officer.'); continue; }
-    if (exh && issued && exh < issued) { bad('Date Exhausted is before Date Issued.'); continue; }
-    const same = taken.find((b) => b.from === a && b.to === z);
-    if (same) { plan.same.push({ line, no, text: rangeText(a, z) }); continue; }
-    const hit = taken.find((b) => b.from <= z && a <= b.to);
-    if (hit) { bad(`Overlaps ${rangeText(hit.from, hit.to)}${hit.lguId !== lguId ? ' in another register' : ''}.`); continue; }
-    let officerKey = '';
-    if (nm) {
-      officerKey = nameKey(nm);
-      if (!known.has(officerKey) && !newOff.has(officerKey)) newOff.set(officerKey, { id: newId('cero'), name: officerKey, designation: String(get(row, 'position') || '').trim(), agency: String(get(row, 'agency') || '').trim() });
+    if (exh && exh < issued) { bad('Date Exhausted is before Date Issued.'); continue; }
+    const un = parseRanges(get(row, 'unused'), a, z);
+    if (un.error) { bad(`Unused on Hand: ${un.error}`); continue; }
+    if (un.ranges.length && exh) { bad('Unused on Hand and Date Exhausted cannot both be filled.'); continue; }
+    const key = nameKey(nm);
+    let o = known.get(key) || newOff.get(key);
+    const hit = taken.filter((b) => b.from <= z && a <= b.to);
+    const exact = hit.length === 1 && hit[0].from === a && hit[0].to === z ? hit[0] : null;
+    if (exact && exact.status === 'issued') {
+      if (o && exact.officerId === o.id) { plan.same.push({ line, no, text: rangeText(a, z) }); continue; }
+      bad(`Already issued to ${f.officers.find((x) => x.id === exact.officerId)?.name || 'another officer'}.`); continue;
     }
-    const item = { line, no, from: a, to: z, issued, exh, officerKey };
-    plan.add.push(item);
-    taken.push({ form, from: a, to: z, lguId });   // a repeated row later in the file counts as already added
+    if (exact && exact.status === 'lost') { bad('This booklet is recorded as lost / destroyed.'); continue; }
+    if (exact && exact.status === 'stock') {
+      if (exact.receivedDate && issued < exact.receivedDate) { bad(`Issued before it was received (${fmtDate(exact.receivedDate)}).`); continue; }
+      if (un.ranges.length) { bad('Unused on Hand is only for a booklet already held at the last cash exam, not one issued from stock.'); continue; }
+    } else if (hit.length) { bad(`Overlaps ${rangeText(hit[0].from, hit[0].to)}${hit[0].lguId !== lguId ? ' in another register' : ''}.`); continue; }
+    if (!o) {
+      const brgy = barangayFromAgency(refs, lguId, get(row, 'agency'));
+      o = { id: newId('cero'), name: key, designation: String(get(row, 'position') || '').trim(), agency: String(get(row, 'agency') || '').trim(), lguId: brgy ? brgy.id : lguId };
+      newOff.set(key, o);
+    }
+    plan.add.push({ line, no, from: a, to: z, issued, exh, unused: un.ranges, officerId: o.id, fromStock: exact ? exact.id : '' });
+    if (exact) exact.status = 'issued', exact.officerId = o.id; else taken.push({ form, from: a, to: z, lguId, status: 'issued', officerId: o.id });
   }
   plan.newOfficers = [...newOff.values()];
-  plan.officerOf = (k) => known.get(k) || newOff.get(k) || null;
   return plan;
 }
 
-async function importModal(refs, f, lguId) {
-  let plan = null, XLSX = null;
+async function importModal(refs, f, lguId, kind) {
+  const K = KINDS[kind];
+  let plan = null;
   const lgu = refs.lgu[lguId];
-  const go2 = await modal({ title: 'Import from Excel', wide: true,
-    body: `<p class="hint" style="margin:0">Forms Register of <b>${esc(agencyName(refs, lgu))}</b>. One row per booklet. Booklets already in the register are skipped, so the same file can be imported again after new rows are added.</p>
+  const ok = await modal({ title: K.title, wide: true,
+    body: `<p class="hint" style="margin:0">Forms Register of <b>${esc(agencyName(refs, lgu))}</b>. Booklets already in the register are skipped, so the same file can be imported again after new rows are added. Use the <b>${esc(K.file.replace('.xlsx', ''))}</b>.</p>
       <div class="two">
         <div class="field"><label for="i-form">Form Type</label><select class="input" id="i-form">${FORMS.map(([k, l]) => `<option value="${k}" ${k === LAST.form ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
         <div class="field"><label for="i-file">Excel file (.xlsx, .xls or .csv)</label><input class="input" type="file" id="i-file" accept=".xlsx,.xls,.csv"></div>
       </div>
-      <p class="hint" style="margin:0">Headings read: Date Issued, Series From, Series To, Accountable Officer, Agency, Position, and if present Date Exhausted (Exh) and No. A row without an officer is in stock.</p>
+      <p class="hint" style="margin:0">Headings read: ${esc(K.heads.join(', '))}.</p>
       <div id="i-prev"></div>`,
     onOpen: (bg) => {
       const fileIn = $('#i-file', bg), formIn = $('#i-form', bg), prev = $('#i-prev', bg);
@@ -695,67 +814,89 @@ async function importModal(refs, f, lguId) {
         const file = fileIn.files[0]; if (!file) { prev.innerHTML = ''; return; }
         prev.innerHTML = '<p class="hint">Reading the file…</p>';
         try {
-          XLSX = await loadXlsx();
+          const XLSX = await loadXlsx();
           const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-          plan = planImport(XLSX, wb, f, refs, lguId, formIn.value);
-          prev.innerHTML = previewHtml(plan, formIn.value);
+          const sheet = readSheet(XLSX, wb, K.cols);
+          if (!sheet) { prev.innerHTML = '<div class="msg bad">No sheet with "Series From" and "Series To" headings was found.</div>'; return; }
+          plan = kind === 'receive' ? planReceive(XLSX, sheet, f, refs, lguId, formIn.value) : planIssue(XLSX, sheet, f, refs, lguId, formIn.value);
+          prev.innerHTML = previewHtml(refs, f, plan);
         } catch (e) { prev.innerHTML = `<div class="msg bad">${esc(e.message || e)}</div>`; }
       };
       fileIn.onchange = run; formIn.onchange = run;
     },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Import New Booklets', cls: 'primary', value: 'go', check: () => {
-      if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; }
+      if (!plan) { toast('Choose the Excel file first.', 'bad'); return false; }
       if (!plan.add.length) { toast('Nothing new to import.', 'bad'); return false; }
       return true;
     } }] });
-  if (go2 !== 'go' || !plan) return;
+  if (ok !== 'go' || !plan) return;
   toast(`Importing ${plan.add.length} booklets…`);
-  for (const o of plan.newOfficers) await store.save('cer_officers', o.id, { lguId, name: o.name, designation: o.designation, agency: o.agency }, by(refs), { quiet: true });
-  const asOf = today();
-  for (const it of plan.add) {
-    const o = it.officerKey ? plan.officerOf(it.officerKey) : null;
-    const note = `Excel row ${it.line}${it.no ? ' · logbook No. ' + it.no : ''}`;
-    const history = o ? [hist(refs, 'imported', it.issued, { officerId: o.id, note })] : [hist(refs, 'starting', it.issued || asOf, { note })];
-    if (o && it.exh) history.push(hist(refs, 'exhausted', it.exh, { officerId: o.id }));
-    await store.save('cer_booklets', newId('cerb'), { lguId, form: plan.form || LAST.form, from: it.from, to: it.to, qty: it.to - it.from + 1, receivedDate: '', receivedFrom: '', reference: '',
-      source: 'import', status: o ? 'issued' : 'stock', officerId: o ? o.id : '', issuedDate: o ? it.issued : '', usedBefore: null, exhaustedDate: o ? it.exh : '', history }, by(refs), { quiet: true });
+  const q = { quiet: true };
+  if (plan.kind === 'receive') {
+    for (const it of plan.add) {
+      const info = { receivedDate: it.date, receivedFrom: it.src, reference: it.ref, receivedDirect: !!it.officerId };
+      const note = `Excel row ${it.line}`;
+      if (it.match) {
+        const b = f.booklets.find((x) => x.id === it.match);
+        await store.save('cer_booklets', b.id, { ...strip(b), ...info, history: [...(b.history || []), hist(refs, it.officerId ? 'matcheddirect' : 'matched', it.date, { officerId: it.officerId, note: `${note}; matched to the earlier entry` })] }, by(refs), q);
+      } else if (it.officerId) {
+        await store.save('cer_booklets', newId('cerb'), { lguId, form: plan.form, from: it.x, to: it.y, qty: it.y - it.x + 1, ...info, source: 'direct', status: 'issued', officerId: it.officerId, issuedDate: it.date,
+          history: [hist(refs, 'direct', it.date, { officerId: it.officerId, note: `${it.src} · ${note}` })] }, by(refs), q);
+      } else {
+        await store.save('cer_booklets', newId('cerb'), { lguId, form: plan.form, from: it.x, to: it.y, qty: it.y - it.x + 1, ...info, source: 'received', status: 'stock', officerId: '', issuedDate: '',
+          history: [hist(refs, 'received', it.date, { note: `${it.src} · ${note}` })] }, by(refs), q);
+      }
+    }
+  } else {
+    for (const o of plan.newOfficers) await store.save('cer_officers', o.id, { lguId: o.lguId, name: o.name, designation: o.designation, agency: o.agency }, by(refs), q);
+    for (const it of plan.add) {
+      const note = `Excel row ${it.line}${it.no ? ' · logbook No. ' + it.no : ''}`;
+      if (it.fromStock) {
+        const b = f.booklets.find((x) => x.id === it.fromStock);
+        const history = [...(b.history || []), hist(refs, 'issued', it.issued, { officerId: it.officerId, note })];
+        if (it.exh) history.push(hist(refs, 'exhausted', it.exh, { officerId: it.officerId }));
+        await store.save('cer_booklets', b.id, { ...strip(b), status: 'issued', officerId: it.officerId, issuedDate: it.issued, exhaustedDate: it.exh || '', history }, by(refs), q);
+      } else {
+        const history = [hist(refs, 'imported', it.issued, { officerId: it.officerId, note: note + (it.unused.length ? ` · unused on hand at the last cash exam: ${rangesText(it.unused)}` : '') })];
+        if (it.exh) history.push(hist(refs, 'exhausted', it.exh, { officerId: it.officerId }));
+        await store.save('cer_booklets', newId('cerb'), { lguId, form: plan.form, from: it.from, to: it.to, qty: it.to - it.from + 1, receivedDate: '', receivedFrom: '', reference: '',
+          source: 'import', status: 'issued', officerId: it.officerId, issuedDate: it.issued, exhaustedDate: it.exh || '', unusedAtStart: it.unused.length ? it.unused : null, history }, by(refs), q);
+      }
+    }
   }
   emitChange('local');
-  toast(`${plan.add.length} booklet${plan.add.length > 1 ? 's' : ''} imported${plan.newOfficers.length ? `, ${plan.newOfficers.length} new officer${plan.newOfficers.length > 1 ? 's' : ''} added` : ''}. ${plan.same.length ? `${plan.same.length} already in the register ${plan.same.length > 1 ? 'were' : 'was'} skipped.` : ''}`, 'ok');
+  const n = plan.add.length, s = plan.same.length, no = (plan.newOfficers || []).length;
+  toast(`${n} booklet${n > 1 ? 's' : ''} imported${no ? `, ${no} new officer${no > 1 ? 's' : ''} added` : ''}.${s ? ` ${s} already in the register ${s > 1 ? 'were' : 'was'} skipped.` : ''}`, 'ok');
 }
-function previewHtml(plan, form) {
-  if (plan.error) return `<div class="msg bad">${esc(plan.error)}</div>`;
-  plan.form = form;
-  const iss = plan.add.filter((x) => x.officerKey && !x.exh).length, exh = plan.add.filter((x) => x.exh).length, stk = plan.add.filter((x) => !x.officerKey).length;
-  return `<div class="af-imp">
-      <div><b>${plan.add.length}</b><span>new booklets to import</span><small>${iss} issued · ${exh} exhausted · ${stk} in stock</small></div>
+function previewHtml(refs, f, plan) {
+  const name = (id) => (plan.newOfficers || []).find((o) => o.id === id)?.name || f.officers.find((o) => o.id === id)?.name || '';
+  let boxes;
+  if (plan.kind === 'receive') {
+    const direct = plan.add.filter((x) => x.officerId).length, matched = plan.add.filter((x) => x.match).length;
+    boxes = `<div><b>${plan.add.length}</b><span>booklets to import</span><small>${plan.add.length - direct} to the custodian · ${direct} received directly${matched ? ` · ${matched} matched to earlier entries` : ''}</small></div>`;
+  } else {
+    const stock = plan.add.filter((x) => x.fromStock).length, past = plan.add.length - stock, exh = plan.add.filter((x) => x.exh).length, part = plan.add.filter((x) => x.unused.length).length;
+    boxes = `<div><b>${plan.add.length}</b><span>booklets to import</span><small>${stock} issued from stock · ${past} past issuances${part ? ` (${part} with unused on hand)` : ''}${exh ? ` · ${exh} exhausted` : ''}</small></div>`;
+  }
+  return `<div class="af-imp">${boxes}
       <div><b>${plan.same.length}</b><span>already in the register</span><small>or repeated in the file · skipped</small></div>
-      <div><b>${plan.newOfficers.length}</b><span>new officers</span><small>added to this LGU</small></div>
+      <div><b>${(plan.newOfficers || []).length}</b><span>new officers</span><small>${plan.kind === 'receive' ? 'none: Received By must already exist' : 'added once'}</small></div>
       <div class="${plan.problems.length ? 'warn' : ''}"><b>${plan.problems.length}</b><span>rows not imported</span><small>listed below</small></div>
     </div>
-    ${plan.newOfficers.length ? `<p class="hint" style="margin:0"><b>New officers:</b> ${plan.newOfficers.map((o) => esc(o.name) + (o.designation ? ` (${esc(o.designation)})` : '')).join(', ')}</p>` : ''}
-    ${plan.problems.length ? `<div class="af-probs"><b>Rows not imported</b>${plan.problems.slice(0, 50).map((p) => `<div>Row ${p.line}${p.no ? ` · No. ${esc(p.no)}` : ''} · ${esc(p.text)} — ${esc(p.why)}</div>`).join('')}${plan.problems.length > 50 ? `<div>…and ${plan.problems.length - 50} more</div>` : ''}</div>` : ''}`;
+    ${(plan.newOfficers || []).length ? `<p class="hint" style="margin:0"><b>New officers:</b> ${plan.newOfficers.map((o) => `${esc(o.name)}${o.designation ? ` (${esc(o.designation)})` : ''}${refs.lgu[o.lguId]?.data.kind === 'barangay' ? ` · ${esc(agencyName(refs, refs.lgu[o.lguId]))}` : ''}`).join(', ')}</p>` : ''}
+    ${plan.problems.length ? `<div class="af-probs"><b>Rows not imported</b>${plan.problems.slice(0, 60).map((p) => `<div>Row ${p.line}${p.no ? ` · No. ${esc(p.no)}` : ''} · ${esc(p.text)} — ${esc(p.why)}</div>`).join('')}${plan.problems.length > 60 ? `<div>…and ${plan.problems.length - 60} more</div>` : ''}</div>` : ''}`;
 }
 
-// An empty Excel file with exactly the headings the import reads. One booklet per row.
-const TEMPLATE_HEADS = ['No.', 'Date Issued', 'Series From', 'Series To', 'Accountable Officer', 'Agency', 'Position', 'Date Exhausted'];
-async function downloadTemplate() {
+// An empty Excel file with exactly the headings the import reads, plus a sheet of instructions.
+async function downloadTemplate(kind) {
+  const K = KINDS[kind];
   const XLSX = await loadXlsx();
-  const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADS]);
-  ws['!cols'] = [6, 12, 12, 12, 28, 30, 32, 14].map((w) => ({ wch: w }));
-  const notes = XLSX.utils.aoa_to_sheet([
-    ['How to fill in'],
-    ['One booklet per row. Keep the headings in row 1 of the Booklets sheet as they are.'],
-    ['Date Issued and Date Exhausted: Excel dates or mm/dd/yyyy.'],
-    ['Series From / Series To: numbers only, e.g. 7315451 and 7315500.'],
-    ['Accountable Officer: full name. The same name is matched to the same officer, in any capitalization.'],
-    ['Leave Accountable Officer and Date Issued blank for a booklet still in stock with the custodian.'],
-    ['Date Exhausted: the logbook "Exh" date, if the booklet is already used up. Leave blank if not.'],
-    ['No.: the logbook line number (optional), to trace a row back to the logbook.'],
-    ['The Form Type (AF 51, CTC…) is chosen in the app when importing; use one file per form type.']]);
-  notes['!cols'] = [{ wch: 100 }];
+  const ws = XLSX.utils.aoa_to_sheet([K.heads]);
+  ws['!cols'] = K.widths.map((w) => ({ wch: w }));
+  const notes = XLSX.utils.aoa_to_sheet([['How to fill in'], ...K.notes.map((n) => [n])]);
+  notes['!cols'] = [{ wch: 110 }];
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Booklets');
+  XLSX.utils.book_append_sheet(wb, ws, kind === 'receive' ? 'Receipts' : 'Issuances');
   XLSX.utils.book_append_sheet(wb, notes, 'How to fill in');
-  XLSX.writeFile(wb, 'Accountable Forms Import Template.xlsx');
+  XLSX.writeFile(wb, K.file);
 }
