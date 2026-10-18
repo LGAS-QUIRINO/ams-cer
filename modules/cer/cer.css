@@ -141,3 +141,5 @@ table.af-raaf{width:100%; border-collapse:collapse; font-size:13.5px; min-width:
 .af-imp .warn{border-color:#f0c27a; background:#fff8ee}
 .af-probs{border:1px solid #f0c27a; background:#fffaf2; border-radius:10px; padding:10px 12px; font-size:12.5px; max-height:220px; overflow:auto; display:flex; flex-direction:column; gap:3px}
 @media (max-width:640px){ .af-imp{grid-template-columns:1fr 1fr} }
+.af-tpl{font-size:13px; font-weight:600; color:var(--blue); text-decoration:none; padding:8px 4px}
+.af-tpl:hover{text-decoration:underline}

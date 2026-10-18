@@ -218,7 +218,7 @@ function encodeHtml(refs, offs, q) {
     : 'Use once, to start the register: the custodian\'s stock and each officer\'s outstanding booklets as of one date. Also for a barangay treasurer\'s booklets copied from the logbook before the municipality\'s side is encoded.';
   return `<section class="panel" aria-labelledby="enc-h"><div class="af-encbox">
     <div class="af-headrow"><h2 id="enc-h" class="cer-h2">Encode</h2>
-      <div class="af-headr"><button class="btn" type="button" id="af-import">Import from Excel</button>
+      <div class="af-headr"><a href="#" class="af-tpl" id="af-tpl">Download Template</a><button class="btn" type="button" id="af-import">Import from Excel</button>
       <div class="seg" role="group" aria-label="Movement">${MOVES.map(([k, l]) => `<a href="#" data-mv="${k}" class="${k === mv ? 'on' : ''}" aria-pressed="${k === mv}">${l}</a>`).join('')}</div></div></div>
     ${fields}
     <p class="af-note" id="e-help">${esc(help)}</p></div></section>`;
@@ -237,6 +237,7 @@ function wireRegister(ctx, f, lguId, offs) {
   $$('[data-filter]').forEach((s) => { s.onchange = () => go({ [s.dataset.filter]: s.value }); });
   $$('[data-mv]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); go({ mv: a.dataset.mv }); }; });
   const imp = $('#af-import'); if (imp) imp.onclick = () => importModal(refs, f, lguId);
+  const tpl = $('#af-tpl'); if (tpl) tpl.onclick = async (e) => { e.preventDefault(); try { await downloadTemplate(); } catch (err) { toast(err.message || String(err), 'bad'); } };
   $$('tr[data-bk]').forEach((tr) => {
     const open = () => bookletModal(ctx, f, f.booklets.find((b) => b.id === tr.dataset.bk), offs);
     tr.onclick = open; tr.onkeydown = (e) => { if (e.key === 'Enter') open(); };
@@ -714,4 +715,27 @@ function previewHtml(plan, form) {
     </div>
     ${plan.newOfficers.length ? `<p class="hint" style="margin:0"><b>New officers:</b> ${plan.newOfficers.map((o) => esc(o.name) + (o.designation ? ` (${esc(o.designation)})` : '')).join(', ')}</p>` : ''}
     ${plan.problems.length ? `<div class="af-probs"><b>Rows not imported</b>${plan.problems.slice(0, 50).map((p) => `<div>Row ${p.line}${p.no ? ` · No. ${esc(p.no)}` : ''} · ${esc(p.text)} — ${esc(p.why)}</div>`).join('')}${plan.problems.length > 50 ? `<div>…and ${plan.problems.length - 50} more</div>` : ''}</div>` : ''}`;
+}
+
+// An empty Excel file with exactly the headings the import reads. One booklet per row.
+const TEMPLATE_HEADS = ['No.', 'Date Issued', 'Series From', 'Series To', 'Accountable Officer', 'Agency', 'Position', 'Date Exhausted'];
+async function downloadTemplate() {
+  const XLSX = await loadXlsx();
+  const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADS]);
+  ws['!cols'] = [6, 12, 12, 12, 28, 30, 32, 14].map((w) => ({ wch: w }));
+  const notes = XLSX.utils.aoa_to_sheet([
+    ['How to fill in'],
+    ['One booklet per row. Keep the headings in row 1 of the Booklets sheet as they are.'],
+    ['Date Issued and Date Exhausted: Excel dates or mm/dd/yyyy.'],
+    ['Series From / Series To: numbers only, e.g. 7315451 and 7315500.'],
+    ['Accountable Officer: full name. The same name is matched to the same officer, in any capitalization.'],
+    ['Leave Accountable Officer and Date Issued blank for a booklet still in stock with the custodian.'],
+    ['Date Exhausted: the logbook "Exh" date, if the booklet is already used up. Leave blank if not.'],
+    ['No.: the logbook line number (optional), to trace a row back to the logbook.'],
+    ['The Form Type (AF 51, CTC…) is chosen in the app when importing; use one file per form type.']]);
+  notes['!cols'] = [{ wch: 100 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Booklets');
+  XLSX.utils.book_append_sheet(wb, notes, 'How to fill in');
+  XLSX.writeFile(wb, 'Accountable Forms Import Template.xlsx');
 }
