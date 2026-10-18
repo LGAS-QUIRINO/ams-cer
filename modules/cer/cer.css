@@ -1,0 +1,57 @@
+/* Cash Examination Report module */
+.cer-sec{padding:20px 22px; display:flex; flex-direction:column; gap:18px}
+.cer-h2{margin:0; font-size:17px; color:var(--navy)}
+.cer-h3{margin:0; font-size:14.5px; color:var(--navy)}
+.cer-headrow{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap}
+.cer-block{display:flex; flex-direction:column; gap:12px}
+.cer-g2{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px}
+.cer-g3{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px}
+.cer-g5{display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:16px}
+.cer-span2{grid-column:span 2}
+.cer-sec .input{font-size:14px; padding:10px 11px}
+.cer-sec .input:disabled, .cer-sec .input[readonly]{background:#f3f6fa; color:var(--ink)}
+.input.amt{text-align:right; font-variant-numeric:tabular-nums}
+.input.flag{border:2px solid #b4540a}
+.cer-lbl{font-size:12px; font-weight:700; color:var(--ink)}
+.cer-scope{font-size:16px; font-weight:700; color:var(--navy); padding:9px 0}
+.cer-scope .dim, .cer-bal .dim{color:var(--muted); font-weight:400; font-size:13px}
+.cer-wait{margin:0; color:var(--muted); font-size:13.5px}
+.cer-ro{background:#eef3fd; color:#1d4fb8}
+.cer-foot{border-top:1px solid var(--line); padding-top:14px}
+
+#cer-off{display:flex; flex-direction:column; gap:20px}
+
+/* officer tabs */
+.cer-tabs{display:flex; gap:4px; border-bottom:1px solid var(--line); overflow-x:auto}
+.cer-tabs a{padding:10px 14px; min-height:44px; box-sizing:border-box; display:flex; align-items:center; color:var(--muted); text-decoration:none; white-space:nowrap; font-size:14px; border-bottom:3px solid transparent}
+.cer-tabs a.on{color:var(--navy); font-weight:700; border-bottom-color:var(--blue)}
+.cer-tabs a:hover{color:var(--navy)}
+
+/* function and form chips */
+.cer-chips{display:flex; flex-wrap:wrap; gap:8px}
+.field .cer-chip, .cer-chip{display:inline-flex; align-items:center; gap:8px; padding:8px 14px; min-height:40px; box-sizing:border-box; border:1px solid #c9d3e6; border-radius:999px; background:#fff; font-size:13.5px; font-weight:400 !important; color:var(--muted); cursor:pointer}
+.field .cer-chip:has(input:checked), .cer-chip:has(input:checked){border-color:var(--blue); background:#e7efff; color:var(--navy); font-weight:600 !important}
+.cer-chip:has(input:disabled){cursor:default}
+fieldset.field{border:0; padding:0; margin:0}
+
+/* bond checks */
+.cer-alert{display:flex; align-items:flex-start; gap:10px; padding:10px 14px; border-radius:10px; font-size:13.5px; line-height:1.45; background:#fff4e5; border:1px solid #f0c27a; color:#6b3a06}
+.cer-alert svg{flex:none; margin-top:1px; color:#b4540a}
+.cer-alert.bad{border-width:2px}
+#cer-warn{display:flex; flex-direction:column; gap:8px}
+#cer-warn:empty{display:none}
+
+/* beginning balances */
+.cer-tbl{overflow-x:auto; border:1px solid var(--line); border-radius:10px}
+table.cer-bal{width:100%; border-collapse:collapse; font-size:14px; min-width:560px}
+.cer-bal th{background:#f6f8fc; color:var(--muted); font-size:11.5px; letter-spacing:.5px; text-transform:uppercase; text-align:left; padding:10px 14px}
+.cer-bal td{border-top:1px solid var(--line); padding:8px 14px; vertical-align:middle}
+.cer-bal .r{text-align:right}
+.cer-bal td.r .input{max-width:180px; margin-left:auto}
+
+@media (max-width:1100px){ .cer-g5{grid-template-columns:repeat(3,minmax(0,1fr))} }
+@media (max-width:760px){
+  .cer-g2, .cer-g3, .cer-g5{grid-template-columns:1fr}
+  .cer-span2{grid-column:auto}
+  .cer-sec{padding:16px}
+}
