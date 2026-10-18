@@ -1069,3 +1069,23 @@ export function unusedFormsOf(f, officerId, exam, countDate) {
       return { id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, from: b.from, to: b.to, ranges: un, qty: countRanges(un), text: rangesText(un), status: st, lastCheck: c?.lastCheck || b.lastCheck || null };
     });
 }
+
+// For Reports (SAAF, Annex B): each booklet of the officer within the scope of audit, as Beginning, Received, Issued,
+// Ending (per the register) and per Count (Physical Check at this cash examination). Ranges are [[from, to], …].
+export function saafRows(f, officerId, exam, from, to) {
+  const out = [];
+  f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && b.issuedDate <= to)
+    .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from).forEach((b) => {
+      const beg = from && b.issuedDate <= from ? (b.status === 'lost' && b.history?.some((h) => h.action === 'lost' && h.date <= from) ? [] : rawUnused(b, from)) : [];
+      const rec = !from || b.issuedDate > from ? [[b.from, b.to]] : [];
+      const end = b.status === 'lost' ? [] : rawUnused(b, to);
+      if (!beg.length && !rec.length && !end.length) return;
+      const issued = subtractRanges([...beg, ...rec], end);
+      const c = exam ? f.checks.find((x) => x.id === exam.id + '|' + b.id) : null;
+      const count = c && c.seen && Array.isArray(c.ranges) ? c.ranges : null;
+      out.push({ id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], beg, rec, issued, end, count,
+        diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || '' });
+    });
+  return out;
+}
+export { countRanges };

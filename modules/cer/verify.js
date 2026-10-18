@@ -27,37 +27,16 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const UI = { view: 'sum' };
 const fmtAmt = (n) => (n < -0.004 ? `(${money(-n)})` : money(n));
 
-export async function verifyView(ctx) {
-  const { refs, q } = ctx;
-  const f = await loadForms();
-  const [reports, advs0, liqs0, counts0, ver0, bank0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount', 'cer_verify', 'cer_bankrec'].map((t) => store.list(t)));
-  f.reports = reports.map(flat);
-  const advs = advs0.map(flat), liqs = liqs0.map(flat);
-  const crumb = 'Verification';
-  const hello = `<div class="hello"><div><h1>Verification</h1><p>Everything encoded is put together for the auditor: the statement of accountability, the reconciliation with the officer's books, and the findings to decide on.</p></div></div>`;
-  const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
-  if (!audits.length) return { crumb, body: hello + '<div class="panel"><div class="empty"><b>No cash examination yet.</b>The auditors set one up in Audit Setup.</div></div>' };
-  const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
+// The statement of accountability of one officer (shared with Reports): columns, movements within the scope, balances, inventory.
+export function accountability(refs, f, audit, exam, advs, liqs, counts) {
   const lgu = refs.lgu[audit.lguId];
-  const exams = f.exams.filter((e) => e.auditId === audit.id).map((e) => ({ ...e, o: f.officers.find((x) => x.id === e.officerId) })).filter((e) => e.o);
-  const exam = exams.find((e) => e.id === q.get('e')) || exams[0] || null;
-  const from = exam?.lastExamDate || '', to = audit.countDate;
-  const top = `<div class="panel cd-bar cc-bar">
-      <div class="field"><label for="vf-audit">Cash Examination</label><select class="input" id="vf-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>
-      <div class="field"><label for="vf-exam">Accountable Officer</label><select class="input" id="vf-exam">${exams.length ? exams.map((e) => `<option value="${esc(e.id)}" ${exam && e.id === exam.id ? 'selected' : ''}>${esc(e.o.name)}${e.o.designation ? ' · ' + esc(e.o.designation) : ''}</option>`).join('') : '<option value="">No officer in this examination</option>'}</select></div>
-      <div class="field"><span class="cd-lbl">Scope of Audit</span><div class="cc-cpn"><b>${esc(fmtDate(from) || '—')} to ${esc(fmtDate(to))}</b></div></div></div>`;
-  const wireTop = () => {
-    $('#vf-audit').onchange = (e) => go({ a: e.target.value, e: '' });
-    $('#vf-exam').onchange = (e) => go({ e: e.target.value });
-  };
-  if (!exam) return { crumb, body: hello + top + '<div class="panel"><div class="empty"><b>No accountable officer in this cash examination.</b>Add the officers in Audit Setup.</div></div>', wire: wireTop };
-
+  const from = exam.lastExamDate || '', to = audit.countDate;
   const o = exam.o;
   const inScope = (d) => !!d && (!from || d > from) && d <= to;
   const bal = exam.balances || {};
   const fig = figuresOf(f, o, fundsOf(f, audit.lguId), to, lgu);
   const books = booksOf(refs, f, o, exam, audit, advs, liqs);   // the columns, same as Cash Count
-  const count = counts0.map(flat).find((c) => c.id === exam.id) || null;
+  const count = counts.find((c) => c.id === exam.id) || null;
   const inv = count ? compute({ bills: count.bills || {}, coins: count.coins || 0, items: count.items || [], split: count.split || {} }, books).inv : null;
 
   // Movements per column, each { date, debit, credit }.
@@ -92,6 +71,35 @@ export async function verifyView(ctx) {
   const T = (k) => r2(st.reduce((n, x) => n + (x[k] || 0), 0));
   const totSh = inv ? T('sh') : null;
 
+  return { o, lgu, from, to, inScope, bal, fig, books, count, inv, moves, st, T, totSh };
+}
+
+export async function verifyView(ctx) {
+  const { refs, q } = ctx;
+  const f = await loadForms();
+  const [reports, advs0, liqs0, counts0, ver0, bank0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount', 'cer_verify', 'cer_bankrec'].map((t) => store.list(t)));
+  f.reports = reports.map(flat);
+  const advs = advs0.map(flat), liqs = liqs0.map(flat);
+  const crumb = 'Verification';
+  const hello = `<div class="hello"><div><h1>Verification</h1><p>Everything encoded is put together for the auditor: the statement of accountability, the reconciliation with the officer's books, and the findings to decide on.</p></div></div>`;
+  const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
+  if (!audits.length) return { crumb, body: hello + '<div class="panel"><div class="empty"><b>No cash examination yet.</b>The auditors set one up in Audit Setup.</div></div>' };
+  const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
+  const lgu = refs.lgu[audit.lguId];
+  const exams = f.exams.filter((e) => e.auditId === audit.id).map((e) => ({ ...e, o: f.officers.find((x) => x.id === e.officerId) })).filter((e) => e.o);
+  const exam = exams.find((e) => e.id === q.get('e')) || exams[0] || null;
+  const from = exam?.lastExamDate || '', to = audit.countDate;
+  const top = `<div class="panel cd-bar cc-bar">
+      <div class="field"><label for="vf-audit">Cash Examination</label><select class="input" id="vf-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>
+      <div class="field"><label for="vf-exam">Accountable Officer</label><select class="input" id="vf-exam">${exams.length ? exams.map((e) => `<option value="${esc(e.id)}" ${exam && e.id === exam.id ? 'selected' : ''}>${esc(e.o.name)}${e.o.designation ? ' · ' + esc(e.o.designation) : ''}</option>`).join('') : '<option value="">No officer in this examination</option>'}</select></div>
+      <div class="field"><span class="cd-lbl">Scope of Audit</span><div class="cc-cpn"><b>${esc(fmtDate(from) || '—')} to ${esc(fmtDate(to))}</b></div></div></div>`;
+  const wireTop = () => {
+    $('#vf-audit').onchange = (e) => go({ a: e.target.value, e: '' });
+    $('#vf-exam').onchange = (e) => go({ e: e.target.value });
+  };
+  if (!exam) return { crumb, body: hello + top + '<div class="panel"><div class="empty"><b>No accountable officer in this cash examination.</b>Add the officers in Audit Setup.</div></div>', wire: wireTop };
+
+  const { o, inScope, bal, fig, books, count, inv, moves, st, T, totSh } = accountability(refs, f, audit, exam, advs, liqs, counts0.map(flat));
   // Findings, each with a stable key so the auditor's decision stays with it.
   const findings = [];
   const add = (key, area, text, href) => findings.push({ key, area, text, href });

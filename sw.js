@@ -1,10 +1,10 @@
 // Keeps AMS working offline. Online it always loads the newest files; offline it uses the saved copy.
-const RELEASE = 'v0.10.0-cer';
+const RELEASE = 'v0.11.0-cer';
 const VERSION = 'ams|' + self.registration.scope + '|' + RELEASE;
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'img/coa-logo.png', 'img/icon-192.png', 'img/icon-512.png',
   'js/app.js', 'js/config.js', 'js/db.js', 'js/auth.js', 'js/ui.js', 'js/modules.js', 'js/seed.js', 'js/store.js', 'js/api.js', 'js/sync.js', 'js/views/login.js', 'js/views/dashboard.js', 'js/views/admin.js', 'js/frame.js',
-  'modules/cer/cer.js', 'modules/cer/forms.js', 'modules/cer/collections.js', 'modules/cer/advances.js', 'modules/cer/banks.js', 'modules/cer/count.js', 'modules/cer/verify.js', 'modules/cer/cer.css', 'lib/xlsx.full.min.js'];
+  'modules/cer/cer.js', 'modules/cer/forms.js', 'modules/cer/collections.js', 'modules/cer/advances.js', 'modules/cer/banks.js', 'modules/cer/count.js', 'modules/cer/verify.js', 'modules/cer/reports.js', 'modules/cer/cer.css', 'lib/xlsx.full.min.js'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
