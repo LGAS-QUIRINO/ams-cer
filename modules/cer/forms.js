@@ -13,6 +13,7 @@ import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer } from './cer.js';
 
 const FORM_SHORT = { af51: 'AF 51', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate', af54: 'AF 54', af56: 'AF 56' };
+const custOf = (l) => (l && l.data.kind === 'province' ? 'PTO' : 'MTO');   // the custodian's office
 const RECEIVED_FROM = ['Provincial Treasurer', 'National Printing Office', 'Others'];
 const PER_BOOKLET = 50;
 const MAX_PCS = 10000;   // one entry covers at most this many pieces; a longer range is likely a typing mistake
@@ -187,7 +188,7 @@ function registerView(ctx, f, lguId) {
           return `<tr class="${flagOld || flagSeq ? 'flag' : ''}" data-bk="${esc(b.id)}" tabindex="0">
             <td>${esc(FORM_SHORT[b.form] || b.form)}</td><td class="mono">${rangeText(b.from, b.to)}</td><td class="r">${b.qty}</td>
             <td>${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${b.receivedDirect ? `<b class="af-direct">Received directly</b> · ` : ''}${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'import' ? 'Imported from Excel' : b.source === 'starting' ? 'Starting inventory' : ''))}</small></td>
-            <td>${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock<small>${lgu.data.kind === 'province' ? 'Provincial' : 'Municipal'} Treasurer (custodian)</small>`}</td>
+            <td>${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock<small>Custodian (${custOf(lgu)})</small>`}</td>
             <td>${b.status !== 'stock' && b.issuedDate ? esc(fmtDate(b.issuedDate)) : '<span class="dim">—</span>'}</td>
             <td class="r">${d === null ? '<span class="dim">—</span>' : `<b class="${flagOld ? 'warn-t' : ''}">${d}</b>`}</td>
             <td class="r">${usedOf(b)}</td>
@@ -492,7 +493,7 @@ function officerView(ctx, f, lguId) {
       <p class="af-note">Click a booklet to see its history and to Transfer, Return or report it Lost.</p>`
       : `<div class="empty"><b>${tab === 'hand' ? 'No booklets in this officer\'s hands.' : 'No booklets issued to this officer yet.'}</b></div>`;
   }
-  const body = `<div class="hello"><div><a href="#/cer/forms/officer?lgu=${esc(lguId)}" class="af-back">← All officers</a><h1>${esc(o.name)}</h1><p>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))} · booklets issued by the ${refs.lgu[lguId].data.kind === 'province' ? 'Provincial' : 'Municipal'} Treasurer</p></div>
+  const body = `<div class="hello"><div><a href="#/cer/forms/officer?lgu=${esc(lguId)}" class="af-back">← All officers</a><h1>${esc(o.name)}</h1><p>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))} · booklets issued by the ${custOf(refs.lgu[lguId])}</p></div>
       <div class="btn-row"><a class="btn" href="#/cer/forms?lgu=${esc(lguId)}&cust=${esc(o.id)}">Open in Forms Register</a><button class="btn" type="button" id="af-clear">Print Clearance List</button></div></div>
     <div class="stats">
       <div class="stat"><span>Booklets in Hand</span><b>${inHand.length}</b><small>not yet exhausted</small></div>
@@ -582,7 +583,7 @@ function raafView(ctx, f, lguId) {
   const cell = (k, fld, v) => `<td><label class="sr-only" for="r-${k}-${fld}">${esc(FORM_SHORT[k])} ${fld} per RAAF</label><input class="input af-cell" id="r-${k}-${fld}" data-r="${k}" data-f="${fld}" inputmode="numeric" value="${v ?? ''}" ${enc ? '' : 'disabled'}></td>`;
   const body = `<div class="hello"><div><a href="#/cer/forms?lgu=${esc(lguId)}" class="af-back">← Forms Register</a><h1>RAAF Reconciliation</h1><p>Type the custodian's Report of Accountability for Accountable Forms. The register's own figures are computed beside it, in pieces, and any difference is flagged for the auditor.</p></div></div>
     <div class="panel af-bar">
-      <div class="field"><label for="r-lgu">Custodian</label><select class="input" id="r-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))} · ${l.data.kind === 'province' ? 'Provincial' : 'Municipal'} Treasurer</option>`).join('')}</select></div>
+      <div class="field"><label for="r-lgu">Custodian</label><select class="input" id="r-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))} · ${custOf(l)}</option>`).join('')}</select></div>
       <div class="field"><label for="r-m">RAAF Month</label><input class="input" type="month" id="r-m" value="${esc(m)}"></div>
       <div class="field"><label for="r-rec">RAAF Received</label><input class="input" type="date" id="r-rec" value="${esc(recDate)}" ${enc ? '' : 'disabled'}></div>
     </div>
@@ -647,7 +648,7 @@ const KINDS = {
     notes: ['One row per receipt. A row may cover several booklets: it is split by Per Booklet (blank = 50).',
       'Date Received: an Excel date or mm/dd/yyyy.',
       'Received From: Provincial Treasurer, National Printing Office or Others.',
-      'Received By: leave blank when the custodian (Municipal / Provincial Treasurer) received the booklets.',
+      'Received By: leave blank when the custodian (MTO / PTO) received the booklets.',
       'Received By: type the accountable officer\'s name when the officer received them directly (e.g. a barangay treasurer). The officer must already be in the app (Audit Setup or an earlier Issue import).',
       'Reference (optional): e.g. RIS No.',
       'The Form Type (AF 51, CTC…) is chosen in the app when importing; use one file per form type.'] },
