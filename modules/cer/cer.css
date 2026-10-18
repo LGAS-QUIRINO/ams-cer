@@ -247,3 +247,15 @@ small.cd-issues{display:block; color:#8a4b00; margin-top:4px; max-width:340px}
 @media (max-width:1100px){ .cd-g5{grid-template-columns:repeat(3,minmax(0,1fr))} .cd-g4{grid-template-columns:repeat(2,minmax(0,1fr))} }
 @media (max-width:760px){ .cd-bar, .cd-g2, .cd-g4, .cd-g5, .cd-orrow{grid-template-columns:1fr} .cd-phead, .cd-prow{grid-template-columns:1fr 120px 44px} .cd-listhead #cd-search{width:100%} .cd-total{margin-left:0} }
 .cd-sumtbl th:last-child, .cd-sumtbl td:last-child{min-width:260px}
+.af-bar{grid-template-columns:repeat(4,minmax(0,1fr))}
+.af-findbox .input{width:auto; flex:1; min-width:0}
+#af-found:empty{display:none}
+#af-found{display:flex; flex-direction:column; gap:8px}
+.af-find{background:#fff; border:1px solid #c9d8f3; border-left-width:1px; border-radius:12px; padding:12px 16px; display:grid; grid-template-columns:1fr auto; gap:3px 14px; font-size:13.5px}
+.af-find > b{font-size:15px; color:var(--navy)}
+.af-find > span{grid-column:1}
+.af-find .af-findbtns{grid-column:2; grid-row:1 / span 3; align-self:center}
+.af-find.bad{border-color:#f0c27a; background:#fff8ec}
+.af-reg tr.af-hit td{background:#fff4d6}
+@media (max-width:1100px){ .af-bar{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media (max-width:760px){ .af-bar{grid-template-columns:1fr} .af-find{grid-template-columns:1fr} .af-find .af-findbtns{grid-column:1; grid-row:auto} }

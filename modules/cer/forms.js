@@ -174,8 +174,10 @@ function registerView(ctx, f, lguId) {
     <div class="panel af-bar">
       <div class="field"><label for="af-lgu">Forms Register of</label><select class="input" id="af-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
       <div class="field"><label for="af-asof">Days counted up to</label><input class="input" type="date" id="af-asof" value="${esc(asOf)}"></div>
-      <div class="field"><label for="af-aging">Flag a booklet held by an AO after (days)</label><input class="input" id="af-aging" inputmode="numeric" placeholder="No flag" value="${esc(aging)}" ${isAuditor(refs) ? '' : 'disabled'}></div>
+      <div class="field"><label for="af-aging">"Held too long" after (days with AO)</label><input class="input" id="af-aging" inputmode="numeric" placeholder="Blank = no mark" value="${esc(aging)}" ${isAuditor(refs) ? '' : 'disabled'}></div>
+      <div class="field"><label for="af-find">Find a Serial No.</label><div class="af-pair af-findbox"><input class="input mono" id="af-find" inputmode="numeric" placeholder="e.g. 7311510" autocomplete="off"><button class="btn" type="button" id="af-findgo">Find</button></div></div>
     </div>
+    <div id="af-found" aria-live="polite"></div>
 
     <div class="stats">
       <div class="stat"><span>In Stock · Custodian</span><b>${stock.length}</b><small>booklets · ${stock.reduce((n, b) => n + b.qty, 0)} pcs</small></div>
@@ -286,6 +288,10 @@ function wireRegister(ctx, f, lguId, offs) {
   const { refs } = ctx;
   $('#af-lgu').onchange = (e) => go({ lgu: e.target.value, cust: '' });
   $('#af-asof').onchange = (e) => go({ asof: e.target.value });
+  const findIn = $('#af-find');
+  const doFind = () => findSerial(ctx, f, lguId, offs, findIn.value);
+  $('#af-findgo').onclick = doFind;
+  findIn.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doFind(); } };
   const ag = $('#af-aging');
   if (ag && !ag.disabled) ag.onchange = async () => {
     const v = int(ag.value);
@@ -324,6 +330,36 @@ function wireRegister(ctx, f, lguId, offs) {
       if (ok) ['#e-from', '#e-to', '#e-ref'].forEach((s) => { const el = $(s); if (el) el.value = ''; });
     } finally { enter.disabled = false; }
   };
+}
+// Find a Serial No.: the booklet holding the number, who has it, and whether the number is used (and in which SCD / RCD).
+async function findSerial(ctx, f, lguId, offs, text) {
+  const { refs } = ctx;
+  const box = $('#af-found'); $$('tr.af-hit').forEach((tr) => tr.classList.remove('af-hit'));
+  const n = int(text);
+  if (!n) { box.innerHTML = ''; return; }
+  const hits = f.booklets.filter((b) => b.from <= n && n <= b.to);
+  if (!hits.length) { box.innerHTML = `<div class="af-find bad"><b>${n} is not in any booklet encoded in the app.</b><span>Check the number, or encode its booklet with Receive, Issue or Starting Inventory.</span></div>`; return; }
+  const reports = (await store.list('cer_reports')).map((r) => ({ id: r.id, ...r.data }));
+  box.innerHTML = hits.map((b) => {
+    const o = f.officers.find((x) => x.id === b.officerId);
+    const here = b.lguId === lguId;
+    const or = f.ors.find((x) => x.bookletId === b.id && x.serial === n);
+    const rep = or && or.reportId ? reports.find((r) => r.id === or.reportId) : null;
+    const usedBy = or ? f.officers.find((x) => x.id === or.officerId) : null;
+    const unused = unusedRanges(b).some(([a, z]) => a <= n && n <= z);
+    const state = or ? `<b>${or.status === 'cancelled' ? 'Cancelled' : 'Issued'}</b> on ${esc(fmtDate(or.date))}${or.status === 'cancelled' ? '' : ` · ₱${(or.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`} · by ${esc(usedBy ? usedBy.name : '—')} · ${rep ? `${esc(rep.kind || 'RCD')} No. ${esc(rep.no)}` : 'Not yet reported'}${usedBy && b.officerId !== usedBy.id ? ' · <b class="warn-t">used by another officer</b>' : ''}`
+      : b.status === 'stock' ? 'In stock, unused' : b.status === 'lost' ? 'Booklet reported lost / destroyed' : unused ? '<b>Unused</b>' : 'Used (per the issuance record or logbook, not encoded in Collections)';
+    const sk = skippedOf(b).some(([a, z]) => a <= n && n <= z);
+    return `<div class="af-find"><b>${esc(FORM_SHORT[b.form] || b.form)} ${n}</b>
+      <span>Booklet ${rangeText(b.from, b.to)} · ${b.status === 'issued' && o ? `with <b>${esc(o.name)}</b>${o.designation ? ', ' + esc(o.designation) : ''} since ${esc(fmtDate(b.issuedDate))}` : b.status === 'stock' ? `in stock with the custodian (${custOf(refs.lgu[b.lguId])})` : 'lost / destroyed'}${here ? '' : ` · in the register of ${esc(agencyName(refs, refs.lgu[b.lguId]))}`}</span>
+      <span>Number: ${state}${sk ? ' · <b class="warn-t">skipped</b> (unused between used numbers)' : ''}</span>
+      <span class="af-findbtns">${here ? `<button class="btn sm" type="button" data-open="${esc(b.id)}">Open booklet</button>` : `<a class="btn sm" href="#/cer/forms?lgu=${esc(b.lguId)}">Go to that register</a>`}</span></div>`;
+  }).join('');
+  $$('[data-open]', box).forEach((btn) => { btn.onclick = () => bookletModal(ctx, f, f.booklets.find((b) => b.id === btn.dataset.open), offs); });
+  const row = $(`tr[data-bk="${hits[0].id}"]`);
+  if (row) { row.classList.add('af-hit'); row.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  else if (hits[0].lguId === lguId) box.insertAdjacentHTML('beforeend', '<p class="af-note">The booklet is hidden by the register filters. <a href="#" id="af-clearf">Show all booklets</a></p>');
+  const cl = $('#af-clearf'); if (cl) cl.onclick = (e) => { e.preventDefault(); go({ form: '', cust: '', st: 'all' }); };
 }
 function splitRange(a, z, p) { const out = []; for (let x = a; x <= z; x += p) out.push([x, Math.min(z, x + p - 1)]); return out; }
 const hist = (refs, action, date, extra = {}) => ({ action, date, by: by(refs), at: new Date().toISOString(), ...extra });
