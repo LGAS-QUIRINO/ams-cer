@@ -15,6 +15,10 @@ import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate,
 const FORM_SHORT = { af51: 'AF 51', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate', af54: 'AF 54', af56: 'AF 56' };
 const custOf = (l) => (l && l.data.kind === 'province' ? 'PTO' : 'MTO');   // the custodian's office
 const RECEIVED_FROM = ['Provincial Treasurer', 'National Printing Office', 'Others'];
+const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
+// Each register keeps its own fund list (starts with the three above; Add Fund for the municipality's other funds).
+const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || DEFAULT_FUNDS;
+const fundOpts = (f, lguId, sel = '') => `<option value="">No fund indicated</option>${fundsOf(f, lguId).map((x) => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join('')}`;
 const PER_BOOKLET = 50;
 const MAX_PCS = 10000;   // one entry covers at most this many pieces; a longer range is likely a typing mistake
 const today = () => new Date().toISOString().slice(0, 10);
@@ -138,8 +142,8 @@ function registerView(ctx, f, lguId) {
   const offs = officersOf(refs, f, lguId);
   const mine = f.booklets.filter((b) => b.lguId === lguId);
   const oos = outOfSequence({ booklets: mine });
-  const fForm = q.get('form') || '', fCust = q.get('cust') || '', fStat = q.get('st') || 'open', sort = q.get('sort') || 'days';
-  let rows = mine.filter((b) => (!fForm || b.form === fForm)
+  const fForm = q.get('form') || '', fCust = q.get('cust') || '', fStat = q.get('st') || 'open', sort = q.get('sort') || 'days', fFund = q.get('fund') || '';
+  let rows = mine.filter((b) => (!fForm || b.form === fForm) && (!fFund || (fFund === '-' ? !b.fund : b.fund === fFund))
     && (!fCust || (fCust === 'stock' ? b.status === 'stock' : fCust === 'direct' ? !!b.receivedDirect : b.officerId === fCust))
     && (fStat === 'all' || (fStat === 'open' ? statusOf(b).key !== 'done' : statusOf(b).key === fStat)));
   rows.sort(sort === 'days' ? (a, b) => (daysWithAo(b, asOf) ?? -1) - (daysWithAo(a, asOf) ?? -1) || a.form.localeCompare(b.form) || a.from - b.from
@@ -155,7 +159,8 @@ function registerView(ctx, f, lguId) {
   const formsUsed = [...new Set(mine.map((b) => b.form))];
   const longest = withAo.slice().sort((a, b) => daysWithAo(b, asOf) - daysWithAo(a, asOf))[0];
   const body = `<div class="hello"><div><h1>Accountable Forms</h1><p>Each booklet is encoded once, from receipt by the custodian to its last number used. Status follows Collections Entry. Unused forms are counted, never treated as missing.</p></div>
-      <div class="btn-row"><a class="btn" href="#/cer/forms/raaf?lgu=${esc(lguId)}">RAAF Reconciliation</a><a class="btn" href="#/cer/forms/officer?lgu=${esc(lguId)}">By Accountable Officer</a></div></div>
+      <div class="btn-row"><a class="btn" href="#/cer/forms/raaf?lgu=${esc(lguId)}">RAAF Reconciliation</a><a class="btn" href="#/cer/forms/officer?lgu=${esc(lguId)}">By Accountable Officer</a>
+        <button class="btn" type="button" id="af-funds">Funds (${fundsOf(f, lguId).length})</button><button class="btn" type="button" id="af-xls">Export to Excel</button></div></div>
 
     <div class="panel af-bar">
       <div class="field"><label for="af-lgu">Forms Register of</label><select class="input" id="af-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
@@ -170,12 +175,13 @@ function registerView(ctx, f, lguId) {
       <div class="stat"><span>For Checking</span><b class="${forCheck.size ? 'warn' : 'dim'}">${forCheck.size}</b><small>out of sequence, skipped numbers${aging ? ', held too long' : ''}</small></div>
     </div>
 
-    ${enc ? encodeHtml(refs, Object.assign(offs, { lguId }), q) : ''}
+    ${enc ? encodeHtml(refs, Object.assign(offs, { lguId, f }), q) : ''}
 
     <section class="panel" aria-labelledby="reg-h">
       <div class="panel-head"><h2 id="reg-h">Forms Register</h2><span class="pill">${rows.length}</span>
         <div class="af-filters">
-          ${pick('form', [['', 'All forms'], ...FORMS.filter(([k]) => formsUsed.includes(k)).map(([k]) => [k, FORM_SHORT[k]])], fForm)}
+          ${pick('form', [['', 'All form types'], ...FORMS.filter(([k]) => formsUsed.includes(k)).map(([k]) => [k, FORM_SHORT[k]])], fForm)}
+          ${pick('fund', [['', 'All funds'], ['-', 'No fund indicated'], ...fundsOf(f, lguId).map((x) => [x, x])], fFund)}
           ${pick('cust', [['', 'All custody'], ['stock', 'In stock (custodian)'], ['direct', 'Received directly by an AO'], ...offs.map((o) => [o.id, o.name])], fCust)}
           ${pick('st', [['open', 'Not exhausted'], ['all', 'All statuses'], ['stock', 'In stock'], ['new', 'Issued, not yet used'], ['part', 'Partly used'], ['done', 'Exhausted'], ['lost', 'Lost / Destroyed']], fStat)}
           ${pick('sort', [['days', 'Longest with AO first'], ['serial', 'By form and serial']], sort)}
@@ -186,7 +192,7 @@ function registerView(ctx, f, lguId) {
           const o = f.officers.find((x) => x.id === b.officerId); const st = statusOf(b); const d = daysWithAo(b, asOf); const sk = skippedOf(b);
           const flagOld = aging && d !== null && d > +aging, flagSeq = oos.has(b.id);
           return `<tr class="${flagOld || flagSeq ? 'flag' : ''}" data-bk="${esc(b.id)}" tabindex="0">
-            <td>${esc(FORM_SHORT[b.form] || b.form)}</td><td class="mono">${rangeText(b.from, b.to)}</td><td class="r">${b.qty}</td>
+            <td>${esc(FORM_SHORT[b.form] || b.form)}<small>${esc(b.fund || '')}</small></td><td class="mono">${rangeText(b.from, b.to)}</td><td class="r">${b.qty}</td>
             <td>${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${b.receivedDirect ? `<b class="af-direct">Received directly</b> · ` : ''}${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'import' ? 'Imported from Excel' : b.source === 'starting' ? 'Starting inventory' : ''))}</small></td>
             <td>${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock<small>Custodian (${custOf(lgu)})</small>`}</td>
             <td>${b.status !== 'stock' && b.issuedDate ? esc(fmtDate(b.issuedDate)) : '<span class="dim">—</span>'}</td>
@@ -213,7 +219,16 @@ function registerView(ctx, f, lguId) {
         ${result('dim', 'Receipts used by the wrong officer', 'Checked once Collections Entry is built (every encoded number must be in a booklet issued to the officer who used it).')}
       </div>
     </section>`;
-  return { crumb: 'Accountable Forms · Forms Register', body, wire: () => wireRegister(ctx, f, lguId, offs) };
+  const exportRows = () => rows.map((b) => { const o = f.officers.find((x) => x.id === b.officerId); const d = daysWithAo(b, asOf);
+    return { Form: FORM_SHORT[b.form] || b.form, Fund: b.fund || '', 'Series From': b.from, 'Series To': b.to, Qty: b.qty, 'Date Received': fmtDate(b.receivedDate), 'Received From': b.receivedFrom || '',
+      'Received Directly': b.receivedDirect ? 'Yes' : '', Custody: b.status === 'issued' && o ? o.name : b.status === 'stock' ? `Custodian (${custOf(lgu)})` : '', Designation: b.status === 'issued' && o ? (o.designation || '') : '',
+      'Date Issued': b.status !== 'stock' ? fmtDate(b.issuedDate) : '', 'Days with AO': d ?? '', Used: usedOf(b), 'Unused (ranges)': rangesText(unusedRanges(b)), 'Unused Qty': unusedOf(b),
+      'Skipped Numbers': rangesText(skippedOf(b)), Status: statusOf(b).label, 'Date Exhausted': fmtDate(b.exhaustedDate) }; });
+  return { crumb: 'Accountable Forms · Forms Register', body, wire: () => {
+    wireRegister(ctx, f, lguId, offs);
+    $('#af-xls').onclick = () => exportXlsx(`Forms Register ${agencyName(refs, lgu)} ${asOf}.xlsx`, 'Forms Register', exportRows());
+    $('#af-funds').onclick = () => fundsModal(refs, f, lguId);
+  } };
 }
 function overlapCount(list) {
   let n = 0;
@@ -225,7 +240,7 @@ const result = (kind, title, text) => `<div class="af-r ${kind}"><b>${esc(title)
 /* ---------- Encode ---------- */
 const MOVES = [['receive', 'Receive'], ['issue', 'Issue'], ['starting', 'Starting Inventory']];
 // The last form, date and choices stay filled in for the next entry (the screen refreshes after each save).
-const LAST = { form: 'af51', date: '', src: RECEIVED_FROM[0], off: '', per: PER_BOOKLET, rby: 'custodian' };
+const LAST = { form: 'af51', date: '', src: RECEIVED_FROM[0], off: '', per: PER_BOOKLET, rby: 'custodian', fund: '' };
 const sel = (a, b) => (a === b ? 'selected' : '');
 function encodeHtml(refs, offs, q) {
   const mv = MOVES.some(([k]) => k === q.get('mv')) ? q.get('mv') : 'receive';
@@ -233,10 +248,11 @@ function encodeHtml(refs, offs, q) {
   const range = `<div class="field"><label for="e-from">Serial From</label><input class="input r" id="e-from" inputmode="numeric" autocomplete="off"></div>
     <div class="field"><label for="e-to">Serial To</label><input class="input r" id="e-to" inputmode="numeric" autocomplete="off"></div>`;
   const per = `<div class="field"><label for="e-per">Per Booklet</label><input class="input r" id="e-per" inputmode="numeric" value="${LAST.per}"></div>`;
+  const fund = `<div class="field"><label for="e-fund">Fund</label><select class="input" id="e-fund">${fundOpts(offs.f, offs.lguId, LAST.fund)}</select></div>`;
   const offSel = (id, label, extra = '') => `<div class="field"><label for="${id}">${label}</label><select class="input" id="${id}">${extra.replace(`value="${LAST.off}"`, `value="${LAST.off}" selected`)}<option value="">— Choose the officer —</option>${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.off)}>${esc(officerLabel(refs, o))}</option>`).join('')}</select></div>`;
   let fields = '';
   const custName = refs.lgu[offs.lguId]?.data.kind === 'province' ? 'PTO' : 'MTO';
-  if (mv === 'receive') fields = `<div class="af-enc g9">${formSel}${range}${per}
+  if (mv === 'receive') fields = `<div class="af-enc g10">${formSel}${range}${per}${fund}
       <div class="field"><label for="e-date">Date Received</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
       <div class="field"><label for="e-rby">Received By</label><select class="input" id="e-rby"><option value="custodian">Custodian (${custName})</option>
         <optgroup label="Directly by AO">${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.rby)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
@@ -246,7 +262,7 @@ function encodeHtml(refs, offs, q) {
   if (mv === 'issue') fields = `<div class="af-enc g6">${formSel}${range}${offSel('e-off', 'Issued To')}
       <div class="field"><label for="e-date">Date Issued</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>`;
-  if (mv === 'starting') fields = `<div class="af-enc g6s">${formSel}${range}${per}
+  if (mv === 'starting') fields = `<div class="af-enc g7s">${formSel}${range}${per}${fund}
       <div class="field"><label for="e-date">As of</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>`;
   const help = mv === 'receive' ? 'The range is split into booklets. Received by the custodian: the booklets go into stock. Received directly by an accountable officer (e.g. a barangay treasurer supplied by the Provincial Treasurer): they go straight into that officer\'s custody and are left out of the custodian\'s RAAF. A serial already in the register is refused, except a booklet first encoded from a logbook: it is matched by serial and gets its receipt details.'
@@ -296,7 +312,7 @@ function wireRegister(ctx, f, lguId, offs) {
   enter.onclick = async () => {
     enter.disabled = true;
     Object.assign(LAST, { form: $('#e-form').value, date: $('#e-date').value, per: int(per?.value) || LAST.per,
-      src: $('#e-src') ? $('#e-src').value : LAST.src, off: $('#e-off') ? $('#e-off').value : LAST.off, rby: $('#e-rby') ? $('#e-rby').value : LAST.rby });
+      src: $('#e-src') ? $('#e-src').value : LAST.src, off: $('#e-off') ? $('#e-off').value : LAST.off, rby: $('#e-rby') ? $('#e-rby').value : LAST.rby, fund: $('#e-fund') ? $('#e-fund').value : LAST.fund });
     try {
       const ok = mv === 'receive' ? await doReceive(refs, f, lguId) : mv === 'issue' ? await doIssue(refs, f, lguId) : await doStarting(refs, f, lguId);
       if (ok) ['#e-from', '#e-to', '#e-ref'].forEach((s) => { const el = $(s); if (el) el.value = ''; });
@@ -325,6 +341,7 @@ async function doReceive(refs, f, lguId) {
   const officer = rby !== 'custodian' ? f.officers.find((o) => o.id === rby) : null;
   if (rby !== 'custodian' && !officer) return bad('Choose who received the booklets.');
   const info = { receivedDate: date, receivedFrom: $('#e-src').value, reference: $('#e-ref').value.trim(), receivedDirect: !!officer };
+  const fund = $('#e-fund') ? $('#e-fund').value : '';
   for (const s of plan) {
     if (s.match) {
       const b = s.match;
@@ -336,13 +353,13 @@ async function doReceive(refs, f, lguId) {
     if (s.match) {
       const b = s.match;
       // Matched to an earlier logbook / import entry: the receipt details are added; nothing is doubled.
-      await store.save('cer_booklets', b.id, { ...strip(b), ...info, history: [...(b.history || []), hist(refs, officer ? 'matcheddirect' : 'matched', date,
+      await store.save('cer_booklets', b.id, { ...strip(b), ...info, fund: b.fund || fund, history: [...(b.history || []), hist(refs, officer ? 'matcheddirect' : 'matched', date,
         { officerId: officer ? officer.id : '', note: officer ? `Received directly from ${info.receivedFrom}; matched to the logbook entry` : 'Receipt by the custodian matched to the logbook entry' })] }, by(refs), { quiet: true });
     } else if (officer) {
-      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...info, source: 'direct', status: 'issued', officerId: officer.id, issuedDate: date, usedBefore: null,
+      await store.save('cer_booklets', newId('cerb'), { lguId, form, fund, from: s.x, to: s.y, qty: s.y - s.x + 1, ...info, source: 'direct', status: 'issued', officerId: officer.id, issuedDate: date, usedBefore: null,
         history: [hist(refs, 'direct', date, { officerId: officer.id, note: info.receivedFrom })] }, by(refs), { quiet: true });
     } else {
-      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...info, source: 'received', status: 'stock', officerId: '', issuedDate: '', usedBefore: null,
+      await store.save('cer_booklets', newId('cerb'), { lguId, form, fund, from: s.x, to: s.y, qty: s.y - s.x + 1, ...info, source: 'received', status: 'stock', officerId: '', issuedDate: '', usedBefore: null,
         history: [hist(refs, 'received', date, { note: info.receivedFrom })] }, by(refs), { quiet: true });
     }
   }
@@ -375,7 +392,7 @@ async function doStarting(refs, f, lguId) {
   const parts = splitRange(a, z, p);
   for (const [x, y] of parts) { const hit = overlaps(f, form, x, y); if (hit.length) return bad(`${FORM_SHORT[form]} ${rangeText(x, y)} overlaps ${rangeText(hit[0].from, hit[0].to)} already in the register.`); }
   for (const [x, y] of parts) {
-    await store.save('cer_booklets', newId('cerb'), { lguId, form, from: x, to: y, qty: y - x + 1, receivedDate: '', receivedFrom: '', reference: '',
+    await store.save('cer_booklets', newId('cerb'), { lguId, form, fund: $('#e-fund') ? $('#e-fund').value : '', from: x, to: y, qty: y - x + 1, receivedDate: '', receivedFrom: '', reference: '',
       source: 'starting', status: 'stock', officerId: '', issuedDate: '', history: [hist(refs, 'starting', date, { note: 'Custodian\'s stock on the start date' })] }, by(refs), { quiet: true });
   }
   emitChange('local');
@@ -405,6 +422,7 @@ async function bookletModal(ctx, f, b, offs) {
   const offOpts = (skip) => offs.filter((o) => o.id !== skip).map((o) => `<option value="${esc(o.id)}">${esc(officerLabel(refs, o))}</option>`).join('');
   const v = await modal({ title: `${FORM_SHORT[b.form]} ${rangeText(b.from, b.to)}`, wide: true,
     body: `<div class="af-mhead"><span class="pill ${st.cls}">${st.label}</span><span>${b.qty} pcs · used ${usedOf(b)} · unused ${unusedOf(b)}</span></div>
+      <div class="field af-fundrow"><label for="m-fund">Fund</label><div class="af-pair"><select class="input" id="m-fund" ${enc ? '' : 'disabled'}>${fundOpts(f, b.lguId, b.fund || '')}</select>${enc ? '<button class="btn sm" type="button" id="m-fundsave">Save Fund</button>' : ''}</div></div>
       <h4 class="cer-h3">Booklet History</h4>${historyHtml(refs, f, b)}
       ${moves.length ? `<h4 class="cer-h3">Move this Booklet</h4>
         <div class="af-move">
@@ -413,7 +431,10 @@ async function bookletModal(ctx, f, b, offs) {
           <div class="field"><label for="m-date">Date</label><input class="input" type="date" id="m-date" value="${today()}"></div>
           <div class="field" id="m-notebox"><label for="m-note">Note (optional)</label><input class="input" id="m-note"></div>
         </div>` : ''}`,
-    onOpen: (bg) => { const act = $('#m-act', bg); if (!act) return; const sync = () => { $('#m-offbox', bg).hidden = !['issue', 'transfer'].includes(act.value); }; act.onchange = sync; sync(); },
+    onOpen: (bg) => {
+      const fs = $('#m-fundsave', bg);
+      if (fs) fs.onclick = async () => { await store.save('cer_booklets', b.id, { ...strip(b), fund: $('#m-fund', bg).value }, by(refs)); toast('Fund saved.', 'ok'); };
+      const act = $('#m-act', bg); if (!act) return; const sync = () => { $('#m-offbox', bg).hidden = !['issue', 'transfer'].includes(act.value); }; act.onchange = sync; sync(); },
     buttons: moves.length ? [{ label: 'Close', value: null }, { label: 'Save Movement', cls: 'primary', value: 'save', check: (bg) => {
       const act = $('#m-act', bg).value, off = $('#m-off', bg).value, date = $('#m-date', bg).value;
       if (['issue', 'transfer'].includes(act) && !off) { toast('Choose the officer.', 'bad'); return false; }
@@ -494,7 +515,7 @@ function officerView(ctx, f, lguId) {
       : `<div class="empty"><b>${tab === 'hand' ? 'No booklets in this officer\'s hands.' : 'No booklets issued to this officer yet.'}</b></div>`;
   }
   const body = `<div class="hello"><div><a href="#/cer/forms/officer?lgu=${esc(lguId)}" class="af-back">← All officers</a><h1>${esc(o.name)}</h1><p>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))} · booklets issued by the ${custOf(refs.lgu[lguId])}</p></div>
-      <div class="btn-row"><a class="btn" href="#/cer/forms?lgu=${esc(lguId)}&cust=${esc(o.id)}">Open in Forms Register</a><button class="btn" type="button" id="af-clear">Print Clearance List</button></div></div>
+      <div class="btn-row"><a class="btn" href="#/cer/forms?lgu=${esc(lguId)}&cust=${esc(o.id)}">Open in Forms Register</a><button class="btn" type="button" id="af-oxls">Export to Excel</button><button class="btn" type="button" id="af-clear">Print Clearance List</button></div></div>
     <div class="stats">
       <div class="stat"><span>Booklets in Hand</span><b>${inHand.length}</b><small>not yet exhausted</small></div>
       <div class="stat"><span>Unused per Register</span><b style="color:#1d4fb8">${inHand.reduce((n, b) => n + unusedOf(b), 0)} pcs</b><small>${Object.entries(byForm).map(([k, n]) => `${FORM_SHORT[k]} ${n}`).join(' · ') || '—'}</small></div>
@@ -506,7 +527,16 @@ function officerView(ctx, f, lguId) {
       ${tabBody}
     </section>
     <div id="cer-print" class="af-print" hidden>${clearanceHtml(refs, f, o, mine, lguId)}</div>`;
-  return { crumb: 'Accountable Forms · By Accountable Officer', body, wire: () => wireOfficer(ctx, f, lguId, o, exam, offs) };
+  const exportRows = () => mine.slice().sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from).map((b) => {
+    const c = exam ? f.checks.find((x) => x.id === exam.id + '|' + b.id) : null;
+    const counted = c ? (Array.isArray(c.ranges) ? c.ranges : (c.unusedFrom && c.unusedTo ? [[c.unusedFrom, c.unusedTo]] : [])) : null;
+    return { Form: FORM_SHORT[b.form] || b.form, Fund: b.fund || '', 'Series From': b.from, 'Series To': b.to, Qty: b.qty, 'Date Issued': fmtDate(b.issuedDate), 'Days in Hand': daysWithAo(b, asOf) ?? '',
+      Used: usedOf(b), 'Unused per Register': rangesText(unusedRanges(b)), 'Unused Qty': unusedOf(b), 'Skipped Numbers': rangesText(skippedOf(b)), Status: statusOf(b).label,
+      ...(exam ? { 'Cash Count': fmtDate(exam.audit.countDate), Seen: c ? (c.seen ? 'Yes' : 'No') : '', 'Unused per Count': counted ? rangesText(counted) : '' } : {}) }; });
+  return { crumb: 'Accountable Forms · By Accountable Officer', body, wire: () => {
+    wireOfficer(ctx, f, lguId, o, exam, offs);
+    $('#af-oxls').onclick = () => exportXlsx(`Accountable Forms ${o.name}${exam ? ' ' + exam.audit.countDate : ''}.xlsx`, 'Booklets', exportRows());
+  } };
 }
 function clearanceHtml(refs, f, o, mine, lguId) {
   const list = mine.filter(held).sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
@@ -540,89 +570,144 @@ function wireOfficer(ctx, f, lguId, o, exam, offs) {
 }
 
 /* ================= 3 · RAAF Reconciliation ================= */
-// Pieces in the custodian's stock, from each booklet's history: received / starting in stock / returned add; issued / lost from stock subtract.
-function stockFlows(list, start, end) {
-  const out = {};
-  list.forEach((b) => {
-    const r = out[b.form] = out[b.form] || { beg: 0, rec: 0, iss: 0 };
-    let inStock = false;
-    (b.history || []).slice().sort((x, y) => String(x.date).localeCompare(String(y.date))).forEach((h) => {
-      const into = h.action === 'received' || h.action === 'matched' || h.action === 'returned' || (h.action === 'starting' && !h.officerId);
-      const outof = (h.action === 'issued' || h.action === 'logbook' || h.action === 'lost') && inStock;
-      const pcs = h.action === 'returned' ? countRanges(rawUnused(b)) : b.qty;
-      if (h.date < start) { if (into) inStock = true; if (outof) inStock = false; return; }
-      if (h.date > end) return;
-      // Starting inventory in stock was already on hand: it counts in the beginning balance, not as received.
-      if (h.action === 'starting' && !h.officerId) { if (!inStock) { r.beg += pcs; inStock = true; } return; }
-      if (into && !inStock) { r.rec += pcs; inStock = true; }
-      if (outof) { r.iss += pcs; inStock = false; }
-    });
-    // Beginning: what was in stock before the month.
-    let s = false;
-    (b.history || []).filter((h) => h.date < start).sort((x, y) => String(x.date).localeCompare(String(y.date))).forEach((h) => {
-      if (h.action === 'received' || h.action === 'matched' || h.action === 'returned' || (h.action === 'starting' && !h.officerId)) s = true;
-      if (h.action === 'issued' || h.action === 'logbook' || h.action === 'lost') s = false;
-    });
-    if (s) r.beg += b.qty;
-  });
-  Object.values(out).forEach((r) => { r.end = r.beg + r.rec - r.iss; });
+// The register's own RAAF, in the hard-copy layout (Beginning, Receipt, Issued, Ending: quantity and inclusive serial numbers),
+// for the custodian (MTO / PTO), each accountable officer, or all of them consolidated; one section per fund plus All Funds.
+// Issued = what was on hand or received but is no longer on hand at month end (issued to AOs, used, returned, lost).
+const NO_FUND = 'No fund indicated';
+function mergeRanges(rs) {
+  const out = [];
+  rs.slice().sort((x, y) => x[0] - y[0]).forEach(([a, z]) => { const l = out[out.length - 1]; if (l && a <= l[1] + 1) l[1] = Math.max(l[1], z); else out.push([a, z]); });
   return out;
+}
+function subtractRanges(rs, cut) {
+  let out = mergeRanges(rs);
+  for (const [c, d] of mergeRanges(cut)) {
+    const next = [];
+    out.forEach(([a, z]) => { if (d < a || c > z) next.push([a, z]); else { if (a < c) next.push([a, c - 1]); if (z > d) next.push([d + 1, z]); } });
+    out = next;
+  }
+  return out;
+}
+const INTO_CUSTODIAN = ['received', 'matched', 'returned'];
+const TO_OFFICER = ['issued', 'imported', 'direct', 'matcheddirect', 'transferred', 'logbook'];
+// Who held the booklet after each dated event: 'mto' (custodian), an officer id, or 'gone' (lost).
+function holderEvents(b) {
+  const order = (h) => (INTO_CUSTODIAN.includes(h.action) || h.action === 'starting' ? 0 : 1);
+  return (b.history || []).slice().sort((x, y) => String(x.date).localeCompare(String(y.date)) || order(x) - order(y))
+    .map((h) => ({ date: h.date, action: h.action,
+      holder: h.action === 'lost' ? 'gone' : INTO_CUSTODIAN.includes(h.action) ? 'mto' : h.action === 'starting' ? (h.officerId || 'mto') : TO_OFFICER.includes(h.action) ? h.officerId : null }))
+    .filter((e) => e.holder);
+}
+const holderAt = (evs, date) => { let h = null; evs.forEach((e) => { if (e.date <= date) h = e.holder; }); return h; };
+// Numbers still unused on a date: none once exhausted or lost; the whole booklet while with the custodian.
+function piecesAt(b, holder, date) {
+  if (!holder || holder === 'gone') return [];
+  if (b.exhaustedDate && b.exhaustedDate <= date) return [];
+  if (holder === 'mto') return (b.history || []).some((h) => h.action === 'returned' && h.date <= date) ? rawUnused(b) : [[b.from, b.to]];
+  return rawUnused(b);
+}
+const prevDay = (d) => new Date(Date.parse(d) - 864e5).toISOString().slice(0, 10);
+function raafFigures(list, who, start, end) {
+  const inX = (h) => !!h && h !== 'gone' && (who === 'all' ? true : who === 'mto' ? h === 'mto' : h === who);
+  const rows = {};
+  list.forEach((b) => {
+    const evs = holderEvents(b);
+    const key = (b.fund || NO_FUND) + '|' + b.form;
+    const r = rows[key] = rows[key] || { fund: b.fund || NO_FUND, form: b.form, beg: [], rec: [], end: [] };
+    const h0 = holderAt(evs, prevDay(start));
+    if (inX(h0)) r.beg.push(...piecesAt(b, h0, prevDay(start)));
+    let cur = h0;
+    evs.filter((e) => e.date >= start && e.date <= end).forEach((e) => {
+      // Starting inventory dated inside the month was already on hand: it belongs to the beginning balance.
+      if (e.action === 'starting' && !inX(cur) && inX(e.holder)) r.beg.push(...piecesAt(b, e.holder, e.date));
+      else if (!inX(cur) && inX(e.holder)) r.rec.push(...piecesAt(b, e.holder, e.date));
+      cur = e.holder;
+    });
+    const h1 = holderAt(evs, end);
+    if (inX(h1)) r.end.push(...piecesAt(b, h1, end));
+  });
+  Object.values(rows).forEach((r) => { r.beg = mergeRanges(r.beg); r.rec = mergeRanges(r.rec); r.end = mergeRanges(r.end); r.iss = subtractRanges([...r.beg, ...r.rec], r.end); });
+  return Object.values(rows).filter((r) => r.beg.length || r.rec.length || r.iss.length || r.end.length);
 }
 function raafView(ctx, f, lguId) {
   const { refs, q } = ctx;
-  const now = today().slice(0, 7);
-  const m = /^\d{4}-\d{2}$/.test(q.get('m') || '') ? q.get('m') : now;
+  const lgu = refs.lgu[lguId];
+  const m = /^\d{4}-\d{2}$/.test(q.get('m') || '') ? q.get('m') : today().slice(0, 7);
   const start = m + '-01';
   const end = new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).toISOString().slice(0, 10);
   const mine = f.booklets.filter((b) => b.lguId === lguId);
-  const flows = stockFlows(mine, start, end);
-  const forms = FORMS.map(([k]) => k).filter((k) => mine.some((b) => b.form === k) || f.raaf.some((r) => r.lguId === lguId && r.month === m && r.form === k));
-  const typed = (k) => f.raaf.find((r) => r.id === `${lguId}|${m}|${k}`) || {};
-  const recDate = f.raaf.find((r) => r.lguId === lguId && r.month === m && r.receivedDate)?.receivedDate || '';
+  const offs = officersOf(refs, f, lguId).filter((o) => mine.some((b) => (b.history || []).some((h) => h.officerId === o.id)));
+  const who = q.get('who') === 'all' || q.get('who') === 'mto' || offs.some((o) => o.id === q.get('who')) ? q.get('who') : 'mto';
+  const whoName = who === 'all' ? `Consolidated · ${custOf(lgu)} and all accountable officers` : who === 'mto' ? `Custodian (${custOf(lgu)})` : officerLabel(refs, f.officers.find((o) => o.id === who));
+  const rows = raafFigures(mine, who, start, end);
+  const funds = [...new Set(rows.map((r) => r.fund))].sort((a, b) => (a === NO_FUND) - (b === NO_FUND) || fundsOf(f, lguId).indexOf(a) - fundsOf(f, lguId).indexOf(b));
+  const allRows = Object.values(rows.reduce((acc, r) => { const k = r.form; const t = acc[k] = acc[k] || { fund: 'All Funds', form: r.form, beg: [], rec: [], iss: [], end: [] };
+    ['beg', 'rec', 'iss', 'end'].forEach((c) => t[c].push(...r[c])); return acc; }, {})).map((t) => ({ ...t, beg: mergeRanges(t.beg), rec: mergeRanges(t.rec), iss: mergeRanges(t.iss), end: mergeRanges(t.end) }));
+  const sections = [...funds.map((fd) => [fd, rows.filter((r) => r.fund === fd)]), ...(funds.length > 1 || (funds.length === 1 && funds[0] !== 'All Funds') ? [['All Funds', allRows]] : [])];
+  const typedId = (fund, form) => `${lguId}|${who}|${m}|${fund}|${form}`;
+  const typed = (fund, form) => f.raaf.find((r) => r.id === typedId(fund, form)) || {};
   const enc = canEncode(refs);
-  const cell = (k, fld, v) => `<td><label class="sr-only" for="r-${k}-${fld}">${esc(FORM_SHORT[k])} ${fld} per RAAF</label><input class="input af-cell" id="r-${k}-${fld}" data-r="${k}" data-f="${fld}" inputmode="numeric" value="${v ?? ''}" ${enc ? '' : 'disabled'}></td>`;
-  const body = `<div class="hello"><div><a href="#/cer/forms?lgu=${esc(lguId)}" class="af-back">← Forms Register</a><h1>RAAF Reconciliation</h1><p>Type the custodian's Report of Accountability for Accountable Forms. The register's own figures are computed beside it, in pieces, and any difference is flagged for the auditor.</p></div></div>
+  const cols = ['beg', 'rec', 'iss', 'end'];
+  const cell = (rs) => `<td class="r">${countRanges(rs)}</td><td class="mono">${rs.length ? rs.map(([a]) => `<div>${a}</div>`).join('') : ''}</td><td class="mono">${rs.length ? rs.map(([, z]) => `<div>${z}</div>`).join('') : ''}</td>`;
+  const sectionHtml = ([fund, list]) => `<tr class="fund"><th colspan="14" scope="colgroup">${esc(fund)}</th></tr>
+    ${list.sort((a, b) => a.form.localeCompare(b.form)).map((r) => {
+      const t = typed(fund, r.form); const has = cols.some((c) => t[c] !== undefined && t[c] !== '' && t[c] !== null);
+      const same = has && cols.every((c) => +(t[c] || 0) === countRanges(r[c]));
+      return `<tr class="reg"><th scope="row" class="l">${esc(FORM_SHORT[r.form] || r.form)}</th>${cols.map((c) => cell(r[c])).join('')}<td class="l res">${!has ? '' : same ? '<span class="pill p-done">Agrees</span>' : '<span class="pill p-flag">For checking</span>'}</td></tr>
+        <tr class="af-typed"><td class="l dim">Per submitted RAAF</td>${cols.map((c) => `<td class="r"><label class="sr-only" for="t-${esc(fund)}-${r.form}-${c}">${esc(fund)} ${esc(FORM_SHORT[r.form])} ${c} per submitted RAAF</label><input class="input af-cell" id="t-${esc(fund)}-${r.form}-${c}" data-fund="${esc(fund)}" data-form="${r.form}" data-c="${c}" inputmode="numeric" value="${t[c] ?? ''}" ${enc ? '' : 'disabled'}></td><td colspan="2" class="dim">${has && +(t[c] || 0) !== countRanges(r[c]) ? `<span class="warn-t">difference ${(+(t[c] || 0)) - countRanges(r[c])}</span>` : ''}</td>`).join('')}<td></td></tr>`;
+    }).join('')}`;
+  const body = `<div class="hello"><div><a href="#/cer/forms?lgu=${esc(lguId)}" class="af-back">← Forms Register</a><h1>RAAF Reconciliation</h1><p>The register's own Report of Accountability for Accountable Forms, in the hard-copy layout, per fund and for all funds. Lay the submitted RAAF beside it, or type its quantities on the "Per submitted RAAF" lines to flag the differences.</p></div>
+      <div class="btn-row"><button class="btn" type="button" id="r-xls">Export to Excel</button><button class="btn" type="button" id="r-print">Print</button></div></div>
     <div class="panel af-bar">
-      <div class="field"><label for="r-lgu">Custodian</label><select class="input" id="r-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))} · ${custOf(l)}</option>`).join('')}</select></div>
-      <div class="field"><label for="r-m">RAAF Month</label><input class="input" type="month" id="r-m" value="${esc(m)}"></div>
-      <div class="field"><label for="r-rec">RAAF Received</label><input class="input" type="date" id="r-rec" value="${esc(recDate)}" ${enc ? '' : 'disabled'}></div>
+      <div class="field"><label for="r-lgu">LGU</label><select class="input" id="r-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
+      <div class="field"><label for="r-who">RAAF of</label><select class="input" id="r-who">
+        <option value="mto" ${who === 'mto' ? 'selected' : ''}>Custodian (${custOf(lgu)})</option>
+        <option value="all" ${who === 'all' ? 'selected' : ''}>Consolidated (${custOf(lgu)} and all AOs)</option>
+        <optgroup label="Accountable officer">${offs.map((o) => `<option value="${esc(o.id)}" ${who === o.id ? 'selected' : ''}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
+      <div class="field"><label for="r-m">Month</label><input class="input" type="month" id="r-m" value="${esc(m)}"></div>
     </div>
-    <section class="panel" aria-labelledby="rec-h">
-      <div class="panel-head"><h2 id="rec-h">Balances in Pieces · ${esc(monthLabel(m))}</h2></div>
-      ${forms.length ? `<div class="af-tbl"><table class="af-raaf">
-        <thead><tr class="g"><th></th><th colspan="4">Per RAAF (typed)</th><th colspan="4">Per Forms Register (computed)</th><th></th><th></th></tr>
-          <tr><th scope="col" class="l">Form</th><th scope="col">Beginning</th><th scope="col">Received</th><th scope="col">Issued</th><th scope="col">Ending</th><th scope="col">Beginning</th><th scope="col">Received</th><th scope="col">Issued</th><th scope="col">Ending</th><th scope="col">Difference</th><th scope="col" class="l">Result</th></tr></thead>
-        <tbody>${forms.map((k) => {
-          const t = typed(k), c = flows[k] || { beg: 0, rec: 0, iss: 0, end: 0 };
-          const has = ['beg', 'rec', 'iss', 'end'].some((x) => t[x] !== undefined && t[x] !== null && t[x] !== '');
-          const same = has && ['beg', 'rec', 'iss', 'end'].every((x) => +(t[x] || 0) === c[x]);
-          const diff = has ? (+(t.end || 0) - c.end) : null;
-          return `<tr><td class="l"><b>${esc(FORM_SHORT[k])}</b></td>${cell(k, 'beg', t.beg)}${cell(k, 'rec', t.rec)}${cell(k, 'iss', t.iss)}${cell(k, 'end', t.end)}
-            <td class="reg">${c.beg}</td><td class="reg">${c.rec}</td><td class="reg">${c.iss}</td><td class="reg"><b>${c.end}</b></td>
-            <td class="${diff ? 'warn-t' : ''}">${diff === null ? '<span class="dim">—</span>' : `<b>${diff}</b>`}</td>
-            <td class="l">${!has ? '<span class="pill p-stock">Not yet typed</span>' : same ? '<span class="pill p-done">Agrees</span>' : '<span class="pill p-flag">For checking</span>'}</td></tr>`;
-        }).join('')}</tbody></table></div>
-        <div class="af-foot"><p class="af-note">Ending = Beginning + Received − Issued. Received includes booklets returned to the custodian; Issued includes booklets reported lost from stock. Any column that differs is For checking.</p>
-          ${enc ? '<button class="btn primary" type="button" id="r-save">Save RAAF</button>' : ''}</div>`
-      : '<div class="empty"><b>No booklets in this register yet.</b>Encode the custodian\'s booklets first.</div>'}
+    <section class="panel" id="cer-print" aria-labelledby="rec-h">
+      <div class="panel-head af-raafhead"><h2 id="rec-h">Report of Accountability for Accountable Forms</h2><span class="dim">${esc(agencyName(refs, lgu))} · ${esc(whoName)} · ${esc(monthLabel(m))}</span></div>
+      ${sections.length ? `<div class="af-tbl"><table class="af-raaf2">
+        <thead><tr class="g"><th rowspan="2" scope="col" class="l">Name of Form</th><th colspan="3" scope="colgroup">Beginning Balance</th><th colspan="3" scope="colgroup">Receipt</th><th colspan="3" scope="colgroup">Issued</th><th colspan="3" scope="colgroup">Ending Balance</th><th rowspan="2" scope="col" class="l">Result</th></tr>
+          <tr>${cols.map(() => '<th scope="col" class="r">Qty</th><th scope="col">From</th><th scope="col">To</th>').join('')}</tr></thead>
+        <tbody>${sections.map(sectionHtml).join('')}</tbody></table></div>
+        <div class="af-foot af-noprint"><p class="af-note">${who !== 'mto' && who !== 'all' ? 'For an accountable officer, Issued is filled in from Collections Entry (ORs used); until then it shows only booklets returned, transferred, lost or marked exhausted. ' : ''}Ending = Beginning + Receipt − Issued. Booklets with no fund are under "${NO_FUND}".</p>
+          ${enc ? '<button class="btn primary" type="button" id="r-save">Save Submitted Figures</button>' : ''}</div>`
+      : '<div class="empty"><b>Nothing to report for this month.</b>No booklet was on hand, received or issued.</div>'}
     </section>`;
+  const exportRows = () => sections.flatMap(([fund, list]) => list.map((r) => ({ Fund: fund, Form: FORM_SHORT[r.form] || r.form,
+    'Beginning Qty': countRanges(r.beg), 'Beginning Serials': rangesText(r.beg), 'Receipt Qty': countRanges(r.rec), 'Receipt Serials': rangesText(r.rec),
+    'Issued Qty': countRanges(r.iss), 'Issued Serials': rangesText(r.iss), 'Ending Qty': countRanges(r.end), 'Ending Serials': rangesText(r.end) })));
   return { crumb: 'Accountable Forms · RAAF Reconciliation', body, wire: () => {
-    $('#r-lgu').onchange = (e) => go({ lgu: e.target.value });
+    $('#r-lgu').onchange = (e) => go({ lgu: e.target.value, who: '' });
+    $('#r-who').onchange = (e) => go({ who: e.target.value });
     $('#r-m').onchange = (e) => go({ m: e.target.value });
+    $('#r-print').onclick = () => printPart();
+    $('#r-xls').onclick = () => exportXlsx(`RAAF ${agencyName(refs, lgu)} ${whoName.split(' · ')[0]} ${m}.xlsx`, 'RAAF', exportRows());
     const s = $('#r-save');
     if (s) s.onclick = async () => {
       s.disabled = true;
       try {
-        const rd = $('#r-rec').value;
-        for (const k of forms) {
-          const v = (fld) => { const el = $(`#r-${k}-${fld}`); const n = int(el.value); return el.value.trim() === '' ? '' : n ?? 0; };
-          const rec = { lguId, month: m, form: k, beg: v('beg'), rec: v('rec'), iss: v('iss'), end: v('end'), receivedDate: rd };
-          if (['beg', 'rec', 'iss', 'end'].some((x) => rec[x] !== '') || rd) await store.save('cer_raaf', `${lguId}|${m}|${k}`, rec, by(refs));
-        }
-        toast('RAAF saved.', 'ok');
+        const got = {};
+        $$('input[data-c]').forEach((el) => { const k = el.dataset.fund + '|' + el.dataset.form; (got[k] = got[k] || { fund: el.dataset.fund, form: el.dataset.form })[el.dataset.c] = el.value.trim() === '' ? '' : (int(el.value) ?? 0); });
+        for (const g of Object.values(got)) await store.save('cer_raaf', typedId(g.fund, g.form), { lguId, who, month: m, ...g }, by(refs), { quiet: true });
+        emitChange('local'); toast('Submitted RAAF figures saved.', 'ok');
       } finally { s.disabled = false; }
     };
   } };
+}
+// Prints only the part with id "cer-print".
+function printPart() { document.body.classList.add('af-printing'); const p = $('#cer-print'); const was = p.hidden; p.hidden = false; window.print(); p.hidden = was; document.body.classList.remove('af-printing'); }
+async function exportXlsx(file, sheet, rows) {
+  try {
+    if (!rows.length) { toast('Nothing to export.', 'bad'); return; }
+    const XLSX = await loadXlsx();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = Object.keys(rows[0]).map((k) => ({ wch: Math.min(48, Math.max(10, k.length + 2, ...rows.map((r) => String(r[k] ?? '').length + 1))) }));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, sheet);
+    XLSX.writeFile(wb, file.replace(/[\\/:*?"<>|]/g, '-'));
+  } catch (e) { toast(e.message || String(e), 'bad'); }
 }
 
 /* ================= Import from Excel ================= */
@@ -641,23 +726,24 @@ function loadXlsx() {
 const KINDS = {
   receive: {
     title: 'Import Receipts from Excel', file: 'Receive Import Template.xlsx',
-    heads: ['Date Received', 'Series From', 'Series To', 'Per Booklet', 'Received From', 'Reference', 'Received By'],
-    widths: [14, 12, 12, 11, 26, 16, 30],
+    heads: ['Date Received', 'Series From', 'Series To', 'Per Booklet', 'Fund', 'Received From', 'Reference', 'Received By'],
+    widths: [14, 12, 12, 11, 24, 26, 16, 30],
     cols: [['date', /date\s*rec|^\s*date\s*$/i], ['from', /series\s*fr|^\s*from\s*$/i], ['to', /series\s*t|^\s*to\s*$/i], ['per', /per\s*book/i],
-      ['src', /received\s*fr|^\s*source/i], ['ref', /ref/i], ['rby', /received\s*by/i]],
+      ['fund', /^\s*fund\s*$/i], ['src', /received\s*fr|^\s*source/i], ['ref', /ref/i], ['rby', /received\s*by/i]],
     notes: ['One row per receipt. A row may cover several booklets: it is split by Per Booklet (blank = 50).',
       'Date Received: an Excel date or mm/dd/yyyy.',
       'Received From: Provincial Treasurer, National Printing Office or Others.',
       'Received By: leave blank when the custodian (MTO / PTO) received the booklets.',
       'Received By: type the accountable officer\'s name when the officer received them directly (e.g. a barangay treasurer). The officer must already be in the app (Audit Setup or an earlier Issue import).',
       'Reference (optional): e.g. RIS No.',
+      'Fund (optional): one of the LGU\'s funds in the app (General Fund, Special Education Fund, Trust Fund, or one added with Add Fund). Leave blank if the booklets are not designated per fund.',
       'The Form Type (AF 51, CTC…) is chosen in the app when importing; use one file per form type.'] },
   issue: {
     title: 'Import Issuances from Excel', file: 'Issue Import Template.xlsx',
-    heads: ['No.', 'Date Issued', 'Series From', 'Series To', 'Accountable Officer', 'Agency', 'Position', 'Unused on Hand (as of last cash exam)', 'Date Exhausted'],
-    widths: [6, 12, 12, 12, 28, 30, 32, 34, 14],
+    heads: ['No.', 'Date Issued', 'Series From', 'Series To', 'Fund', 'Accountable Officer', 'Agency', 'Position', 'Unused on Hand (as of last cash exam)', 'Date Exhausted'],
+    widths: [6, 12, 12, 12, 24, 28, 30, 32, 34, 14],
     cols: [['no', /^\s*no\.?\s*$|^\s*#\s*$/i], ['issued', /date\s*iss|^\s*date\s*$/i], ['from', /series\s*fr|^\s*from\s*$/i], ['to', /series\s*t|^\s*to\s*$/i],
-      ['officer', /officer|^\s*name/i], ['agency', /agency/i], ['position', /position|designation/i], ['unused', /unused/i], ['exh', /exh/i]],
+      ['fund', /^\s*fund\s*$/i], ['officer', /officer|^\s*name/i], ['agency', /agency/i], ['position', /position|designation/i], ['unused', /unused/i], ['exh', /exh/i]],
     notes: ['One booklet per row.',
       'A booklet already in stock in the app (received or starting inventory) is issued to the officer on Date Issued.',
       'A booklet not yet in the app (issued before the register started, e.g. from the logbook) is recorded as a past issuance.',
@@ -665,6 +751,7 @@ const KINDS = {
       'Date Exhausted: the logbook "Exh" date, if the booklet is already used up.',
       'Agency: for a barangay treasurer, the barangay (e.g. BLGU - Abbag), so a new officer is placed under the right barangay.',
       'No.: the logbook line number (optional), to trace a row back to the logbook.',
+      'Fund (optional): one of the LGU\'s funds in the app; leave blank if not designated per fund.',
       'The Form Type (AF 51, CTC…) is chosen in the app when importing; use one file per form type.'] }
 };
 function findColumns(rows, cols) {
@@ -701,6 +788,12 @@ function barangayFromAgency(refs, lguId, agency) {
   return refs.lgus.find((l) => l.data.kind === 'barangay' && l.data.parentId === lguId && (l.data.name.toUpperCase() === k || String(l.data.formerName || '').toUpperCase() === k)) || null;
 }
 
+// The Fund cell: blank, or one of the register's funds (any capitalization). Returns { fund } or { error }.
+function readFund(f, lguId, v) {
+  const t = String(v ?? '').trim(); if (!t) return { fund: '' };
+  const hit = fundsOf(f, lguId).find((x) => x.toUpperCase() === t.toUpperCase());
+  return hit ? { fund: hit } : { error: `Fund "${t}" is not in this LGU's fund list. Add it with the Funds button first.` };
+}
 function planReceive(XLSX, sheet, f, refs, lguId, form) {
   const M = sheet.map, get = (row, k) => (M[k] === undefined ? '' : row[M[k]]);
   const offs = officersOf(refs, f, lguId);
@@ -722,6 +815,8 @@ function planReceive(XLSX, sheet, f, refs, lguId, form) {
     if (z - a + 1 > MAX_PCS) { bad(`${z - a + 1} pieces in one row. Check the series.`); continue; }
     if (!date) { bad(date === null ? 'Date Received is not a date.' : 'Date Received is missing.'); continue; }
     if (!src) { bad(srcIn ? `Received From "${srcIn}" is not in the list (Provincial Treasurer, National Printing Office, Others).` : 'Received From is missing.'); continue; }
+    const fd = readFund(f, lguId, get(row, 'fund'));
+    if (fd.error) { bad(fd.error); continue; }
     const officer = rbyIn ? known.get(nameKey(rbyIn)) : null;
     if (rbyIn && !officer) { bad(`Received By "${rbyIn}" is not an officer of this LGU or its barangays. Add the officer first.`); continue; }
     const parts = splitRange(a, z, p), items = [];
@@ -740,7 +835,7 @@ function planReceive(XLSX, sheet, f, refs, lguId, form) {
       items.push({ x, y });
     }
     if (why) { bad(why); continue; }
-    items.forEach((it) => { plan.add.push({ line, ...it, date, src, ref: String(get(row, 'ref') || '').trim(), officerId: officer ? officer.id : '' }); if (!it.match) taken.push({ form, from: it.x, to: it.y, receivedDate: date }); else taken.find((b) => b.id === it.match).receivedDate = date; });
+    items.forEach((it) => { plan.add.push({ line, ...it, date, src, fund: fd.fund, ref: String(get(row, 'ref') || '').trim(), officerId: officer ? officer.id : '' }); if (!it.match) taken.push({ form, from: it.x, to: it.y, receivedDate: date }); else taken.find((b) => b.id === it.match).receivedDate = date; });
   }
   return plan;
 }
@@ -768,6 +863,8 @@ function planIssue(XLSX, sheet, f, refs, lguId, form) {
     if (!issued) { bad('Date Issued is missing.'); continue; }
     if (exh === null) { bad('Date Exhausted is not a date.'); continue; }
     if (exh && exh < issued) { bad('Date Exhausted is before Date Issued.'); continue; }
+    const fd = readFund(f, lguId, get(row, 'fund'));
+    if (fd.error) { bad(fd.error); continue; }
     const un = parseRanges(get(row, 'unused'), a, z);
     if (un.error) { bad(`Unused on Hand: ${un.error}`); continue; }
     if (un.ranges.length && exh) { bad('Unused on Hand and Date Exhausted cannot both be filled.'); continue; }
@@ -783,13 +880,14 @@ function planIssue(XLSX, sheet, f, refs, lguId, form) {
     if (exact && exact.status === 'stock') {
       if (exact.receivedDate && issued < exact.receivedDate) { bad(`Issued before it was received (${fmtDate(exact.receivedDate)}).`); continue; }
       if (un.ranges.length) { bad('Unused on Hand is only for a booklet already held at the last cash exam, not one issued from stock.'); continue; }
+      if (fd.fund && exact.fund && fd.fund !== exact.fund) { bad(`The register has this booklet under ${exact.fund}.`); continue; }
     } else if (hit.length) { bad(`Overlaps ${rangeText(hit[0].from, hit[0].to)}${hit[0].lguId !== lguId ? ' in another register' : ''}.`); continue; }
     if (!o) {
       const brgy = barangayFromAgency(refs, lguId, get(row, 'agency'));
       o = { id: newId('cero'), name: key, designation: String(get(row, 'position') || '').trim(), agency: String(get(row, 'agency') || '').trim(), lguId: brgy ? brgy.id : lguId };
       newOff.set(key, o);
     }
-    plan.add.push({ line, no, from: a, to: z, issued, exh, unused: un.ranges, officerId: o.id, fromStock: exact ? exact.id : '' });
+    plan.add.push({ line, no, from: a, to: z, issued, exh, unused: un.ranges, officerId: o.id, fromStock: exact ? exact.id : '', fund: fd.fund });
     if (exact) exact.status = 'issued', exact.officerId = o.id; else taken.push({ form, from: a, to: z, lguId, status: 'issued', officerId: o.id });
   }
   plan.newOfficers = [...newOff.values()];
@@ -835,11 +933,11 @@ async function importModal(refs, f, lguId, kind) {
   const q = { quiet: true };
   if (plan.kind === 'receive') {
     for (const it of plan.add) {
-      const info = { receivedDate: it.date, receivedFrom: it.src, reference: it.ref, receivedDirect: !!it.officerId };
+      const info = { receivedDate: it.date, receivedFrom: it.src, reference: it.ref, receivedDirect: !!it.officerId, fund: it.fund };
       const note = `Excel row ${it.line}`;
       if (it.match) {
         const b = f.booklets.find((x) => x.id === it.match);
-        await store.save('cer_booklets', b.id, { ...strip(b), ...info, history: [...(b.history || []), hist(refs, it.officerId ? 'matcheddirect' : 'matched', it.date, { officerId: it.officerId, note: `${note}; matched to the earlier entry` })] }, by(refs), q);
+        await store.save('cer_booklets', b.id, { ...strip(b), ...info, fund: b.fund || it.fund, history: [...(b.history || []), hist(refs, it.officerId ? 'matcheddirect' : 'matched', it.date, { officerId: it.officerId, note: `${note}; matched to the earlier entry` })] }, by(refs), q);
       } else if (it.officerId) {
         await store.save('cer_booklets', newId('cerb'), { lguId, form: plan.form, from: it.x, to: it.y, qty: it.y - it.x + 1, ...info, source: 'direct', status: 'issued', officerId: it.officerId, issuedDate: it.date,
           history: [hist(refs, 'direct', it.date, { officerId: it.officerId, note: `${it.src} · ${note}` })] }, by(refs), q);
@@ -856,11 +954,11 @@ async function importModal(refs, f, lguId, kind) {
         const b = f.booklets.find((x) => x.id === it.fromStock);
         const history = [...(b.history || []), hist(refs, 'issued', it.issued, { officerId: it.officerId, note })];
         if (it.exh) history.push(hist(refs, 'exhausted', it.exh, { officerId: it.officerId }));
-        await store.save('cer_booklets', b.id, { ...strip(b), status: 'issued', officerId: it.officerId, issuedDate: it.issued, exhaustedDate: it.exh || '', history }, by(refs), q);
+        await store.save('cer_booklets', b.id, { ...strip(b), fund: b.fund || it.fund, status: 'issued', officerId: it.officerId, issuedDate: it.issued, exhaustedDate: it.exh || '', history }, by(refs), q);
       } else {
         const history = [hist(refs, 'imported', it.issued, { officerId: it.officerId, note: note + (it.unused.length ? ` · unused on hand at the last cash exam: ${rangesText(it.unused)}` : '') })];
         if (it.exh) history.push(hist(refs, 'exhausted', it.exh, { officerId: it.officerId }));
-        await store.save('cer_booklets', newId('cerb'), { lguId, form: plan.form, from: it.from, to: it.to, qty: it.to - it.from + 1, receivedDate: '', receivedFrom: '', reference: '',
+        await store.save('cer_booklets', newId('cerb'), { lguId, form: plan.form, fund: it.fund, from: it.from, to: it.to, qty: it.to - it.from + 1, receivedDate: '', receivedFrom: '', reference: '',
           source: 'import', status: 'issued', officerId: it.officerId, issuedDate: it.issued, exhaustedDate: it.exh || '', unusedAtStart: it.unused.length ? it.unused : null, history }, by(refs), q);
       }
     }
@@ -900,4 +998,27 @@ async function downloadTemplate(kind) {
   XLSX.utils.book_append_sheet(wb, ws, kind === 'receive' ? 'Receipts' : 'Issuances');
   XLSX.utils.book_append_sheet(wb, notes, 'How to fill in');
   XLSX.writeFile(wb, K.file);
+}
+
+/* ---------- funds of a register ---------- */
+async function fundsModal(refs, f, lguId) {
+  const list = [...fundsOf(f, lguId)];
+  const used = (x) => f.booklets.some((b) => b.lguId === lguId && b.fund === x);
+  const enc = canEncode(refs);
+  const v = await modal({ title: `Funds · ${agencyName(refs, refs.lgu[lguId])}`,
+    body: `<p class="hint" style="margin:0">The funds this LGU uses for its accountable forms. Booklets with no fund are reported under "No fund indicated".</p>
+      <div class="list-edit" id="fd-list"></div>
+      ${enc ? '<div class="af-pair"><label class="sr-only" for="fd-new">New fund</label><input class="input" id="fd-new" placeholder="e.g. 20% Development Fund"><button class="btn" type="button" id="fd-add">Add Fund</button></div>' : ''}`,
+    onOpen: (bg) => {
+      const draw = () => { $('#fd-list', bg).innerHTML = list.map((x, i) => `<div><span class="txt">${esc(x)}</span>${enc && !used(x) ? `<button class="btn sm" type="button" data-rm="${i}">Remove</button>` : used(x) ? '<span class="dim">in use</span>' : ''}</div>`).join('');
+        $$('[data-rm]', bg).forEach((btn) => { btn.onclick = () => { list.splice(+btn.dataset.rm, 1); draw(); }; }); };
+      draw();
+      const add = $('#fd-add', bg), inp = $('#fd-new', bg);
+      if (add) { const doAdd = () => { const x = inp.value.trim().replace(/\s+/g, ' '); if (!x) return; if (list.some((y) => y.toUpperCase() === x.toUpperCase())) { toast('That fund is already in the list.', 'bad'); return; } list.push(x); inp.value = ''; draw(); inp.focus(); };
+        add.onclick = doAdd; inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } }; }
+    },
+    buttons: enc ? [{ label: 'Cancel', value: null }, { label: 'Save Funds', cls: 'primary', value: 'save' }] : [{ label: 'Close', cls: 'primary', value: null }] });
+  if (v !== 'save') return;
+  await store.save('cer_settings', 'funds|' + lguId, { list }, by(refs));
+  toast('Funds saved.', 'ok');
 }
