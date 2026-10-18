@@ -124,7 +124,7 @@ function registerView(ctx, f, lguId) {
       <div class="btn-row"><a class="btn" href="#/cer/forms/raaf?lgu=${esc(lguId)}">RAAF Reconciliation</a><a class="btn" href="#/cer/forms/officer?lgu=${esc(lguId)}">By Accountable Officer</a></div></div>
 
     <div class="panel af-bar">
-      <div class="field"><label for="af-lgu">Forms Register of</label><select class="input" id="af-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))} (custodian: ${l.data.kind === 'province' ? 'Provincial' : 'Municipal'} Treasurer)</option>`).join('')}</select></div>
+      <div class="field"><label for="af-lgu">Forms Register of</label><select class="input" id="af-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
       <div class="field"><label for="af-asof">Days counted up to</label><input class="input" type="date" id="af-asof" value="${esc(asOf)}"></div>
       <div class="field"><label for="af-aging">Flag a booklet held by an AO after (days)</label><input class="input" id="af-aging" inputmode="numeric" placeholder="No flag" value="${esc(aging)}" ${isAuditor(refs) ? '' : 'disabled'}></div>
     </div>
