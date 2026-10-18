@@ -18,7 +18,7 @@ import { FORMS, hasRole, by, mayView, agencyName, fmtDate, money, num } from './
 import { loadForms, FORM_SHORT, exportXlsx, rangesText, mergeRanges } from './forms.js';
 
 const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
-const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || DEFAULT_FUNDS;
+export const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || DEFAULT_FUNDS;
 const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
 const isBrgy = (l) => !!l && l.data.kind === 'barangay';
 const kindOf = (l) => (isBrgy(l) ? 'SCD' : 'RCD');
@@ -43,7 +43,7 @@ function rangeByForm(list) {
   return Object.entries(by).map(([k, ns]) => `${FORM_SHORT[k] || k} ${Math.min(...ns)} – ${Math.max(...ns)}`).join('; ');
 }
 // Every report of the officer (and the "Not yet reported" of each fund), in order, with its figures and checks.
-function figuresOf(f, o, funds, countDate) {
+export function figuresOf(f, o, funds, countDate) {
   const ors = f.ors.filter((x) => x.officerId === o.id);
   const reals = f.reports.filter((r) => r.officerId === o.id && !r.pending);
   const allFunds = [...new Set([...funds, ...reals.map((r) => r.fund), ...ors.map((x) => x.fund).filter(Boolean)])];
