@@ -13,7 +13,7 @@ import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer } from './cer.js';
 
 const FORM_SHORT = { af51: 'AF 51', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate', af54: 'AF 54', af56: 'AF 56' };
-const RECEIVED_FROM = ['Provincial Treasurer', 'Region / COA', 'Municipal Treasurer', 'Others'];
+const RECEIVED_FROM = ['Provincial Treasurer', 'National Printing Office', 'Others'];
 const PER_BOOKLET = 50;
 const MAX_PCS = 10000;   // one entry covers at most this many pieces; a longer range is likely a typing mistake
 const today = () => new Date().toISOString().slice(0, 10);
