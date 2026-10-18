@@ -8,7 +8,7 @@
 //   cer_formcheck  Physical Check of one booklet at one cash examination   id = examId|bookletId   { examId, bookletId, seen, unusedFrom, unusedTo }
 //   cer_raaf       the custodian's RAAF for a month and form             id = lguId|YYYY-MM|form   { lguId, month, form, beg, rec, iss, end, receivedDate }
 //   cer_settings   'aging|<lguId>'  { days }  flag a booklet held by an AO after this many days (blank = no flag)
-import { store, newId } from '../../js/store.js';
+import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer } from './cer.js';
 
@@ -43,6 +43,7 @@ const officerLabel = (refs, o) => o ? `${o.name}${o.designation ? ' · ' + o.des
 /* ---------- booklet figures ---------- */
 // Numbers used. For now from the Starting Inventory (first unused number); Collections Entry adds the encoded receipts.
 function usedOf(b) {
+  if (b.exhaustedDate) return b.qty;   // marked exhausted from the logbook ("Exh" date)
   const before = b.usedBefore ? Math.max(0, Math.min(b.qty, b.usedBefore - b.from)) : 0;
   return before;
 }
@@ -50,7 +51,7 @@ function statusOf(b) {
   if (b.status === 'lost') return { key: 'lost', label: 'Lost / Destroyed', cls: 'p-flag' };
   if (b.status === 'stock') return { key: 'stock', label: 'In stock', cls: 'p-stock' };
   const u = usedOf(b);
-  if (u >= b.qty) return { key: 'done', label: 'Exhausted', cls: 'p-done' };
+  if (u >= b.qty) return { key: 'done', label: b.exhaustedDate ? 'Exhausted (per logbook)' : 'Exhausted', cls: 'p-done' };
   if (u > 0) return { key: 'part', label: 'Partly used', cls: 'p-part' };
   return { key: 'new', label: 'Issued, not yet used', cls: 'p-new' };
 }
@@ -217,7 +218,8 @@ function encodeHtml(refs, offs, q) {
     : 'Use once, to start the register: the custodian\'s stock and each officer\'s outstanding booklets as of one date. Also for a barangay treasurer\'s booklets copied from the logbook before the municipality\'s side is encoded.';
   return `<section class="panel" aria-labelledby="enc-h"><div class="af-encbox">
     <div class="af-headrow"><h2 id="enc-h" class="cer-h2">Encode</h2>
-      <div class="seg" role="group" aria-label="Movement">${MOVES.map(([k, l]) => `<a href="#" data-mv="${k}" class="${k === mv ? 'on' : ''}" aria-pressed="${k === mv}">${l}</a>`).join('')}</div></div>
+      <div class="af-headr"><button class="btn" type="button" id="af-import">Import from Excel</button>
+      <div class="seg" role="group" aria-label="Movement">${MOVES.map(([k, l]) => `<a href="#" data-mv="${k}" class="${k === mv ? 'on' : ''}" aria-pressed="${k === mv}">${l}</a>`).join('')}</div></div></div>
     ${fields}
     <p class="af-note" id="e-help">${esc(help)}</p></div></section>`;
 }
@@ -234,6 +236,7 @@ function wireRegister(ctx, f, lguId, offs) {
   };
   $$('[data-filter]').forEach((s) => { s.onchange = () => go({ [s.dataset.filter]: s.value }); });
   $$('[data-mv]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); go({ mv: a.dataset.mv }); }; });
+  const imp = $('#af-import'); if (imp) imp.onclick = () => importModal(refs, f, lguId);
   $$('tr[data-bk]').forEach((tr) => {
     const open = () => bookletModal(ctx, f, f.booklets.find((b) => b.id === tr.dataset.bk), offs);
     tr.onclick = open; tr.onkeydown = (e) => { if (e.key === 'Enter') open(); };
@@ -334,7 +337,8 @@ const strip = (b) => { const { id, ...rest } = b; return rest; };
 
 /* ---------- one booklet: history and moves ---------- */
 const ACTION = { received: 'Received by the custodian', issued: 'Issued', transferred: 'Transferred', returned: 'Returned to the custodian', lost: 'Reported lost / destroyed',
-  starting: 'Starting inventory', logbook: 'Encoded from the barangay logbook', matched: 'Receipt by the custodian matched' };
+  starting: 'Starting inventory', logbook: 'Encoded from the barangay logbook', matched: 'Receipt by the custodian matched',
+  imported: 'Imported from Excel · issued', exhausted: 'Exhausted (per logbook)' };
 function historyHtml(refs, f, b) {
   const name = (id) => f.officers.find((o) => o.id === id)?.name || '';
   return `<ol class="af-hist">${(b.history || []).map((h) => `<li><b>${esc(ACTION[h.action] || h.action)}${h.officerId ? ' · ' + esc(name(h.officerId)) : ''}</b>
@@ -346,7 +350,7 @@ async function bookletModal(ctx, f, b, offs) {
   if (!b) return;
   const enc = canEncode(refs);
   const st = statusOf(b);
-  const moves = !enc ? [] : b.status === 'stock' ? [['issue', 'Issue']] : b.status === 'issued' ? [['transfer', 'Transfer to Another AO'], ['return', 'Return to Custodian'], ['lost', 'Report Lost / Destroyed']] : [];
+  const moves = !enc ? [] : b.status === 'stock' ? [['issue', 'Issue']] : held(b) ? [['transfer', 'Transfer to Another AO'], ['return', 'Return to Custodian'], ['lost', 'Report Lost / Destroyed']] : [];
   const offOpts = (skip) => offs.filter((o) => o.id !== skip).map((o) => `<option value="${esc(o.id)}">${esc(officerLabel(refs, o))}</option>`).join('');
   const v = await modal({ title: `${FORM_SHORT[b.form]} ${rangeText(b.from, b.to)}`, wide: true,
     body: `<div class="af-mhead"><span class="pill ${st.cls}">${st.label}</span><span>${b.qty} pcs · used ${usedOf(b)} · unused ${unusedOf(b)}</span></div>
@@ -566,4 +570,148 @@ function raafView(ctx, f, lguId) {
       } finally { s.disabled = false; }
     };
   } };
+}
+
+/* ================= Import from Excel ================= */
+// Reads an issuance list or a typed logbook (one row per booklet) and adds only the booklets not yet in the register.
+// Columns are found by their headings: Date Issued, Series From, Series To, Accountable Officer, Agency, Position, Date Exhausted (Exh), No.
+let xlsxReady = null;
+function loadXlsx() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (!xlsxReady) xlsxReady = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = 'lib/xlsx.full.min.js';
+    sc.onload = () => res(window.XLSX); sc.onerror = () => { xlsxReady = null; rej(new Error('The Excel reader could not load. Check the internet connection and try again.')); };
+    document.head.appendChild(sc);
+  });
+  return xlsxReady;
+}
+const COLS = [
+  ['no', /^\s*no\.?\s*$|^\s*#\s*$/i], ['issued', /date\s*iss|^\s*date\s*$/i], ['from', /series\s*fr|^\s*from\s*$/i], ['to', /series\s*t|^\s*to\s*$/i],
+  ['officer', /officer|^\s*name/i], ['agency', /agency/i], ['position', /position|designation/i], ['exh', /exh/i]];
+function findColumns(rows) {
+  for (let r = 0; r < Math.min(rows.length, 15); r++) {
+    const map = {};
+    rows[r].forEach((cell, c) => { const t = String(cell || ''); COLS.forEach(([k, re]) => { if (map[k] === undefined && re.test(t) && !(k === 'issued' && /exh/i.test(t))) map[k] = c; }); });
+    if (map.from !== undefined && map.to !== undefined) return { header: r, map };
+  }
+  return null;
+}
+function excelDate(XLSX, v) {
+  if (v === '' || v === null || v === undefined) return '';
+  if (typeof v === 'number') { const d = XLSX.SSF.parse_date_code(v); return d ? `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}` : ''; }
+  const t = String(v).trim();
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(t);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/.exec(t);
+  if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; }
+  return null;   // not a date
+}
+const nameKey = (s) => String(s || '').toUpperCase().replace(/\s+/g, ' ').replace(/\s*\.\s*/g, '. ').trim();
+
+function planImport(XLSX, wb, f, refs, lguId, form) {
+  let rows = null, cols = null;
+  for (const n of wb.SheetNames) {
+    const r = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
+    const c = findColumns(r);
+    if (c) { rows = r; cols = c; break; }
+  }
+  if (!cols) return { error: 'No sheet with "Series From" and "Series To" headings was found.' };
+  const M = cols.map, get = (row, k) => (M[k] === undefined ? '' : row[M[k]]);
+  const offs = officersOf(refs, f, lguId);
+  const known = new Map(offs.map((o) => [nameKey(o.name), o]));
+  const newOff = new Map();
+  const taken = f.booklets.filter((b) => b.form === form);
+  const plan = { add: [], same: [], problems: [], newOfficers: [] };
+  for (let i = cols.header + 1; i < rows.length; i++) {
+    const row = rows[i], line = i + 1;
+    const a = int(get(row, 'from')), z = int(get(row, 'to'));
+    const nm = String(get(row, 'officer') || '').trim();
+    if (!a && !z && !nm) continue;   // empty row
+    const issued = excelDate(XLSX, get(row, 'issued')), exh = excelDate(XLSX, get(row, 'exh'));
+    const no = String(get(row, 'no') || '').trim();
+    const bad = (why) => plan.problems.push({ line, no, text: `${a || '?'} – ${z || '?'}${nm ? ' · ' + nm : ''}`, why });
+    if (!a || !z) { bad('Series From or Series To is missing.'); continue; }
+    if (z < a) { bad('Series From is after Series To.'); continue; }
+    if (z - a + 1 > MAX_PCS) { bad(`${z - a + 1} pieces in one row. Check the series.`); continue; }
+    if (issued === null) { bad('Date Issued is not a date.'); continue; }
+    if (exh === null) { bad('Date Exhausted is not a date.'); continue; }
+    if (nm && !issued) { bad('Date Issued is missing.'); continue; }
+    if (exh && !nm) { bad('Exhausted, but no accountable officer.'); continue; }
+    if (exh && issued && exh < issued) { bad('Date Exhausted is before Date Issued.'); continue; }
+    const same = taken.find((b) => b.from === a && b.to === z);
+    if (same) { plan.same.push({ line, no, text: rangeText(a, z) }); continue; }
+    const hit = taken.find((b) => b.from <= z && a <= b.to);
+    if (hit) { bad(`Overlaps ${rangeText(hit.from, hit.to)}${hit.lguId !== lguId ? ' in another register' : ''}.`); continue; }
+    let officerKey = '';
+    if (nm) {
+      officerKey = nameKey(nm);
+      if (!known.has(officerKey) && !newOff.has(officerKey)) newOff.set(officerKey, { id: newId('cero'), name: officerKey, designation: String(get(row, 'position') || '').trim(), agency: String(get(row, 'agency') || '').trim() });
+    }
+    const item = { line, no, from: a, to: z, issued, exh, officerKey };
+    plan.add.push(item);
+    taken.push({ form, from: a, to: z, lguId });   // a repeated row later in the file counts as already added
+  }
+  plan.newOfficers = [...newOff.values()];
+  plan.officerOf = (k) => known.get(k) || newOff.get(k) || null;
+  return plan;
+}
+
+async function importModal(refs, f, lguId) {
+  let plan = null, XLSX = null;
+  const lgu = refs.lgu[lguId];
+  const go2 = await modal({ title: 'Import from Excel', wide: true,
+    body: `<p class="hint" style="margin:0">Forms Register of <b>${esc(agencyName(refs, lgu))}</b>. One row per booklet. Booklets already in the register are skipped, so the same file can be imported again after new rows are added.</p>
+      <div class="two">
+        <div class="field"><label for="i-form">Form Type</label><select class="input" id="i-form">${FORMS.map(([k, l]) => `<option value="${k}" ${k === LAST.form ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+        <div class="field"><label for="i-file">Excel file (.xlsx, .xls or .csv)</label><input class="input" type="file" id="i-file" accept=".xlsx,.xls,.csv"></div>
+      </div>
+      <p class="hint" style="margin:0">Headings read: Date Issued, Series From, Series To, Accountable Officer, Agency, Position, and if present Date Exhausted (Exh) and No. A row without an officer is in stock.</p>
+      <div id="i-prev"></div>`,
+    onOpen: (bg) => {
+      const fileIn = $('#i-file', bg), formIn = $('#i-form', bg), prev = $('#i-prev', bg);
+      const run = async () => {
+        plan = null;
+        const file = fileIn.files[0]; if (!file) { prev.innerHTML = ''; return; }
+        prev.innerHTML = '<p class="hint">Reading the file…</p>';
+        try {
+          XLSX = await loadXlsx();
+          const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+          plan = planImport(XLSX, wb, f, refs, lguId, formIn.value);
+          prev.innerHTML = previewHtml(plan, formIn.value);
+        } catch (e) { prev.innerHTML = `<div class="msg bad">${esc(e.message || e)}</div>`; }
+      };
+      fileIn.onchange = run; formIn.onchange = run;
+    },
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Import New Booklets', cls: 'primary', value: 'go', check: () => {
+      if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; }
+      if (!plan.add.length) { toast('Nothing new to import.', 'bad'); return false; }
+      return true;
+    } }] });
+  if (go2 !== 'go' || !plan) return;
+  toast(`Importing ${plan.add.length} booklets…`);
+  for (const o of plan.newOfficers) await store.save('cer_officers', o.id, { lguId, name: o.name, designation: o.designation, agency: o.agency }, by(refs), { quiet: true });
+  const asOf = today();
+  for (const it of plan.add) {
+    const o = it.officerKey ? plan.officerOf(it.officerKey) : null;
+    const note = `Excel row ${it.line}${it.no ? ' · logbook No. ' + it.no : ''}`;
+    const history = o ? [hist(refs, 'imported', it.issued, { officerId: o.id, note })] : [hist(refs, 'starting', it.issued || asOf, { note })];
+    if (o && it.exh) history.push(hist(refs, 'exhausted', it.exh, { officerId: o.id }));
+    await store.save('cer_booklets', newId('cerb'), { lguId, form: plan.form || LAST.form, from: it.from, to: it.to, qty: it.to - it.from + 1, receivedDate: '', receivedFrom: '', reference: '',
+      source: 'import', status: o ? 'issued' : 'stock', officerId: o ? o.id : '', issuedDate: o ? it.issued : '', usedBefore: null, exhaustedDate: o ? it.exh : '', history }, by(refs), { quiet: true });
+  }
+  emitChange('local');
+  toast(`${plan.add.length} booklet${plan.add.length > 1 ? 's' : ''} imported${plan.newOfficers.length ? `, ${plan.newOfficers.length} new officer${plan.newOfficers.length > 1 ? 's' : ''} added` : ''}. ${plan.same.length ? `${plan.same.length} already in the register ${plan.same.length > 1 ? 'were' : 'was'} skipped.` : ''}`, 'ok');
+}
+function previewHtml(plan, form) {
+  if (plan.error) return `<div class="msg bad">${esc(plan.error)}</div>`;
+  plan.form = form;
+  const iss = plan.add.filter((x) => x.officerKey && !x.exh).length, exh = plan.add.filter((x) => x.exh).length, stk = plan.add.filter((x) => !x.officerKey).length;
+  return `<div class="af-imp">
+      <div><b>${plan.add.length}</b><span>new booklets to import</span><small>${iss} issued · ${exh} exhausted · ${stk} in stock</small></div>
+      <div><b>${plan.same.length}</b><span>already in the register</span><small>or repeated in the file · skipped</small></div>
+      <div><b>${plan.newOfficers.length}</b><span>new officers</span><small>added to this LGU</small></div>
+      <div class="${plan.problems.length ? 'warn' : ''}"><b>${plan.problems.length}</b><span>rows not imported</span><small>listed below</small></div>
+    </div>
+    ${plan.newOfficers.length ? `<p class="hint" style="margin:0"><b>New officers:</b> ${plan.newOfficers.map((o) => esc(o.name) + (o.designation ? ` (${esc(o.designation)})` : '')).join(', ')}</p>` : ''}
+    ${plan.problems.length ? `<div class="af-probs"><b>Rows not imported</b>${plan.problems.slice(0, 50).map((p) => `<div>Row ${p.line}${p.no ? ` · No. ${esc(p.no)}` : ''} · ${esc(p.text)} — ${esc(p.why)}</div>`).join('')}${plan.problems.length > 50 ? `<div>…and ${plan.problems.length - 50} more</div>` : ''}</div>` : ''}`;
 }

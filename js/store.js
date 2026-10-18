@@ -26,19 +26,20 @@ export const store = {
   },
   async list(table) { return (await db.all('records', table)).filter((r) => !r.deleted); },
   async get(table, id) { return db.get('records', [table, id]); },
-  async save(table, id, data, by = '', { deleted = false } = {}) {
+  // quiet: true skips the screen refresh (used by imports that save many records; they call emitChange once at the end).
+  async save(table, id, data, by = '', { deleted = false, quiet = false } = {}) {
     const cur = await db.get('records', [table, id]);
     const now = new Date().toISOString();
     if (DEMO) {
       const rec = { table, id, version: (cur ? cur.version : 0) + 1, updatedAt: now, updatedBy: by, deleted, data, pending: false };
-      await db.put('records', rec); emitChange('local'); return rec;
+      await db.put('records', rec); if (!quiet) emitChange('local'); return rec;
     }
     const queued = await db.get('outbox', [table, id]);
     const baseVersion = queued ? queued.baseVersion : cur ? cur.version : 0;
     await db.put('outbox', { table, id, baseVersion, data, deleted, queuedAt: now });
     const rec = { table, id, version: cur ? cur.version : 0, updatedAt: now, updatedBy: cur ? cur.updatedBy : '', deleted, data, pending: true };
     await db.put('records', rec);
-    emitChange('local');
+    if (!quiet) emitChange('local');
     window.dispatchEvent(new Event('outbox-changed'));
     return rec;
   },
