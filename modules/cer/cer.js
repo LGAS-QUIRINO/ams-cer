@@ -24,19 +24,19 @@ const FUNCS_LGU = [['collecting', 'Collecting'], ['disbursing', 'Disbursing'], [
 const FUNCS_BRGY = [['collecting', 'Collecting'], ['disbursing', 'Disbursing (Cash Advances)']];
 const FUNC_NAME = { collecting: 'Collecting', disbursing: 'Disbursing', special: 'Special Disbursing', liquidating: 'Liquidating', custodian: 'Custodian' };
 // Accountable forms an officer collects with (starting list; more come with Accountable Forms).
-const FORMS = [['af51', 'AF 51 – Official Receipt'], ['ctci', 'CTC – Individual'], ['ctcc', 'CTC – Corporate'], ['af54', 'AF 54'], ['af56', 'AF 56']];
-const FORM_NAME = Object.fromEntries(FORMS);
+export const FORMS = [['af51', 'AF 51 – Official Receipt'], ['ctci', 'CTC – Individual'], ['ctcc', 'CTC – Corporate'], ['af54', 'AF 54'], ['af56', 'AF 56']];
+export const FORM_NAME = Object.fromEntries(FORMS);
 const DESIG_BRGY = ['Barangay Treasurer'];
 const DESIG_LGU = ['Municipal Treasurer', 'Provincial Treasurer', 'Collecting Officer', 'Liquidating Officer', 'Disbursing Officer', 'Special Disbursing Officer', 'Accountable Forms Custodian'];
 
 /* ---------- who may do what ---------- */
-const hasRole = (refs, ...r) => !!refs.me && (refs.me.data.roles || []).some((x) => r.includes(x));
+export const hasRole = (refs, ...r) => !!refs.me && (refs.me.data.roles || []).some((x) => r.includes(x));
 const seesAll = (refs) => hasRole(refs, 'admin', 'sa', 'osa');
 // Audit Setup is the auditors' work (Team Member, ATL, SA, Admin). Team Staff (JO) and OSA Staff view it only.
-const isAuditor = (refs) => hasRole(refs, 'member', 'atl', 'sa', 'admin');
-const by = (refs) => refs.me?.data.email || '';
+export const isAuditor = (refs) => hasRole(refs, 'member', 'atl', 'sa', 'admin');
+export const by = (refs) => refs.me?.data.email || '';
 const munOf = (refs, lgu) => (lgu.data.kind === 'barangay' ? lgu.data.parentId : lgu.data.kind === 'municipality' ? lgu.id : '');
-function mayView(refs, lgu) {
+export function mayView(refs, lgu) {
   if (!lgu) return false;
   if (seesAll(refs)) return true;
   const d = refs.me?.data; if (!d || !(d.teamIds || []).includes(lgu.data.teamId)) return false;
@@ -48,7 +48,7 @@ const mayEdit = (refs, lgu) => isAuditor(refs) && mayView(refs, lgu);
 
 /* ---------- small helpers ---------- */
 const isBrgy = (lgu) => !!lgu && lgu.data.kind === 'barangay';
-function agencyName(refs, lgu) {
+export function agencyName(refs, lgu) {
   if (!lgu) return '';
   const d = lgu.data;
   return d.kind === 'barangay' ? `BLGU - ${d.name}` : d.kind === 'municipality' ? `LGU - ${d.name}` : `PLGU - ${d.name}`;
@@ -67,7 +67,7 @@ const userLine = (u) => u ? [u.data.name, u.data.position, u.data.designation].f
 const funcsFor = (lgu) => (isBrgy(lgu) ? FUNCS_BRGY : FUNCS_LGU);
 
 /* ---------- data ---------- */
-async function loadCer() {
+export async function loadCer() {
   const [officers, audits, exams] = await Promise.all([store.list('cer_officers'), store.list('cer_audits'), store.list('cer_exams')]);
   const flat = (r) => ({ id: r.id, ...r.data });
   return { officers: officers.map(flat), audits: audits.map(flat), exams: exams.map(flat) };
@@ -106,7 +106,7 @@ function navItems() {
   return [
     { key: 'setup', label: 'Audit Setup', icon: 'pen', href: '#/cer/setup' },
     { section: true, label: 'SOURCE RECORDS' },
-    { key: 'forms', label: 'Accountable Forms', icon: 'library', soon: true },
+    { key: 'forms', label: 'Accountable Forms', icon: 'library', href: '#/cer/forms' },
     { key: 'collections', label: 'Collections Entry', icon: 'inbox', soon: true },
     { key: 'deposits', label: 'Deposits Entry', icon: 'box', soon: true },
     { key: 'ca', label: 'Cash Advances', icon: 'swap', soon: true },
@@ -138,12 +138,22 @@ function installGuard() {
 export async function render(ctx) {
   const { app, refs, q, parts } = ctx;
   installGuard();
+  const me = refs.me ? refs.me.data : { name: ctx.session.name || ctx.session.email };
+  const roleText = [refs.me?.data.position, roleLine(refs)].filter(Boolean).join(' · ');
+  if (parts[0] === 'forms') {
+    // Accountable Forms: Forms Register, Accountable Officer view, RAAF Reconciliation.
+    DRAFT = null;
+    const f = await import('./forms.js');
+    const { body, crumb, wire } = await f.formsView(ctx);
+    app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: 'forms', crumb, me, roleText, body });
+    $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
+    if (wire) wire();
+    return;
+  }
   const cer = await loadCer();
   const view = 'setup';
   const open = q.get('a') || (q.get('new') ? 'new' : '');
   const body = open ? setupHtml(refs, cer, q) : listHtml(refs, cer);
-  const me = refs.me ? refs.me.data : { name: ctx.session.name || ctx.session.email };
-  const roleText = [refs.me?.data.position, roleLine(refs)].filter(Boolean).join(' · ');
   app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: view, crumb: open ? 'Audit Setup' : 'Audit Setup · Cash Examinations', me, roleText, body });
   $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
   if (open) wireSetup(refs, cer, q, ctx.rerender);

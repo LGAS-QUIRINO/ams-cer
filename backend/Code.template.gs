@@ -8,10 +8,10 @@
 const CLIENT_ID = 'PASTE-THE-CLIENT-ID-HERE.apps.googleusercontent.com';   // from Google Cloud → Credentials
 const FIRST_ADMIN_EMAIL = 'paste.the.admin.gmail@gmail.com';               // the Gmail that will be the first Admin
 
-const TABLES = ['users', 'teams', 'lgus', 'cer_officers', 'cer_audits', 'cer_exams'];
+const TABLES = ['users', 'teams', 'lgus', 'cer_officers', 'cer_audits', 'cer_exams', 'cer_booklets', 'cer_formcheck', 'cer_raaf', 'cer_settings'];
 const ADMIN_TABLES = { users: true, teams: true, lgus: true };            // only the Admin may change these
 // CER Audit Setup: auditors only (Team Member, ATL, SA, Admin). Team Staff (JO) and OSA Staff may view but not change it.
-const AUDITOR_TABLES = { cer_officers: true, cer_audits: true, cer_exams: true };
+const AUDITOR_TABLES = { cer_officers: true, cer_audits: true, cer_exams: true, cer_formcheck: true };
 const AUDITOR_ROLES = ['member', 'atl', 'sa', 'admin'];
 const HEAD = ['id', 'version', 'updatedAt', 'updatedBy', 'deleted', 'data'];
 const SEED = __SEED__;
@@ -115,7 +115,7 @@ function push_(changes, email, isAdmin, isAuditor) {
       try {
         if (TABLES.indexOf(c.table) < 0) throw new Error('Unknown list: ' + c.table);
         if (ADMIN_TABLES[c.table] && !isAdmin) throw new Error('Only the Admin can change ' + c.table + '.');
-        if (AUDITOR_TABLES[c.table] && !isAuditor) throw new Error('Only auditors can change the CER Audit Setup.');
+        if (AUDITOR_TABLES[c.table] && !isAuditor) throw new Error('Only the auditors (Team Member, ATL, SA) can change this.');
         const row = findRow_(c.table, c.id), sh = sheet_(c.table);
         const cur = row ? rec_(sh.getRange(row, 1, 1, HEAD.length).getValues()[0]) : null;
         if ((cur ? cur.version : 0) !== Number(c.baseVersion || 0)) { res.status = 'conflict'; res.record = cur; return res; }
