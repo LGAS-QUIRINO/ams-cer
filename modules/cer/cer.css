@@ -143,3 +143,7 @@ table.af-raaf{width:100%; border-collapse:collapse; font-size:13.5px; min-width:
 @media (max-width:640px){ .af-imp{grid-template-columns:1fr 1fr} }
 .af-tpl{font-size:13px; font-weight:600; color:var(--blue); text-decoration:none; padding:8px 4px}
 .af-tpl:hover{text-decoration:underline}
+.af-enc.g9{grid-template-columns:1.3fr 1fr 1fr .6fr 1fr 1.5fr 1.2fr 1fr auto}
+.af-direct{color:#5b2bb5; font-weight:700}
+@media (max-width:1500px){ .af-enc.g9{grid-template-columns:repeat(5,minmax(0,1fr))} }
+@media (max-width:760px){ .af-enc.g9{grid-template-columns:1fr} }

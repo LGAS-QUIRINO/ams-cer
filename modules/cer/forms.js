@@ -108,7 +108,7 @@ function registerView(ctx, f, lguId) {
   const oos = outOfSequence({ booklets: mine });
   const fForm = q.get('form') || '', fCust = q.get('cust') || '', fStat = q.get('st') || 'open', sort = q.get('sort') || 'days';
   let rows = mine.filter((b) => (!fForm || b.form === fForm)
-    && (!fCust || (fCust === 'stock' ? b.status === 'stock' : b.officerId === fCust))
+    && (!fCust || (fCust === 'stock' ? b.status === 'stock' : fCust === 'direct' ? !!b.receivedDirect : b.officerId === fCust))
     && (fStat === 'all' || (fStat === 'open' ? statusOf(b).key !== 'done' : statusOf(b).key === fStat)));
   rows.sort(sort === 'days' ? (a, b) => (daysWithAo(b, asOf) ?? -1) - (daysWithAo(a, asOf) ?? -1) || a.form.localeCompare(b.form) || a.from - b.from
     : (a, b) => a.form.localeCompare(b.form) || a.from - b.from);
@@ -137,13 +137,13 @@ function registerView(ctx, f, lguId) {
       <div class="stat"><span>For Checking</span><b class="${forCheck.size ? 'warn' : 'dim'}">${forCheck.size}</b><small>out of sequence${aging ? ', held too long' : ''}</small></div>
     </div>
 
-    ${enc ? encodeHtml(refs, offs, q) : ''}
+    ${enc ? encodeHtml(refs, Object.assign(offs, { lguId }), q) : ''}
 
     <section class="panel" aria-labelledby="reg-h">
       <div class="panel-head"><h2 id="reg-h">Forms Register</h2><span class="pill">${rows.length}</span>
         <div class="af-filters">
           ${pick('form', [['', 'All forms'], ...FORMS.filter(([k]) => formsUsed.includes(k)).map(([k]) => [k, FORM_SHORT[k]])], fForm)}
-          ${pick('cust', [['', 'All custody'], ['stock', 'In stock (custodian)'], ...offs.map((o) => [o.id, o.name])], fCust)}
+          ${pick('cust', [['', 'All custody'], ['stock', 'In stock (custodian)'], ['direct', 'Received directly by an AO'], ...offs.map((o) => [o.id, o.name])], fCust)}
           ${pick('st', [['open', 'Not exhausted'], ['all', 'All statuses'], ['stock', 'In stock'], ['new', 'Issued, not yet used'], ['part', 'Partly used'], ['done', 'Exhausted'], ['lost', 'Lost / Destroyed']], fStat)}
           ${pick('sort', [['days', 'Longest with AO first'], ['serial', 'By form and serial']], sort)}
         </div></div>
@@ -154,7 +154,7 @@ function registerView(ctx, f, lguId) {
           const flagOld = aging && d !== null && d > +aging, flagSeq = oos.has(b.id);
           return `<tr class="${flagOld || flagSeq ? 'flag' : ''}" data-bk="${esc(b.id)}" tabindex="0">
             <td>${esc(FORM_SHORT[b.form] || b.form)}</td><td class="mono">${rangeText(b.from, b.to)}</td><td class="r">${b.qty}</td>
-            <td>${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'starting' ? 'Starting inventory' : ''))}</small></td>
+            <td>${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${b.receivedDirect ? `<b class="af-direct">Received directly</b> · ` : ''}${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'import' ? 'Imported from Excel' : b.source === 'starting' ? 'Starting inventory' : ''))}</small></td>
             <td>${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock<small>${lgu.data.kind === 'province' ? 'Provincial' : 'Municipal'} Treasurer (custodian)</small>`}</td>
             <td>${b.status !== 'stock' && b.issuedDate ? esc(fmtDate(b.issuedDate)) : '<span class="dim">—</span>'}</td>
             <td class="r">${d === null ? '<span class="dim">—</span>' : `<b class="${flagOld ? 'warn-t' : ''}">${d}</b>`}</td>
@@ -190,7 +190,7 @@ const result = (kind, title, text) => `<div class="af-r ${kind}"><b>${esc(title)
 /* ---------- Encode ---------- */
 const MOVES = [['receive', 'Receive'], ['issue', 'Issue'], ['starting', 'Starting Inventory']];
 // The last form, date and choices stay filled in for the next entry (the screen refreshes after each save).
-const LAST = { form: 'af51', date: '', src: RECEIVED_FROM[0], off: '', per: PER_BOOKLET };
+const LAST = { form: 'af51', date: '', src: RECEIVED_FROM[0], off: '', per: PER_BOOKLET, rby: 'custodian' };
 const sel = (a, b) => (a === b ? 'selected' : '');
 function encodeHtml(refs, offs, q) {
   const mv = MOVES.some(([k]) => k === q.get('mv')) ? q.get('mv') : 'receive';
@@ -200,8 +200,11 @@ function encodeHtml(refs, offs, q) {
   const per = `<div class="field"><label for="e-per">Per Booklet</label><input class="input r" id="e-per" inputmode="numeric" value="${LAST.per}"></div>`;
   const offSel = (id, label, extra = '') => `<div class="field"><label for="${id}">${label}</label><select class="input" id="${id}">${extra.replace(`value="${LAST.off}"`, `value="${LAST.off}" selected`)}<option value="">— Choose the officer —</option>${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.off)}>${esc(officerLabel(refs, o))}</option>`).join('')}</select></div>`;
   let fields = '';
-  if (mv === 'receive') fields = `<div class="af-enc g8">${formSel}${range}${per}
+  const custName = refs.lgu[offs.lguId]?.data.kind === 'province' ? 'Provincial Treasurer' : 'Municipal Treasurer';
+  if (mv === 'receive') fields = `<div class="af-enc g9">${formSel}${range}${per}
       <div class="field"><label for="e-date">Date Received</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
+      <div class="field"><label for="e-rby">Received By</label><select class="input" id="e-rby"><option value="custodian">Custodian (${custName})</option>
+        <optgroup label="Directly by an accountable officer">${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.rby)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
       <div class="field"><label for="e-src">Received From</label><select class="input" id="e-src">${RECEIVED_FROM.map((s) => `<option ${sel(s, LAST.src)}>${esc(s)}</option>`).join('')}</select></div>
       <div class="field"><label for="e-ref">Reference (optional)</label><input class="input" id="e-ref" placeholder="e.g. RIS No."></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>`;
@@ -213,7 +216,7 @@ function encodeHtml(refs, offs, q) {
       <div class="field"><label for="e-date">Date Issued / As of</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
       <div class="field"><label for="e-next">First Unused No. (optional)</label><input class="input r" id="e-next" inputmode="numeric" placeholder="If partly used"></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>`;
-  const help = mv === 'receive' ? 'The range is split into booklets. A serial number already in the register is refused, except a booklet first encoded from a barangay logbook: it is matched by serial and gets its receipt details.'
+  const help = mv === 'receive' ? 'The range is split into booklets. Received by the custodian: the booklets go into stock. Received directly by an accountable officer (e.g. a barangay treasurer supplied by the Provincial Treasurer): they go straight into that officer\'s custody and are left out of the custodian\'s RAAF. A serial already in the register is refused, except a booklet first encoded from a logbook: it is matched by serial and gets its receipt details.'
     : mv === 'issue' ? 'Every booklet in stock within the range is issued to the officer. Barangay treasurers are listed with the municipality\'s officers.'
     : 'Use once, to start the register: the custodian\'s stock and each officer\'s outstanding booklets as of one date. Also for a barangay treasurer\'s booklets copied from the logbook before the municipality\'s side is encoded.';
   return `<section class="panel" aria-labelledby="enc-h"><div class="af-encbox">
@@ -259,7 +262,7 @@ function wireRegister(ctx, f, lguId, offs) {
   enter.onclick = async () => {
     enter.disabled = true;
     Object.assign(LAST, { form: $('#e-form').value, date: $('#e-date').value, per: int(per?.value) || LAST.per,
-      src: $('#e-src') ? $('#e-src').value : LAST.src, off: $('#e-off') ? $('#e-off').value : LAST.off });
+      src: $('#e-src') ? $('#e-src').value : LAST.src, off: $('#e-off') ? $('#e-off').value : LAST.off, rby: $('#e-rby') ? $('#e-rby').value : LAST.rby });
     try {
       const ok = mv === 'receive' ? await doReceive(refs, f, lguId) : mv === 'issue' ? await doIssue(refs, f, lguId) : await doStarting(refs, f, lguId);
       if (ok) ['#e-from', '#e-to', '#e-next', '#e-ref'].forEach((s) => { const el = $(s); if (el) el.value = ''; });
@@ -284,18 +287,34 @@ async function doReceive(refs, f, lguId) {
     else if (hit.length) return bad(`${FORM_SHORT[form]} ${rangeText(x, y)} overlaps ${rangeText(hit[0].from, hit[0].to)} already in the register.`);
     else plan.push({ x, y });
   }
-  const info = { receivedDate: date, receivedFrom: $('#e-src').value, reference: $('#e-ref').value.trim() };
+  const rby = $('#e-rby').value;
+  const officer = rby !== 'custodian' ? f.officers.find((o) => o.id === rby) : null;
+  if (rby !== 'custodian' && !officer) return bad('Choose who received the booklets.');
+  const info = { receivedDate: date, receivedFrom: $('#e-src').value, reference: $('#e-ref').value.trim(), receivedDirect: !!officer };
   for (const s of plan) {
     if (s.match) {
       const b = s.match;
-      await store.save('cer_booklets', b.id, { ...strip(b), ...info, history: [...(b.history || []), hist(refs, 'matched', date, { note: 'Receipt by the custodian matched to the logbook entry' })] }, by(refs));
-    } else {
-      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...info, source: 'received', status: 'stock', officerId: '', issuedDate: '', usedBefore: null,
-        history: [hist(refs, 'received', date, { note: info.receivedFrom })] }, by(refs));
+      if (officer && b.officerId && b.officerId !== officer.id) return bad(`${rangeText(b.from, b.to)} is recorded with another officer. Check the logbook entry first.`);
+      if (officer && b.issuedDate && b.issuedDate < date) return bad(`${rangeText(b.from, b.to)} was already in the officer's hands on ${fmtDate(b.issuedDate)}, before this receipt date.`);
     }
   }
+  for (const s of plan) {
+    if (s.match) {
+      const b = s.match;
+      // Matched to an earlier logbook / import entry: the receipt details are added; nothing is doubled.
+      await store.save('cer_booklets', b.id, { ...strip(b), ...info, history: [...(b.history || []), hist(refs, officer ? 'matcheddirect' : 'matched', date,
+        { officerId: officer ? officer.id : '', note: officer ? `Received directly from ${info.receivedFrom}; matched to the logbook entry` : 'Receipt by the custodian matched to the logbook entry' })] }, by(refs), { quiet: true });
+    } else if (officer) {
+      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...info, source: 'direct', status: 'issued', officerId: officer.id, issuedDate: date, usedBefore: null,
+        history: [hist(refs, 'direct', date, { officerId: officer.id, note: info.receivedFrom })] }, by(refs), { quiet: true });
+    } else {
+      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...info, source: 'received', status: 'stock', officerId: '', issuedDate: '', usedBefore: null,
+        history: [hist(refs, 'received', date, { note: info.receivedFrom })] }, by(refs), { quiet: true });
+    }
+  }
+  emitChange('local');
   const m = plan.filter((s) => s.match).length;
-  toast(`${plan.length} booklet${plan.length > 1 ? 's' : ''} received${m ? ` (${m} matched to logbook entries)` : ''}.`, 'ok');
+  toast(`${plan.length} booklet${plan.length > 1 ? 's' : ''} received${officer ? ' directly by ' + officer.name : ''}${m ? ` (${m} matched to logbook entries)` : ''}.`, 'ok');
   return true;
 }
 async function doIssue(refs, f, lguId) {
@@ -339,7 +358,8 @@ const strip = (b) => { const { id, ...rest } = b; return rest; };
 /* ---------- one booklet: history and moves ---------- */
 const ACTION = { received: 'Received by the custodian', issued: 'Issued', transferred: 'Transferred', returned: 'Returned to the custodian', lost: 'Reported lost / destroyed',
   starting: 'Starting inventory', logbook: 'Encoded from the barangay logbook', matched: 'Receipt by the custodian matched',
-  imported: 'Imported from Excel · issued', exhausted: 'Exhausted (per logbook)' };
+  imported: 'Imported from Excel · issued', exhausted: 'Exhausted (per logbook)',
+  direct: 'Received directly by the accountable officer', matcheddirect: 'Direct receipt by the accountable officer matched' };
 function historyHtml(refs, f, b) {
   const name = (id) => f.officers.find((o) => o.id === id)?.name || '';
   return `<ol class="af-hist">${(b.history || []).map((h) => `<li><b>${esc(ACTION[h.action] || h.action)}${h.officerId ? ' · ' + esc(name(h.officerId)) : ''}</b>
