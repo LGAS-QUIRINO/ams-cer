@@ -362,3 +362,22 @@ table.rp-t{width:100%; border-collapse:collapse; margin:6px 0}
   body.rp-printing #cer-print .rp-kv td{border:0; border-bottom:1px solid #999}
   body.rp-printing #cer-print .rp-saaf td{font-size:8.5pt}
 }
+/* Starting Inventory: Held By an officer, Partly used box; booklet Edit / Delete (28 Oct 2026) */
+.af-offrow{display:grid; grid-template-columns:220px 1fr; gap:12px; align-items:start}
+.af-offrow[hidden], .af-partbox[hidden]{display:none}
+.af-part{display:flex; flex-direction:column; gap:10px; align-items:flex-start}
+.af-part > .cer-chip{margin-top:22px}
+.af-partbox{display:flex; flex-direction:column; gap:8px; width:100%}
+.af-pmode{display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:13px; color:var(--muted)}
+.af-partbox .input{width:100%; font-size:14px; padding:10px 11px}
+.af-partbox small.af-note{font-size:12px}
+ul.af-plan{margin:6px 0 4px; padding-left:18px}
+ul.af-plan li{margin:2px 0}
+.af-edit{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-bottom:12px}
+.af-edit .af-span{grid-column:1 / -1}
+.af-edit .af-span2{grid-column:span 2}
+.af-edit .af-part > .cer-chip{margin-top:0}
+.btn.danger{color:var(--bad); border-color:#efc2bd}
+.btn.danger:hover{background:var(--bad-bg); border-color:var(--bad)}
+.modal .mf .btn.danger{margin-right:auto}
+@media (max-width:760px){ .af-offrow, .af-edit{grid-template-columns:1fr} .af-edit .af-span2{grid-column:auto} }
