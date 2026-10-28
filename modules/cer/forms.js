@@ -11,7 +11,7 @@ import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer } from './cer.js';
 
-export const FORM_SHORT = { af51: 'AF 51', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate', af54: 'AF 54', af56: 'AF 56', chk: 'Checks' };
+export const FORM_SHORT = { af51: 'AF 51', af51b: 'Accountable Form 51 – Barangay', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate', af54: 'AF 54', af56: 'AF 56', chk: 'Checks' };
 // Accountable forms kept in the register: the collecting forms plus checkbooks (received directly by the officer from the bank).
 const AF_FORMS = [...FORMS, ['chk', 'Checks']];
 const custOf = (l) => (l && l.data.kind === 'province' ? 'PTO' : 'MTO');   // the custodian's office

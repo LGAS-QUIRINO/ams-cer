@@ -24,7 +24,7 @@ const FUNCS_LGU = [['collecting', 'Collecting'], ['disbursing', 'Disbursing'], [
 const FUNCS_BRGY = [['collecting', 'Collecting'], ['disbursing', 'Disbursing (Cash Advances)'], ['pettycash', 'Petty Cash Custodian']];
 const FUNC_NAME = { collecting: 'Collecting', disbursing: 'Disbursing', special: 'Special Disbursing', liquidating: 'Liquidating', custodian: 'Custodian', pettycash: 'Petty Cash Custodian' };
 // Accountable forms an officer collects with (starting list; more come with Accountable Forms).
-export const FORMS = [['af51', 'AF 51 – Official Receipt'], ['ctci', 'CTC – Individual'], ['ctcc', 'CTC – Corporate'], ['af54', 'AF 54'], ['af56', 'AF 56']];
+export const FORMS = [['af51', 'AF 51 – Official Receipt'], ['af51b', 'Accountable Form 51 – Barangay'], ['ctci', 'CTC – Individual'], ['ctcc', 'CTC – Corporate'], ['af54', 'AF 54'], ['af56', 'AF 56']];
 export const FORM_NAME = Object.fromEntries(FORMS);
 const DESIG_BRGY = ['Barangay Treasurer'];
 const DESIG_LGU = ['Municipal Treasurer', 'Provincial Treasurer', 'Collecting Officer', 'Liquidating Officer', 'Disbursing Officer', 'Special Disbursing Officer', 'Accountable Forms Custodian'];
@@ -188,7 +188,7 @@ function listHtml(refs, cer) {
 /* ================= Audit Setup form ================= */
 function blankExam(lgu) {
   const brgy = isBrgy(lgu);
-  return { examId: '', officerId: '', functions: brgy ? ['collecting', 'disbursing'] : [], forms: brgy ? ['af51', 'ctci'] : [],
+  return { examId: '', officerId: '', functions: brgy ? ['collecting', 'disbursing'] : [], forms: brgy ? ['af51b', 'ctci'] : [],
     bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '' }, lastExamDate: '', balances: {} };
 }
 function stateFrom(refs, cer, q) {
@@ -381,7 +381,7 @@ function wireSetup(refs, cer, q, rerender) {
     };
     $$('[data-func]').forEach((c) => { c.onchange = () => {
       st.functions = $$('[data-func]').filter((x) => x.checked).map((x) => x.dataset.func);
-      if (st.functions.includes('collecting') && !st.forms.length && isBrgy(refs.lgu[st.lguId])) st.forms = ['af51', 'ctci'];
+      if (st.functions.includes('collecting') && !st.forms.length && isBrgy(refs.lgu[st.lguId])) st.forms = ['af51b', 'ctci'];
       touch(); drawOfficer();
     }; });
     $$('[data-form]').forEach((c) => { c.onchange = () => { st.forms = $$('[data-form]').filter((x) => x.checked).map((x) => x.dataset.form); touch(); drawOfficer(); }; });
