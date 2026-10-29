@@ -178,6 +178,11 @@ const unusedCell = (b) => { const rs = unusedRanges(b), n = countRanges(rs), fv 
   return b.noSerial ? `${n} pcs${amt}` : `${rangesText(rs)} <span class="dim">(${n})</span>${amt}`; };
 const held = (b) => b.status === 'issued' && statusOf(b).key !== 'done';
 const daysWithAo = (b, asOf) => (held(b) && b.issuedDate ? Math.max(0, days(b.issuedDate, asOf)) : null);
+// Each AO's cut-off: the cash count date of the officer's latest cash examination in Audit Setup ('' when none yet).
+function aoCutoff(f, officerId) {
+  const ds = f.exams.filter((e) => e.officerId === officerId).map((e) => f.audits.find((a) => a.id === e.auditId)?.countDate).filter(Boolean).sort();
+  return ds[ds.length - 1] || '';
+}
 // Beginning booklets keep a tag for good, even after the real dates are edited in: whose beginning, and as of when.
 //   custodian: the custodian's starting inventory (his stock as of his cut-off)
 //   ao:        an AO's beginning (forms already in the AO's hands as of the AO's cut-off / last cash exam)
@@ -234,7 +239,9 @@ const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[
 function registerView(ctx, f, lguId) {
   const { refs, q } = ctx;
   const lgu = refs.lgu[lguId];
-  const asOf = q.get('asof') || today();
+  // Days with AO: counted per officer, up to that officer's cut-off (latest cash count in Audit Setup), else today.
+  const cutOf = (b) => aoCutoff(f, b.officerId) || today();
+  const dAo = (b) => daysWithAo(b, cutOf(b));
   const offs = officersOf(refs, f, lguId);
   const ctl = chkByCustodian(f, lguId);
   const allHere = f.booklets.filter((b) => b.lguId === lguId);
@@ -246,7 +253,7 @@ function registerView(ctx, f, lguId) {
   let rows = mine.filter((b) => (!fForm || b.form === fForm)
     && (!fCust || (fCust === 'stock' ? b.status === 'stock' : fCust === 'direct' ? !!b.receivedDirect : b.officerId === fCust))
     && (fStat === 'all' || (fStat === 'open' ? statusOf(b).key !== 'done' : statusOf(b).key === fStat)));
-  rows.sort(sort === 'days' ? (a, b) => (daysWithAo(b, asOf) ?? -1) - (daysWithAo(a, asOf) ?? -1) || a.form.localeCompare(b.form) || a.from - b.from
+  rows.sort(sort === 'days' ? (a, b) => (dAo(b) ?? -1) - (dAo(a) ?? -1) || a.form.localeCompare(b.form) || a.from - b.from
     : (a, b) => a.form.localeCompare(b.form) || a.from - b.from);
   const stock = mine.filter((b) => b.status === 'stock');
   const withAo = mine.filter(held);
@@ -257,14 +264,13 @@ function registerView(ctx, f, lguId) {
   const enc = canEncode(refs);
   const pick = (name, opts, sel) => `<select class="input af-sm" data-filter="${name}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   const formsUsed = [...new Set(mine.map((b) => b.form))];
-  const longest = withAo.slice().sort((a, b) => daysWithAo(b, asOf) - daysWithAo(a, asOf))[0];
+  const longest = withAo.slice().sort((a, b) => dAo(b) - dAo(a))[0];
   const body = `<div class="hello"><div><h1>Accountable Forms</h1><p>Each booklet is encoded once, from receipt by the custodian to its last number used. Status follows Collections &amp; Deposits. Unused forms are counted, never treated as missing.</p></div>
       <div class="btn-row"><a class="btn" href="#/cer/forms/raaf?lgu=${esc(lguId)}">RAAF Reconciliation</a><a class="btn" href="#/cer/forms/officer?lgu=${esc(lguId)}">By Accountable Officer</a>
         <button class="btn" type="button" id="af-xls">Export to Excel</button></div></div>
 
     <div class="panel af-bar">
       <div class="field"><label for="af-lgu">Forms Register of</label><select class="input" id="af-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
-      <div class="field"><label for="af-asof">Days counted up to</label><input class="input" type="date" id="af-asof" value="${esc(asOf)}"></div>
       <div class="field af-span2"><label for="af-find">Find a Serial No.</label><div class="af-pair af-findbox"><input class="input mono" id="af-find" inputmode="numeric" placeholder="e.g. 7311510" autocomplete="off"><button class="btn" type="button" id="af-findgo">Find</button></div></div>
     </div>
     <div id="af-found" aria-live="polite"></div>
@@ -292,14 +298,14 @@ function registerView(ctx, f, lguId) {
       ${rows.length ? `<div class="af-tbl"><table class="af-reg">
         <thead><tr><th scope="col">Form</th><th scope="col">Serial Range</th><th scope="col" class="r">Qty</th><th scope="col">Received</th><th scope="col">Custody</th><th scope="col">Issued</th><th scope="col" class="r">Days with AO</th><th scope="col" class="r">Used</th><th scope="col">Unused</th><th scope="col">Status</th></tr></thead>
         <tbody>${rows.map((b) => {
-          const o = f.officers.find((x) => x.id === b.officerId); const st = statusOf(b); const d = daysWithAo(b, asOf); const sk = skippedOf(b);
+          const o = f.officers.find((x) => x.id === b.officerId); const st = statusOf(b); const d = dAo(b); const sk = skippedOf(b);
           const flagSeq = oos.has(b.id);
           return `<tr class="${flagSeq ? 'flag' : ''}" data-bk="${esc(b.id)}" tabindex="0">
             <td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td class="r">${b.qty}</td>
             <td>${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${b.receivedDirect ? `<b class="af-direct">Received directly</b> · ` : ''}${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'import' ? 'Imported from Excel' : ''))}</small>${begTag(b)}</td>
             <td>${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock<small>Custodian (${custOf(lgu)})</small>`}</td>
             <td>${b.status !== 'stock' && b.issuedDate ? issuedText(b, true) : '<span class="dim">—</span>'}</td>
-            <td class="r">${d === null ? '<span class="dim">—</span>' : `<b>${daysText(b, d)}</b>`}</td>
+            <td class="r">${d === null ? '<span class="dim">—</span>' : `<b>${daysText(b, d)}</b><small class="dim af-nw">${aoCutoff(f, b.officerId) ? 'to ' + esc(fmtDate(cutOf(b))) : 'as of today'}</small>`}</td>
             <td class="r">${usedOf(b)}</td>
             <td class="mono">${unusedCell(b)}</td>
             <td><span class="pill ${st.cls}">${st.label}</span>${flagSeq ? '<br><span class="pill p-flag">Out of sequence</span>' : ''}${sk.length ? '<br><span class="pill p-flag">Skipped numbers</span>' : ''}</td></tr>`;
@@ -316,20 +322,20 @@ function registerView(ctx, f, lguId) {
         ${result(skipped.length ? 'warn' : 'ok', skipped.length ? `Skipped numbers between used ORs · ${skipped.reduce((n, b) => n + countRanges(skippedOf(b)), 0)}` : 'No skipped numbers between used ORs',
           skipped.length ? skipped.map((b) => `${esc(f.officers.find((o) => o.id === b.officerId)?.name || '')}, ${FORM_SHORT[b.form]} ${serialText(b)}: ${rangesText(skippedOf(b))}`).join('<br>') + '<br>Confirm each at the Physical Check: on hand, cancelled, or not on hand.' : 'Unused numbers come after the last number used in each booklet.')}
         ${result(overlapCount(mine) ? 'warn' : 'ok', overlapCount(mine) ? `Overlapping serial ranges · ${overlapCount(mine)}` : 'No overlapping serial ranges', 'No number may appear in two booklets.')}
-        ${result('info', longest ? `Longest with an AO · ${longest.issuedAsOf ? '≥ ' : ''}${daysWithAo(longest, asOf)} days` : 'No booklet with an AO', longest ? `${esc(f.officers.find((o) => o.id === longest.officerId)?.name || '')}, ${FORM_SHORT[longest.form]} ${rangeText(longest.from, longest.to)}, ${longest.issuedAsOf ? 'on hand as of' : 'issued'} ${esc(fmtDate(longest.issuedDate))}.` : 'Issue booklets to the accountable officers to start counting.')}
+        ${result('info', longest ? `Longest with an AO · ${longest.issuedAsOf ? '≥ ' : ''}${dAo(longest)} days` : 'No booklet with an AO', longest ? `${esc(f.officers.find((o) => o.id === longest.officerId)?.name || '')}, ${FORM_SHORT[longest.form]} ${rangeText(longest.from, longest.to)}, ${longest.issuedAsOf ? 'on hand as of' : 'issued'} ${esc(fmtDate(longest.issuedDate))}.` : 'Issue booklets to the accountable officers to start counting.')}
         ${result('info', `${withAo.reduce((n, b) => n + unusedOf(b), 0)} unused forms with AOs`, 'To be confirmed in each officer\'s Physical Check at the cash count.')}
         ${result(wrong.length ? 'warn' : 'ok', wrong.length ? `Receipts used by another officer · ${wrong.length}` : 'No receipt used by another officer',
           wrong.length ? wrong.slice(0, 12).map((x) => `${esc(f.officers.find((o) => o.id === x.officerId)?.name || '')} encoded ${FORM_SHORT[x.form] || x.form} ${x.serial}, in a booklet ${x.bk.status === 'issued' ? 'issued to ' + esc(f.officers.find((o) => o.id === x.bk.officerId)?.name || 'another officer') : 'not issued to anyone'}.`).join('<br>') + (wrong.length > 12 ? '<br>…' : '') : 'Every receipt encoded in Collections is in a booklet issued to the officer who used it.')}
       </div>
     </section>`;
-  const exportRows = () => rows.map((b) => { const o = f.officers.find((x) => x.id === b.officerId); const d = daysWithAo(b, asOf);
+  const exportRows = () => rows.map((b) => { const o = f.officers.find((x) => x.id === b.officerId); const d = dAo(b);
     return { Form: FORM_SHORT[b.form] || b.form, 'Series From': b.from, 'Series To': b.to, Qty: b.qty, 'Date Received': fmtDate(b.receivedDate), 'Received From': b.receivedFrom || '',
       'Received Directly': b.receivedDirect ? 'Yes' : '', Custody: b.status === 'issued' && o ? o.name : b.status === 'stock' ? `Custodian (${custOf(lgu)})` : '', Designation: b.status === 'issued' && o ? (o.designation || '') : '',
-      'Date Issued': b.status !== 'stock' ? (b.issuedAsOf ? 'Not yet known (on hand as of ' + fmtDate(b.issuedDate) + ')' : fmtDate(b.issuedDate)) : '', 'Days with AO': d === null ? '' : (b.issuedAsOf ? '≥ ' + d : d), Beginning: (() => { const g = beginOf(b); return g ? (g.as === 'ao' ? "AO's beginning" : 'Starting inventory (custodian)') + (g.date ? ' as of ' + fmtDate(g.date) : '') : ''; })(), Used: usedOf(b), 'Unused (ranges)': rt(b, unusedRanges(b)), 'Unused Qty': unusedOf(b), 'Unused Amount': faceOf(b) ? unusedOf(b) * faceOf(b) : '',
+      'Date Issued': b.status !== 'stock' ? (b.issuedAsOf ? 'Not yet known (on hand as of ' + fmtDate(b.issuedDate) + ')' : fmtDate(b.issuedDate)) : '', 'Days with AO': d === null ? '' : (b.issuedAsOf ? '≥ ' + d : d), 'Days Counted To': d === null ? '' : (aoCutoff(f, b.officerId) ? fmtDate(cutOf(b)) : 'today'), Beginning: (() => { const g = beginOf(b); return g ? (g.as === 'ao' ? "AO's beginning" : 'Starting inventory (custodian)') + (g.date ? ' as of ' + fmtDate(g.date) : '') : ''; })(), Used: usedOf(b), 'Unused (ranges)': rt(b, unusedRanges(b)), 'Unused Qty': unusedOf(b), 'Unused Amount': faceOf(b) ? unusedOf(b) * faceOf(b) : '',
       'Skipped Numbers': rangesText(skippedOf(b)), Status: statusOf(b).label, 'Date Exhausted': fmtDate(b.exhaustedDate) }; });
   return { crumb: 'Accountable Forms · Forms Register', body, wire: () => {
     wireRegister(ctx, f, lguId, offs);
-    $('#af-xls').onclick = () => exportXlsx(`Forms Register ${agencyName(refs, lgu)} ${asOf}.xlsx`, 'Forms Register', exportRows());
+    $('#af-xls').onclick = () => exportXlsx(`Forms Register ${agencyName(refs, lgu)} ${today()}.xlsx`, 'Forms Register', exportRows());
   } };
 }
 function overlapCount(list) {
@@ -412,7 +418,6 @@ function encodeHtml(refs, offs, q) {
 function wireRegister(ctx, f, lguId, offs) {
   const { refs } = ctx;
   $('#af-lgu').onchange = (e) => go({ lgu: e.target.value, cust: '' });
-  $('#af-asof').onchange = (e) => go({ asof: e.target.value });
   const findIn = $('#af-find');
   const doFind = () => findSerial(ctx, f, lguId, offs, findIn.value);
   $('#af-findgo').onclick = doFind;

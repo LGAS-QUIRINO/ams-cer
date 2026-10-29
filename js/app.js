@@ -137,7 +137,38 @@ window.addEventListener('sync-status', (e) => {
   if (e.detail.status === 'error' && e.detail.message) toast(e.detail.message, 'bad');
 });
 window.addEventListener('access-revoked', async (e) => { await auth.signOut(); await store.wipe(); showLogin(e.detail); });
-onChange(() => render());
+// A sync that brings in changes redraws the screen. What the person is typing must not be lost:
+//  - while a window (modal) is open, the redraw waits until it is closed;
+//  - fields typed in but not yet saved are put back after the redraw, with the cursor where it was.
+// The person's own saves ('local') redraw as before (Enter / Save clear their fields on purpose).
+let syncWaiting = false;
+function typedFields() {
+  return [...app.querySelectorAll('input[id], select[id], textarea[id]')].filter((el) => {
+    if (el.disabled || el.type === 'file' || el.type === 'hidden') return false;
+    if (el.type === 'checkbox' || el.type === 'radio') return el.checked !== el.defaultChecked;
+    if (el.tagName === 'SELECT') return [...el.options].some((o) => o.selected !== o.defaultSelected);
+    return el.value !== el.defaultValue;
+  }).map((el) => ({ id: el.id, type: el.type, value: el.value, checked: el.checked }));
+}
+async function syncRedraw() {
+  if (document.querySelector('.modal-bg')) {
+    if (syncWaiting) return; syncWaiting = true;
+    const wait = setInterval(() => { if (!document.querySelector('.modal-bg')) { clearInterval(wait); syncWaiting = false; syncRedraw(); } }, 400);
+    return;
+  }
+  const kept = typedFields();
+  const act = document.activeElement && app.contains(document.activeElement) && document.activeElement.id ? document.activeElement : null;
+  const focus = act ? { id: act.id, start: act.selectionStart, end: act.selectionEnd } : null;
+  await render();
+  kept.forEach((k) => {
+    const el = document.getElementById(k.id); if (!el || el.disabled) return;
+    if (k.type === 'checkbox' || k.type === 'radio') { if (el.checked === k.checked) return; el.checked = k.checked; }
+    else { if (el.value === k.value) return; el.value = k.value; }
+    el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  if (focus) { const el = document.getElementById(focus.id); if (el) { el.focus(); try { if (focus.start !== null && focus.start !== undefined) el.setSelectionRange(focus.start, focus.end); } catch (e) { /* not a text field */ } } }
+}
+onChange((src) => (src === 'sync' ? syncRedraw() : render()));
 window.addEventListener('signed-in', () => enter());
 
 async function start() {
