@@ -241,18 +241,20 @@ export async function collectionsView(ctx) {
         <div class="cd-g4 cd-orrow">
           <div class="field"><label for="cd-or">OR No.</label><input class="input mono cd-orno" id="cd-or" inputmode="numeric" value="${esc(serial)}" autocomplete="off"></div>
           <label class="cd-auto"><input type="checkbox" id="cd-autonext" ${LASTC.auto ? 'checked' : ''}> Auto-next</label>
-          <div class="field"><label for="cd-ordate">Date of Collection</label><input class="input" type="date" id="cd-ordate" value="${esc(LASTC.date)}"></div>
           <div class="field"><span class="cd-lbl">Status</span><div class="seg" role="group" aria-label="Status"><a href="#" data-st="issued" class="${LASTC.status !== 'cancelled' ? 'on' : ''}" aria-pressed="${LASTC.status !== 'cancelled'}">Issued</a><a href="#" data-st="cancelled" class="${LASTC.status === 'cancelled' ? 'on' : ''}" aria-pressed="${LASTC.status === 'cancelled'}">Cancelled</a></div></div>
         </div>
         <div id="cd-skip"></div>
-        <div class="cd-parts" id="cd-partsbox" ${LASTC.status === 'cancelled' ? 'hidden' : ''}>
-          <div class="cd-phead"><span>Particulars</span><span class="r">Amount (₱)</span><span></span></div>
-          <div id="cd-prows">${partRow({}, 0)}</div>
+        <div class="cd-line">
+          <div class="field cd-datecol"><label for="cd-ordate">Date of Collection</label><input class="input" type="date" id="cd-ordate" value="${esc(LASTC.date)}"></div>
+          <div class="cd-parts" id="cd-partsbox" ${LASTC.status === 'cancelled' ? 'hidden' : ''}>
+            <div class="cd-phead"><span>Particulars</span><span class="r">Amount (₱)</span><span></span></div>
+            <div id="cd-prows">${partRow({}, 0)}</div>
+          </div>
         </div>
         <datalist id="cd-parts">${parts.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
         <div class="cd-actions"><button class="cd-link" type="button" id="cd-addp" ${LASTC.status === 'cancelled' ? 'hidden' : ''}>+ Add Particular</button>
           <span class="cd-ortotal">OR Total <b id="cd-ortot">₱ 0.00</b></span><button class="btn primary" type="button" id="cd-enter">Enter</button></div>
-        <p class="af-note">Press Enter to save and go to the next OR. Fund follows the ${K}. Cancelled ORs have no particulars and a zero amount.</p>
+        <p class="af-note">Enter moves along: Date → Particulars → Amount → saves the OR, then back to Date for the next OR (Alt + Enter in Amount adds another particular). Fund follows the ${K}. Cancelled ORs have no particulars and a zero amount.</p>
       </div>` : ''}
       <div class="cd-listhead"><h3 class="cer-h3">Encoded ORs</h3>
         <label class="sr-only" for="cd-search">Search ORs</label><input class="input af-sm" id="cd-search" placeholder="Search OR No. or particular…">
@@ -428,12 +430,15 @@ function wireAll(c) {
       $('.cd-x', r).onclick = () => { if ($$('.cd-prow', rows).length > 1) r.remove(); else { $('.cd-p', r).value = ''; $('.cd-a', r).value = ''; } total(); };
       $('.cd-a', r).oninput = total;
       $('.cd-a', r).onblur = (e) => { const v = num(e.target.value); if (v !== null) e.target.value = money(v); };
-      $('.cd-a', r).onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); enter.click(); } };
+      $('.cd-a', r).onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); if (e.altKey) addPart(); else enter.click(); };
       $('.cd-p', r).onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('.cd-a', r).focus(); } };
     });
   };
-  const addPart = () => { const n = $$('.cd-prow', rows).length; const d = document.createElement('div'); d.innerHTML = partRowHtml(n); rows.appendChild(d.firstElementChild); wireParts(); $$('.cd-p', rows).pop().focus(); };
+  function addPart() { addPartRow(); }
+  const addPartRow = () => { const n = $$('.cd-prow', rows).length; const d = document.createElement('div'); d.innerHTML = partRowHtml(n); rows.appendChild(d.firstElementChild); wireParts(); $$('.cd-p', rows).pop().focus(); };
   $('#cd-addp').onclick = addPart;
+  // Date → Enter → first particular (a cancelled OR is saved right away).
+  dateIn.onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); LASTC.date = dateIn.value; if (LASTC.status === 'cancelled') enter.click(); else $('.cd-p', rows).focus(); };
   wireParts(); total();
   $$('[data-st]').forEach((a) => { a.onclick = (e) => {
     e.preventDefault(); LASTC.status = a.dataset.st;
@@ -465,7 +470,7 @@ function wireAll(c) {
     };
   };
   orIn.oninput = checkSkip; checkSkip();
-  orIn.onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); if (LASTC.status === 'cancelled') enter.click(); else $('.cd-p', rows).focus(); };
+  orIn.onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); dateIn.focus(); };
   enter.onclick = async () => {
     const b = bkOf(), n = int(orIn.value), date = dateIn.value, st = LASTC.status === 'cancelled' ? 'cancelled' : 'issued';
     if (!n) return bad('Enter the OR No.');
@@ -493,13 +498,13 @@ function wireAll(c) {
         else if (b) { const nb2 = c.bks.find((x) => x.from > b.to && x.status === 'issued'); if (nb2) { nextBk = nb2.id; next = ''; } }
         else next = n + 1;
       }
-      Object.assign(LASTC, { form, bookletId: nextBk, serial: next, date, focus: 'p' });
+      Object.assign(LASTC, { form, bookletId: nextBk, serial: next, date, focus: 'date' });
       await store.save('cer_ors', newId('ceror'), orData(c, b, n, date, st, items), by(refs));
       toast(`OR ${n} saved.`, 'ok');
     } finally { enter.disabled = false; }
   };
-  // Focus after a save: the first particular (or the OR No. when cancelled).
-  if (LASTC.focus) { const el = LASTC.focus === 'or' || LASTC.status === 'cancelled' ? orIn : $('.cd-p', rows); if (el) el.focus(); LASTC.focus = ''; }
+  // Focus after a save: the Date of the next OR (the OR No. after encoding skipped numbers).
+  if (LASTC.focus) { const el = LASTC.focus === 'or' ? orIn : dateIn; if (el) el.focus(); LASTC.focus = ''; }
 }
 const orData = (c, b, serial, date, status, items) => ({ lguId: c.audit.lguId, officerId: c.o.id, form: $('#cd-form') ? $('#cd-form').value : (b ? b.form : ''), bookletId: b ? b.id : '', serial, date, status,
   items, amount: status === 'cancelled' ? 0 : r2(items.reduce((n, i) => n + i.amt, 0)), fund: c.curFund, reportId: c.cur.pending ? '' : c.selId });

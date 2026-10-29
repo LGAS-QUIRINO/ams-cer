@@ -413,3 +413,8 @@ table.cer-afbeg tr.click:hover td{background:#f5f8fe}
 .af-nschip{justify-self:start}
 table.af-raaf2 td small{display:block; font-size:11px; color:var(--ok); font-weight:600}
 .modal [hidden], .af-encbox [hidden], .acc-b [hidden]{display:none !important}
+/* OR entry: Date | Particulars | Amount on one line (30 Oct 2026) */
+.cd-orrow{grid-template-columns:1.2fr auto 1.4fr}
+.cd-line{display:grid; grid-template-columns:200px 1fr; gap:12px; align-items:start}
+.cd-datecol .input{font-size:14px; padding:10px 11px}
+@media (max-width:760px){ .cd-line{grid-template-columns:1fr} }
