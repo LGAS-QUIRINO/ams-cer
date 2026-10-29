@@ -446,13 +446,14 @@ function wireAll(c) {
     skipBox.innerHTML = '';
     const b = bkOf(), n = int(orIn.value);
     if (!b || !n || n < b.from || n > b.to) return;
-    const used = new Set(f.ors.filter((x) => x.bookletId === b.id).map((x) => x.serial));
-    const below = [...used].filter((x) => x < n); const last = below.length ? Math.max(...below) : b.from - 1;
-    const gap = []; for (let s = last + 1; s < n; s++) if (!used.has(s)) gap.push(s);
+    // Used numbers per the Forms Register: the ORs encoded and the numbers already used at the beginning (partly used).
+    const un = bookletUnused(b), isUn = (x) => un.some(([a, z]) => a <= x && x <= z);
+    let last = b.from - 1; for (let x = n - 1; x >= b.from; x--) if (!isUn(x)) { last = x; break; }
+    const gap = []; for (let x = last + 1; x < n; x++) if (isUn(x)) gap.push(x);
     if (!gap.length) return;
     const txt = gap.length === 1 ? `<b>${gap[0]} was skipped.</b>` : `<b>${gap[0]} – ${gap[gap.length - 1]} were skipped (${gap.length}).</b>`;
     skipBox.innerHTML = `<div class="cer-alert" role="status"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4"/><path d="M12 17h.01"/></svg>
-      <span>${txt} ${last >= b.from ? `The last OR encoded in this booklet is ${last}.` : 'No OR of this booklet is encoded yet.'}</span>
+      <span>${txt} ${last >= b.from ? `The last number used in this booklet is ${last}.` : 'No number of this booklet is used yet.'}</span>
       <span class="cd-skipbtns"><button class="btn sm" type="button" id="cd-skipc">Encode ${gap.length === 1 ? gap[0] : 'them'} as Cancelled</button><button class="btn sm" type="button" id="cd-skipl">Leave as skipped</button></span></div>`;
     $('#cd-skipl').onclick = () => { skipBox.innerHTML = ''; };
     $('#cd-skipc').onclick = async () => {
