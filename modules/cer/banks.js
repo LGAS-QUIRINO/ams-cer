@@ -16,6 +16,7 @@ import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
 import { exportXlsx } from './forms.js';
+import { repName } from './collections.js';
 
 const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
 const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
@@ -67,7 +68,7 @@ export async function banksView(ctx) {
   reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => (r.deposits || []).forEach((d) => {
     const key = `dep|${r.id}|${d.date}|${d.ref}|${d.amount}`;
     items.push({ key, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0,
-      from: `${r.pending ? 'Not yet reported' : `${r.kind || 'RCD'} No. ${r.no}`} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });
+      from: `${r.pending ? 'Not yet reported' : repName(r)} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });
   }));
   advs0.map(flat).filter((a) => a.lguId === audit.lguId).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0,
     from: `Cash advance · ${officers.find((o) => o.id === a.officerId)?.name || ''}` }));

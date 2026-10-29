@@ -13,7 +13,7 @@ import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, bondChecks } from './cer.js';
 import { loadForms, unusedFormsOf, skippedOf, FORM_SHORT, rangesText, exportXlsx } from './forms.js';
-import { figuresOf, fundsOf, kindOfForm } from './collections.js';
+import { figuresOf, fundsOf, kindOfForm, repName } from './collections.js';
 import { booksOf, compute } from './count.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -106,7 +106,7 @@ export async function verifyView(ctx) {
   st.forEach((x) => { if (x.sh !== null && Math.abs(x.sh) > 0.004) add(`sh|${x.key}`, 'Cash Count', `${x.sh > 0 ? 'Shortage' : 'Overage'} of ₱${money(Math.abs(x.sh))} in ${x.label}: balance of accountability ₱${money(x.balance)}, inventory ₱${money(x.inv)}.`, '#/cer/count'); });
   if (!count) add('nocount', 'Cash Count', 'No cash count saved yet for this officer.', '#/cer/count');
   (count?.items || []).forEach((it, i) => { const a = num(it.allowed ?? it.presented) ?? 0; if ((+it.presented || 0) - a > 0.004) add(`dis|${i}|${it.particulars}`, 'Cash Count', `Cash item disallowed: ${it.particulars}, ₱${money(r2((+it.presented || 0) - a))}.`, '#/cer/count'); });
-  Object.values(fig.chains).forEach((c) => [...c.figs, c.pend].forEach((g) => g.issues.forEach((t, i) => add(`rep|${g.id}|${i}|${t.slice(0, 40)}`, 'Collections', `${g.pending ? `Not yet reported (${g.kind})` : `${g.kind} No. ${g.rec.no}`}: ${t}`, '#/cer/collections'))));
+  Object.values(fig.chains).forEach((c) => [...c.figs, c.pend].forEach((g) => g.issues.forEach((t, i) => add(`rep|${g.id}|${i}|${t.slice(0, 40)}`, 'Collections', `${g.pending ? `Not yet reported (${g.kind})` : repName(g.rec, g.kind)}: ${t}`, '#/cer/collections'))));
   const unrep = Object.values(fig.chains).map((c) => c.pend).filter((g) => g.nOrs);
   unrep.forEach((g) => add(`nyr|${g.id}`, 'Collections', `${g.nOrs} OR${g.nOrs > 1 ? 's' : ''} (₱${money(g.orsTotal)}) not yet in a submitted ${g.kind}, ${g.fund}.`, '#/cer/collections'));
   f.ors.filter((x) => x.officerId === o.id && x.date > to).slice(0, 1).forEach(() => add('afterct', 'Collections', `${f.ors.filter((x) => x.officerId === o.id && x.date > to).length} OR(s) dated after the cash count.`, '#/cer/collections'));

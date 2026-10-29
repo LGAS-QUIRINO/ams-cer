@@ -499,7 +499,7 @@ async function findSerial(ctx, f, lguId, offs, text) {
     const rep = or && or.reportId ? reports.find((r) => r.id === or.reportId) : null;
     const usedBy = or ? f.officers.find((x) => x.id === or.officerId) : null;
     const unused = unusedRanges(b).some(([a, z]) => a <= n && n <= z);
-    const state = or ? `<b>${or.status === 'cancelled' ? 'Cancelled' : 'Issued'}</b> on ${esc(fmtDate(or.date))}${or.status === 'cancelled' ? '' : ` · ₱${(or.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`} · by ${esc(usedBy ? usedBy.name : '—')} · ${rep ? `${esc(rep.kind || 'RCD')} No. ${esc(rep.no)}` : 'Not yet reported'}${usedBy && b.officerId !== usedBy.id ? ' · <b class="warn-t">used by another officer</b>' : ''}`
+    const state = or ? `<b>${or.status === 'cancelled' ? 'Cancelled' : 'Issued'}</b> on ${esc(fmtDate(or.date))}${or.status === 'cancelled' ? '' : ` · ₱${(or.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`} · by ${esc(usedBy ? usedBy.name : '—')} · ${rep ? esc(rep.no ? `${rep.kind || 'RCD'} No. ${rep.no}` : `${rep.kind || 'RCD'} of ${fmtDate(rep.date)}${rep.dupe ? ` (${rep.dupe})` : ''}`) : 'Not yet reported'}${usedBy && b.officerId !== usedBy.id ? ' · <b class="warn-t">used by another officer</b>' : ''}`
       : b.status === 'stock' ? 'In stock, unused' : b.status === 'lost' ? 'Booklet reported lost / destroyed' : unused ? '<b>Unused</b>' : 'Used (per the issuance record or logbook, not encoded in Collections)';
     const sk = skippedOf(b).some(([a, z]) => a <= n && n <= z);
     return `<div class="af-find"><b>${esc(FORM_SHORT[b.form] || b.form)} ${n}</b>
