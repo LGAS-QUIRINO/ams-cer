@@ -399,3 +399,10 @@ ul.af-plan li{margin:2px 0}
 table.cer-afbeg tr.click{cursor:pointer}
 table.cer-afbeg tr.click:hover td{background:#f5f8fe}
 .af-src{margin-bottom:4px}
+/* Beginning tags (29 Oct 2026) */
+.af-tag{display:inline-block; margin-top:4px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; white-space:nowrap; font-family:"Segoe UI",system-ui,sans-serif}
+.af-tag.custodian{background:#eef2f8; color:#3d4a66}
+.af-tag.ao{background:#e7efff; color:var(--navy)}
+.af-offrow.one{grid-template-columns:1fr}
+.af-offrow.one .af-part > .cer-chip{margin-top:0}
+.af-nw{white-space:nowrap}
