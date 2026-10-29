@@ -240,7 +240,7 @@ function registerView(ctx, f, lguId) {
   // Checkbooks put in the custodian's stock before checks were taken out of his register: to be issued to their officer or deleted.
   const strayChk = ctl ? [] : allHere.filter((b) => b.form === 'chk' && b.status === 'stock');
   const oos = outOfSequence({ booklets: mine });
-  const fForm = q.get('form') || '', fCust = q.get('cust') || '', fStat = q.get('st') || 'open', sort = q.get('sort') || 'days';
+  const fForm = q.get('form') || '', fCust = q.get('cust') || '', fStat = q.get('st') || 'open', sort = q.get('sort') || 'serial';   // series order by default, so a gap in the issued series is easy to see
   let rows = mine.filter((b) => (!fForm || b.form === fForm)
     && (!fCust || (fCust === 'stock' ? b.status === 'stock' : fCust === 'direct' ? !!b.receivedDirect : b.officerId === fCust))
     && (fStat === 'all' || (fStat === 'open' ? statusOf(b).key !== 'done' : statusOf(b).key === fStat)));
@@ -285,7 +285,7 @@ function registerView(ctx, f, lguId) {
           ${pick('form', [['', 'All form types'], ...formsFor(f, lguId).filter(([k]) => formsUsed.includes(k)).map(([k]) => [k, FORM_SHORT[k]])], fForm)}
           ${pick('cust', [['', 'All custody'], ['stock', 'In stock (custodian)'], ['direct', 'Received directly by an AO'], ...offs.map((o) => [o.id, o.name])], fCust)}
           ${pick('st', [['open', 'Not exhausted'], ['all', 'All statuses'], ['stock', 'In stock'], ['new', 'Issued, not yet used'], ['part', 'Partly used'], ['done', 'Exhausted'], ['lost', 'Lost / Destroyed']], fStat)}
-          ${pick('sort', [['days', 'Longest with AO first'], ['serial', 'By form and serial']], sort)}
+          ${pick('sort', [['serial', 'By form and serial'], ['days', 'Longest with AO first']], sort)}
         </div></div>
       ${rows.length ? `<div class="af-tbl"><table class="af-reg">
         <thead><tr><th scope="col">Form</th><th scope="col">Serial Range</th><th scope="col" class="r">Qty</th><th scope="col">Received</th><th scope="col">Custody</th><th scope="col">Issued</th><th scope="col" class="r">Days with AO</th><th scope="col" class="r">Used</th><th scope="col">Unused</th><th scope="col">Status</th></tr></thead>
