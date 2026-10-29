@@ -1378,3 +1378,106 @@ export function saafRows(f, officerId, exam, from, to) {
   return out;
 }
 export { countRanges };
+
+/* ---------- Audit Setup · Beginning Inventory of Accountable Forms ---------- */
+// The officer's forms on hand at the last cash exam (the SAAF beginning balance): booklets issued on or before that date,
+// with the numbers still unused on that date. Same booklet records as the Forms Register and the officer's page.
+const srcOf = (b) => (b.form === 'chk' && b.receivedFrom === 'Bank' && b.receivedDirect ? 'bank' : b.receivedDirect ? 'direct' : 'custodian');
+export function beginningFormsOf(f, officerId, asOf) {
+  if (!asOf) return [];
+  return f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && b.issuedDate <= asOf
+      && !(b.status === 'lost' && (b.history || []).some((h) => h.action === 'lost' && h.date <= asOf)))
+    .map((b) => ({ b, unused: rawUnused(b, asOf), src: srcOf(b) })).filter((r) => r.unused.length)
+    .sort((x, y) => x.b.form.localeCompare(y.b.form) || x.b.from - y.b.from);
+}
+// Booklets the officer received after the last cash exam, up to the count date (shown for information).
+export const receivedDuringOf = (f, officerId, asOf, countDate) =>
+  f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && (!asOf || b.issuedDate > asOf) && (!countDate || b.issuedDate <= countDate));
+export function beginningTableHtml(f, rows, canEdit) {
+  if (!rows.length) return '';
+  const srcText = { custodian: 'From the custodian · in the Forms Register', bank: 'From the bank · this officer only', direct: 'Received directly · in the Forms Register' };
+  return `<div class="cer-tbl"><table class="af-reg cer-afbeg"><thead><tr><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col">Date Issued</th><th scope="col">Unused at the Last Cash Exam</th><th scope="col" class="r">Qty</th><th scope="col">Source</th></tr></thead>
+    <tbody>${rows.map(({ b, unused, src }) => `<tr ${canEdit ? `data-begbk="${esc(b.id)}" tabindex="0" class="click"` : ''}><td>${chkLabel(b)}</td><td class="mono">${rangeText(b.from, b.to)}</td><td>${esc(fmtDate(b.issuedDate))}</td>
+      <td class="mono">${rangesText(unused)}</td><td class="r">${countRanges(unused)}</td><td><small class="dim">${srcText[src]}</small></td></tr>`).join('')}</tbody></table></div>`;
+}
+export function openBooklet(refs, f, id) {
+  const b = f.booklets.find((x) => x.id === id); if (!b) return;
+  return bookletModal({ refs }, f, b, officersOf(refs, f, b.lguId));
+}
+// Add the officer's forms on hand at the last cash exam. From the custodian: they go to the Forms Register as issuances
+// still in the officer's hands. From the bank (checks): they stay on this officer's records only.
+export async function addBeginningForms(refs, f, regId, o, asOf) {
+  const lgu = refs.lgu[regId], cust = custOf(lgu);
+  let plan = null;
+  const srcNow = (bg) => $('input[name="g-src"]:checked', bg)?.value || 'custodian';
+  const read = (bg) => {
+    const src = srcNow(bg), form = src === 'bank' ? 'chk' : $('#g-form', bg).value;
+    const a = int($('#g-from', bg).value), z = int($('#g-to', bg).value), p = int($('#g-per', bg).value) || PER_BOOKLET;
+    if (!a || !z || z < a) return { error: 'Enter the serial range (From must not be after To).' };
+    if (z - a + 1 > MAX_PCS) return { error: `That range has ${(z - a + 1).toLocaleString('en-US')} pieces. Check the serial numbers.` };
+    const [bs, be] = bookletOf(a, p);
+    if (bs !== a) return { error: `${a} is in the middle of booklet ${rangeText(bs, be)}. Enter the complete series from ${bs}; tick Partly used for the numbers already used.` };
+    const parts = splitRange(a, z, p).map(([x, y]) => ({ x, y, unused: null }));
+    const pv = partVals('g', bg);
+    if (pv.on) {
+      if (!pv.text.trim()) return { error: `Type the ${pv.mode} numbers, or untick Partly used.` };
+      const r = parseRanges(pv.text, a, z, 'the range entered'); if (r.error) return { error: r.error };
+      parts.forEach((s) => { s.unused = unusedFromTyped(r.ranges, pv.mode, s.x, s.y); });
+      if (parts.every((s) => !s.unused)) return { error: 'None of the numbers typed changed a booklet. Check the numbers.' };
+    }
+    for (const s of parts) { const hit = overlaps(f, form, s.x, s.y); if (hit.length) return { error: `${FORM_SHORT[form]} ${rangeText(s.x, s.y)} overlaps ${rangeText(hit[0].from, hit[0].to)} already encoded${hit[0].officerId ? ' with ' + (f.officers.find((x) => x.id === hit[0].officerId)?.name || 'another officer') : ' in the custodian\'s stock'}.` }; }
+    return { src, form, parts, per: p };
+  };
+  const show = (bg) => {
+    const src = srcNow(bg);
+    $('#g-formbox', bg).hidden = src === 'bank'; $('#g-acctbox', bg).hidden = src !== 'bank';
+    $('#g-srcnote', bg).textContent = src === 'bank' ? 'Checkbooks from the bank: shown only on this officer\'s records, never in the custodian\'s register.' : `Issued by the custodian (${cust}): added to the Forms Register as an issuance still in the officer's hands.`;
+    const box = $('#g-prev', bg);
+    if (!int($('#g-from', bg).value) || !int($('#g-to', bg).value)) { box.innerHTML = ''; return; }
+    const r = read(bg);
+    box.innerHTML = r.error ? `<b class="warn-t">${esc(r.error)}</b>` : startPreview({ parts: r.parts, held: o.id }).replace('in the officer\'s hands', `in ${esc(o.name)}'s hands at the last cash exam`);
+  };
+  const forms = formsFor(f, regId);
+  const v = await modal({ title: `Beginning Forms · ${o.name}`, wide: true,
+    body: `<div class="af-pmode af-src" role="radiogroup" aria-label="Received from"><span>Received from:</span>
+        <label class="cer-chip"><input type="radio" name="g-src" value="custodian" checked> Custodian (${cust})</label>
+        <label class="cer-chip"><input type="radio" name="g-src" value="bank"> Bank (checks)</label></div>
+      <p class="af-note" id="g-srcnote"></p>
+      <div class="af-edit">
+        <div class="field" id="g-formbox"><label for="g-form">Form Type</label><select class="input" id="g-form">${forms.map(([k, l]) => `<option value="${k}" ${sel(k, LAST.form)}>${esc(l)}</option>`).join('')}</select></div>
+        <div class="field" id="g-acctbox" hidden><label for="g-acct">Bank / Account (optional)</label><input class="input" id="g-acct" value="${esc(LASTCHK.acct)}" placeholder="e.g. LBP – General Fund"></div>
+        <div class="field"><label for="g-from">Serial From</label><input class="input r mono" id="g-from" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="g-to">Serial To</label><input class="input r mono" id="g-to" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="g-per">Per Booklet</label><input class="input r" id="g-per" inputmode="numeric" value="${LAST.per}"></div>
+        <div class="field"><label for="g-date">Date Issued / Received</label><input class="input" type="date" id="g-date" max="${esc(asOf)}" value="${esc(asOf)}"></div>
+        <div class="af-span">${partBox('g', { note: `Partly used (numbers used on or before the last cash exam, ${fmtDate(asOf)})` })}</div>
+      </div>
+      <p class="af-note">Enter complete series. The unused numbers are as of the last cash exam; receipts encoded later in Collections &amp; Deposits are taken out on top of this.</p>
+      <div class="af-note" id="g-prev"></div>`,
+    onOpen: (bg) => {
+      $$('input[name="g-src"]', bg).forEach((r) => { r.onchange = () => show(bg); });
+      $$('#g-from, #g-to, #g-per, #g-form', bg).forEach((el) => { el.oninput = () => show(bg); el.onchange = () => show(bg); });
+      $('#g-from', bg).addEventListener('change', () => { const a = int($('#g-from', bg).value), t = $('#g-to', bg); if (a && !t.value) { t.value = bookletOf(a, int($('#g-per', bg).value) || PER_BOOKLET)[1]; show(bg); } });
+      wirePart('g', bg, () => show(bg)); show(bg); },
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Save Beginning Forms', cls: 'primary', value: 'save', check: (bg) => {
+      const r = read(bg); if (r.error) { toast(r.error, 'bad'); return false; }
+      const date = $('#g-date', bg).value;
+      if (!date) { toast('Enter the date issued or received.', 'bad'); return false; }
+      if (date > asOf) { toast(`The date must be on or before the last cash exam (${fmtDate(asOf)}). Forms received after it are entered in Accountable Forms.`, 'bad'); return false; }
+      plan = { ...r, date, acct: $('#g-acct', bg).value.trim() }; return true; } }] });
+  if (v !== 'save' || !plan) return false;
+  if (!(await confirmBig(plan.form, plan.parts[0].x, plan.parts[plan.parts.length - 1].y, plan.parts.length))) return false;
+  if (plan.src === 'bank') Object.assign(LASTCHK, { acct: plan.acct }); else Object.assign(LAST, { form: plan.form, per: plan.per });
+  for (const s of plan.parts) {
+    const base = { lguId: regId, form: plan.form, from: s.x, to: s.y, qty: s.y - s.x + 1, reference: '', status: 'issued', officerId: o.id, issuedDate: plan.date, usedBefore: null, unusedAtStart: s.unused };
+    const rec = plan.src === 'bank'
+      ? { ...base, receivedDate: plan.date, receivedFrom: 'Bank', receivedDirect: true, bankAccount: plan.acct, source: 'officer',
+          history: [hist(refs, 'direct', plan.date, { officerId: o.id, note: 'From the bank' + (plan.acct ? ' · ' + plan.acct : '') + ' · beginning inventory (Audit Setup)' })] }
+      : { ...base, receivedDate: '', receivedFrom: '', source: 'starting',
+          history: [hist(refs, 'starting', asOf, { officerId: o.id, note: `In the officer's hands at the last cash exam${s.unused ? `, partly used: ${countRanges(s.unused)} unused` : ''} · Audit Setup` })] };
+    await store.save('cer_booklets', newId('cerb'), rec, by(refs), { quiet: true });
+  }
+  emitChange('local');
+  toast(`${plan.parts.length} ${plan.src === 'bank' ? 'checkbook' : 'booklet'}${plan.parts.length > 1 ? 's' : ''} added to ${o.name}'s beginning forms.`, 'ok');
+  return true;
+}

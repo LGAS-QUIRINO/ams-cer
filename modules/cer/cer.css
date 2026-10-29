@@ -387,3 +387,15 @@ ul.af-plan li{margin:2px 0}
 .af-stray{margin:0 0 16px; background:var(--warn-bg); color:var(--warn); line-height:1.5}
 .af-straylist{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px}
 .af-reg td small{display:block}
+/* Audit Setup accordions and Beginning Inventory of Accountable Forms (29 Oct 2026) */
+#cer-off{gap:12px}
+#cer-off details.acc{border:1px solid var(--line); border-radius:12px}
+#cer-off details.acc > summary{border-radius:12px}
+#cer-off .acc-b .input{font-size:14px; padding:10px 11px}
+.acc-panel .acc-b .input:disabled, .acc-panel .acc-b .input[readonly], #cer-off .input:disabled{background:#f3f6fa; color:var(--ink)}
+.acc-panel .acc-b .input{font-size:14px; padding:10px 11px}
+.cer-begfoot{align-items:center; gap:12px}
+.cer-begfoot .hint{flex:1}
+table.cer-afbeg tr.click{cursor:pointer}
+table.cer-afbeg tr.click:hover td{background:#f5f8fe}
+.af-src{margin-bottom:4px}

@@ -119,6 +119,48 @@ function navItems() {
 
 // Unsaved Audit Setup changes survive a screen refresh (e.g. a sync) until saved or left.
 let DRAFT = null;   // { key, st, dirty }
+let FM = null, FX = null;   // Accountable Forms module and its data (for the Beginning Inventory of Accountable Forms)
+// Folding sections (accordion). Which ones are open is kept per screen, so a refresh after a save keeps them as they were.
+const OPEN = {};
+const ST_PILL = { ok: '<span class="acc-pill ok">✓ Complete</span>', need: '<span class="acc-pill need">Needs input</span>', warn: '<span class="acc-pill warn">⚠ Check</span>', info: '' };
+const stHtml = (stat) => ST_PILL[stat] || '';
+const acc = (id, title, [sum, stat], body, open) => `<details class="acc" data-acc="${id}" ${open ? 'open' : ''}>
+  <summary><span class="acc-t">${title}</span><span class="acc-s" data-sum="${id}">${sum}</span><span class="acc-st" data-st="${id}">${stHtml(stat)}</span>
+    <svg class="acc-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+  <div class="acc-b">${body}</div></details>`;
+const ACC_ORDER = ['exam', 'officer', 'bond', 'period', 'bal', 'forms'];
+// One-line summary and status of each section: [summaryHtml, 'ok' | 'need' | 'warn' | 'info'].
+function heads(refs, cer, st) {
+  const lgu = refs.lgu[st.lguId], o = cer.officers.find((x) => x.id === st.officerId);
+  const prev = prevExam(cer, st.officerId, st.countDate, st.examId);
+  const lastExam = prev ? prev.countDate : st.lastExamDate;
+  const rev = refs.user[st.reviewedBy]?.data.name;
+  const h = {};
+  h.exam = lgu && st.countDate ? [`${esc(agencyName(refs, lgu))} · count ${esc(fmtDate(st.countDate))}${rev ? ' · reviewed by ' + esc(rev) : ''}`, 'ok'] : ['Auditee and cash count date', 'need'];
+  const fnOk = st.officerId && (st.functions || []).length && (!(st.functions || []).includes('collecting') || (st.forms || []).length);
+  h.officer = [o ? `${esc(o.name)}${(st.functions || []).length ? ' · ' + esc(st.functions.map((k) => FUNC_NAME[k]).join(', ')) : ''}` : 'Officer, functions and forms', fnOk ? 'ok' : 'need'];
+  const b = st.bond || {}, w = bondChecks(st);
+  h.bond = [b.amount || b.to ? `${b.amount ? '₱' + esc(b.amount) + ' bond' : 'Bond'}${b.to ? ' · valid to ' + esc(fmtDate(b.to)) : ''}${w.length ? ' · ' + w.length + ' to check' : ''}` : (w.length ? 'No bond entered' : 'Bond details'), w.some((x) => x.kind === 'bad') ? 'warn' : b.amount || b.riskNo || b.from || b.to ? 'ok' : 'need'];
+  h.period = [lastExam && st.countDate ? `${esc(fmtDate(lastExam))} to ${esc(fmtDate(st.countDate))}` : 'Last cash exam date', lastExam && st.countDate ? 'ok' : 'need'];
+  const rows = balanceRows(st);
+  if (!rows.length) h.bal = [(st.functions || []).length ? 'None (forms only)' : 'Tick the officer\'s functions first', (st.functions || []).length ? 'ok' : 'need'];
+  else {
+    let total = 0, missing = 0;
+    rows.forEach((r) => { const carried = prev && prev.endBalances && prev.endBalances[r.key] !== undefined && prev.endBalances[r.key] !== null;
+      const v = carried ? Number(prev.endBalances[r.key]) : num(st.balances[r.key]); if (v === null || v === undefined) missing++; else total += v; });
+    h.bal = [`₱${money(total)}${missing ? ` · ${missing} not entered` : ''}`, missing ? 'need' : 'ok'];
+  }
+  if (!o) h.forms = ['Choose the officer first', 'info'];
+  else if (!lastExam) h.forms = ['Set the last cash exam date first', 'info'];
+  else { const r = FM && FX ? FM.beginningFormsOf(FX, o.id, lastExam) : [];
+    h.forms = [r.length ? `${r.length} booklet${r.length > 1 ? 's' : ''} · ${r.reduce((n, x) => n + FM.countRanges(x.unused), 0)} unused pcs as of ${esc(fmtDate(lastExam))}` : `None on hand as of ${esc(fmtDate(lastExam))}`, r.length ? 'ok' : 'info']; }
+  return h;
+}
+// Opens the first section that still needs input, the first time a screen is shown.
+function openState(key, h) {
+  if (!OPEN[key]) { const first = ACC_ORDER.find((k) => h[k] && h[k][1] === 'need'); OPEN[key] = new Set(first ? [first] : []); }
+  return OPEN[key];
+}
 let guardOn = false;
 function installGuard() {
   if (guardOn) return; guardOn = true;
@@ -153,6 +195,8 @@ export async function render(ctx) {
   const cer = await loadCer();
   const view = 'setup';
   const open = q.get('a') || (q.get('new') ? 'new' : '');
+  // Beginning Inventory of Accountable Forms reads the same booklet records as Accountable Forms.
+  if (open) { FM = await import('./forms.js'); FX = await FM.loadForms(); }
   const body = open ? setupHtml(refs, cer, q) : listHtml(refs, cer);
   app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: view, crumb: open ? 'Audit Setup' : 'Audit Setup · Cash Examinations', me, roleText, body });
   $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
@@ -225,13 +269,13 @@ function setupHtml(refs, cer, q) {
   const prep = refs.user[st.preparedBy];
   const tabs = base.exams.map((e) => ({ id: e.id, o: cer.officers.find((x) => x.id === e.officerId) }));
   const newTab = !base.exam;   // a new officer exam is being set up
+  const h = heads(refs, cer, st), opens = openState(key, h);
   return `<div class="hello"><div><h1>Audit Setup</h1><p>One cash examination per auditee and count date. Each accountable officer has a separate exam record.</p></div>
       <div class="btn-row"><a class="btn" href="#/cer/setup">← All Cash Examinations</a>${edit ? '<button class="btn primary" type="button" id="cer-save">Save Setup</button>' : ''}</div></div>
     ${edit ? '' : '<div class="msg cer-ro">View only. The auditors (Team Member, ATL, SA) set up the cash examination.</div>'}
 
-    <section class="panel" aria-labelledby="cer-h1">
-      <div class="cer-sec">
-        <h2 id="cer-h1" class="cer-h2">1. Cash Examination</h2>
+    <section class="panel acc-panel" aria-label="Cash Examination">
+      ${acc('exam', '1. Cash Examination', h.exam, `
         <div class="cer-g3">
           <div class="field"><label for="cer-lgu">Auditee (Agency)</label>
             <select class="input" id="cer-lgu" ${dis} ${audit ? 'disabled' : ''}>${lguOptions(refs, st.lguId)}</select>
@@ -242,8 +286,7 @@ function setupHtml(refs, cer, q) {
         <div class="cer-g2">
           <div class="field"><label for="cer-prep">Prepared by (logged-in auditor)</label><input class="input" id="cer-prep" value="${esc(userLine(prep) || (refs.me ? '' : 'Signed-in user'))}" readonly disabled></div>
           <div class="field"><label for="cer-rev">Reviewed by</label><select class="input" id="cer-rev" ${dis}>${reviewerOptions(refs, lgu, st.reviewedBy)}</select></div>
-        </div>
-      </div>
+        </div>`, opens.has('exam'))}
     </section>
 
     <section class="panel" aria-labelledby="cer-h2">
@@ -296,7 +339,17 @@ function officerHtml(refs, cer, st, edit) {
   const lastFromPrev = !!prev;
   const lastExam = lastFromPrev ? prev.countDate : st.lastExamDate;
   const chk = (list, k) => (list || []).includes(k) ? 'checked' : '';
-  return `<div class="cer-g3">
+  const h = heads(refs, cer, st), opens = openState(location.hash, h);
+  // When nothing open still needs input, the next section that does opens by itself.
+  if (![...opens].some((k) => h[k] && h[k][1] === 'need')) { const nx = ACC_ORDER.find((k) => k !== 'exam' && h[k] && h[k][1] === 'need'); if (nx) opens.add(nx); }
+  const begRows = o && lastExam && FM && FX ? FM.beginningFormsOf(FX, o.id, lastExam) : [];
+  const during = o && FM && FX ? FM.receivedDuringOf(FX, o.id, lastExam, st.countDate) : [];
+  const begBody = !o ? '<p class="cer-wait">Choose the accountable officer first.</p>'
+    : !lastExam ? '<p class="cer-wait">Set the last cash exam date (Examination Period) first. The beginning forms are the ones on hand on that date.</p>'
+    : `${begRows.length ? FM.beginningTableHtml(FX, begRows, edit) : `<p class="cer-wait">No accountable forms in ${esc(o.name)}'s hands as of ${esc(fmtDate(lastExam))} are encoded yet.</p>`}
+      <div class="cer-headrow cer-begfoot"><span class="hint">Forms from the custodian go to the Forms Register as issuances still in the officer's hands; checkbooks from the bank stay on this officer's records only.${during.length ? ` ${during.length} booklet${during.length > 1 ? 's' : ''} received after the last cash exam ${during.length > 1 ? 'are' : 'is'} in Accountable Forms.` : ''}${edit && begRows.length ? ' Click a booklet to Edit or Delete it.' : ''}</span>
+        ${edit ? '<button class="btn" type="button" id="cer-addbeg">+ Add Beginning Forms</button>' : ''}</div>`;
+  return `${acc('officer', 'Officer and Functions', h.officer, `<div class="cer-g3">
       <div class="field"><label for="cer-officer">Accountable Officer</label>
         <select class="input" id="cer-officer" ${dis}><option value="">— Choose the officer —</option>
           ${offs.map((x) => `<option value="${esc(x.id)}" ${x.id === st.officerId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
@@ -307,10 +360,9 @@ function officerHtml(refs, cer, st, edit) {
         ${isBrgy(lgu) ? '<span class="hint">Barangay Treasurer: collecting and disbursing accountabilities are computed separately.</span>' : ''}</fieldset>
     </div>
     ${(st.functions || []).includes('collecting') ? `<fieldset class="field"><legend>Accountable forms used in collecting</legend>
-      <div class="cer-chips">${FORMS.map(([k, label]) => `<label class="cer-chip"><input type="checkbox" data-form="${k}" ${chk(st.forms, k)} ${dis}> ${esc(label)}</label>`).join('')}</div></fieldset>` : ''}
+      <div class="cer-chips">${FORMS.map(([k, label]) => `<label class="cer-chip"><input type="checkbox" data-form="${k}" ${chk(st.forms, k)} ${dis}> ${esc(label)}</label>`).join('')}</div></fieldset>` : ''}`, opens.has('officer'))}
 
-    <div class="cer-block">
-      <h3 class="cer-h3">Bond and limits</h3>
+    ${acc('bond', 'Bond and Limits', h.bond, `
       <div class="cer-g5">
         <div class="field"><label for="b-max">Max. Cash Accountability (₱)</label><input class="input amt" id="b-max" data-bond="maxCash" inputmode="decimal" value="${esc(st.bond.maxCash)}" ${dis}></div>
         <div class="field"><label for="b-amt">Amount of Bond (₱)</label><input class="input amt" id="b-amt" data-bond="amount" inputmode="decimal" value="${esc(st.bond.amount)}" ${dis}></div>
@@ -318,22 +370,18 @@ function officerHtml(refs, cer, st, edit) {
         <div class="field"><label for="b-from">Bond Effective From</label><input class="input" type="date" id="b-from" data-bond="from" value="${esc(st.bond.from)}" ${dis}></div>
         <div class="field"><label for="b-to">Bond Effective To</label><input class="input" type="date" id="b-to" data-bond="to" value="${esc(st.bond.to)}" ${dis}></div>
       </div>
-      <div id="cer-warn">${warnHtml(st)}</div>
-    </div>
+      <div id="cer-warn">${warnHtml(st)}</div>`, opens.has('bond'))}
 
-    <div class="cer-block">
-      <h3 class="cer-h3">Examination period</h3>
+    ${acc('period', 'Examination Period', h.period, `
       <div class="cer-g3">
         <div class="field"><label for="cer-last">Last Cash Exam</label>
           <input class="input" type="date" id="cer-last" value="${esc(lastExam)}" ${lastFromPrev ? 'readonly disabled' : dis}>
           <span class="hint">${lastFromPrev ? 'From this officer\'s previous exam in the system.' : 'Typed for the first exam of this officer in the system.'}</span></div>
         <div class="field"><label for="cer-this">This Cash Exam (count date)</label><input class="input" type="date" id="cer-this" value="${esc(st.countDate)}" readonly disabled></div>
         <div class="field"><span class="cer-lbl">Scope of Audit</span><span class="cer-scope" id="cer-scope">${scopeText(lastExam, st.countDate)}</span></div>
-      </div>
-    </div>
+      </div>`, opens.has('period'))}
 
-    <div class="cer-block">
-      <h3 class="cer-h3">Beginning balances (as of last cash exam)</h3>
+    ${acc('bal', 'Beginning Balances (cash, as of the last cash exam)', h.bal, `
       ${rows.length ? `<div class="cer-tbl"><table class="cer-bal">
         <thead><tr><th scope="col">Accountability</th><th scope="col">Function</th><th scope="col" class="r">Balance (₱)</th><th scope="col">Source</th></tr></thead>
         <tbody>${rows.map((r) => {
@@ -345,8 +393,9 @@ function officerHtml(refs, cer, st, edit) {
         }).join('')}</tbody></table></div>
         <span class="hint">Rows follow the officer's ticked functions and forms. Collecting and disbursing balances stay separate.</span>`
       : `<p class="cer-wait">${(st.functions || []).length === 1 && st.functions[0] === 'custodian' ? 'Custodian accountability is kept in Accountable Forms by quantity, not in pesos.' : 'Tick the officer\'s functions to list the balances.'}</p>`}
-      ${(st.functions || []).includes('custodian') && rows.length ? '<span class="hint">Custodian accountability is kept in Accountable Forms by quantity, not in pesos.</span>' : ''}
-    </div>`;
+      ${(st.functions || []).includes('custodian') && rows.length ? '<span class="hint">Custodian accountability is kept in Accountable Forms by quantity, not in pesos.</span>' : ''}`, opens.has('bal'))}
+
+    ${acc('forms', 'Beginning Inventory of Accountable Forms', h.forms, begBody, opens.has('forms'))}`;
 }
 const scopeText = (from, to) => (from && to ? `${esc(fmtDate(from))} to ${esc(fmtDate(to))}` : '<span class="dim">Set the last cash exam and the count date</span>');
 const warnHtml = (st) => bondChecks(st).map((w) => `<div class="cer-alert ${w.kind}" role="status">
@@ -356,11 +405,27 @@ const warnHtml = (st) => bondChecks(st).map((w) => `<div class="cer-alert ${w.ki
 function wireSetup(refs, cer, q, rerender) {
   if (!DRAFT) return;
   const st = DRAFT.st;
-  const touch = () => { DRAFT.dirty = true; };
+  // Section headers follow what is typed.
+  const refreshHeads = () => { const h = heads(refs, cer, st);
+    Object.entries(h).forEach(([k, [sum, stat]]) => { const a = $(`[data-sum="${k}"]`), b = $(`[data-st="${k}"]`); if (a) a.innerHTML = sum; if (b) b.innerHTML = stHtml(stat); }); };
+  const touch = () => { DRAFT.dirty = true; refreshHeads(); };
+  const wireAcc = () => $$('details.acc').forEach((d) => { d.ontoggle = () => { const set = OPEN[location.hash] || (OPEN[location.hash] = new Set()); if (d.open) set.add(d.dataset.acc); else set.delete(d.dataset.acc); }; });
+  const wireBeg = () => {
+    const o = cer.officers.find((x) => x.id === st.officerId);
+    const prev = prevExam(cer, st.officerId, st.countDate, st.examId), lastExam = prev ? prev.countDate : st.lastExamDate;
+    const add = $('#cer-addbeg');
+    if (add && o) add.onclick = async () => {
+      // Saved straight to the booklet records; the unsaved Audit Setup stays as typed.
+      const set = OPEN[location.hash] || (OPEN[location.hash] = new Set()); set.add('forms');
+      await FM.addBeginningForms(refs, FX, FM.registerOf(refs, st.lguId), o, lastExam);
+    };
+    $$('tr[data-begbk]').forEach((tr) => { const go = () => FM.openBooklet(refs, FX, tr.dataset.begbk); tr.onclick = go; tr.onkeydown = (e) => { if (e.key === 'Enter') go(); }; });
+  };
+  wireAcc(); wireBeg();
   const flag = () => { const t = $('#b-to'); if (t) t.classList.toggle('flag', !!(st.bond.to && st.countDate && st.bond.to < st.countDate)); };
   const lguSel = $('#cer-lgu'), dateIn = $('#cer-date'), revSel = $('#cer-rev');
 
-  const drawOfficer = () => { const box = $('#cer-off'); if (box) { box.innerHTML = officerHtml(refs, cer, st, true); wireOfficer(); flag(); } };
+  const drawOfficer = () => { const box = $('#cer-off'); if (box) { box.innerHTML = officerHtml(refs, cer, st, true); wireOfficer(); wireAcc(); wireBeg(); refreshHeads(); flag(); } };
   function wireOfficer() {
     const offSel = $('#cer-officer');
     if (offSel) offSel.onchange = async () => {
@@ -394,7 +459,8 @@ function wireSetup(refs, cer, q, rerender) {
       i.onblur = () => { const v = num(i.value); if (v !== null) { i.value = money(v); st.balances[i.dataset.bal] = i.value; } };
     });
     const last = $('#cer-last');
-    if (last && !last.disabled) last.oninput = () => { st.lastExamDate = last.value; touch(); $('#cer-scope').innerHTML = scopeText(st.lastExamDate, st.countDate); };
+    if (last && !last.disabled) { last.oninput = () => { st.lastExamDate = last.value; touch(); $('#cer-scope').innerHTML = scopeText(st.lastExamDate, st.countDate); };
+      last.onchange = () => { const set = OPEN[location.hash]; if (set) set.add('period'); drawOfficer(); }; }
   }
   function pickOfficer(id) {
     st.officerId = id;
