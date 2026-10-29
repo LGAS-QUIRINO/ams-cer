@@ -27,6 +27,9 @@ const FUNC_NAME = { collecting: 'Collecting', disbursing: 'Disbursing', special:
 export const FORMS = [['af51', 'Accountable Form 51 – LGU'], ['af51b', 'Accountable Form 51 – Barangay'], ['ctci', 'CTC – Individual'], ['ctcc', 'CTC – Corporate'],
   ['af52', 'AF 52 – Certificate of Transfer of Large Cattle'], ['af53', 'AF 53 – Certificate of Ownership of Large Cattle'], ['af54', 'AF 54 – Marriage License'], ['af56', 'AF 56'], ['cash', 'Cash Tickets']];
 export const FORM_NAME = Object.fromEntries(FORMS);
+// AF 51 has a barangay and an LGU version: an auditee sees only its own. Older barangay setups saved with the LGU AF 51 are read as the barangay one.
+export const formsForLgu = (lgu) => FORMS.filter(([k]) => (isBrgy(lgu) ? k !== 'af51' : k !== 'af51b'));
+export const fixBrgyForm = (lgu, k) => (isBrgy(lgu) && k === 'af51' ? 'af51b' : k);
 const DESIG_BRGY = ['Barangay Treasurer'];
 const DESIG_LGU = ['Municipal Treasurer', 'Provincial Treasurer', 'Collecting Officer', 'Liquidating Officer', 'Disbursing Officer', 'Special Disbursing Officer', 'Accountable Forms Custodian'];
 
@@ -249,9 +252,9 @@ function stateFrom(refs, cer, q) {
     ...blankExam(lgu)
   };
   if (exam) {
-    Object.assign(st, { examId: exam.id, officerId: exam.officerId, functions: [...(exam.functions || [])], forms: [...(exam.forms || [])],
+    Object.assign(st, { examId: exam.id, officerId: exam.officerId, functions: [...(exam.functions || [])], forms: [...new Set((exam.forms || []).map((k) => fixBrgyForm(lgu, k)))],
       bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '',
-      balances: Object.fromEntries(Object.entries(exam.balances || {}).map(([k, v]) => [k, v && v.amount !== null && v.amount !== undefined ? money(v.amount) : ''])) });
+      balances: Object.fromEntries(Object.entries(exam.balances || {}).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, v && v.amount !== null && v.amount !== undefined ? money(v.amount) : ''])) });
     ['maxCash', 'amount'].forEach((k) => { if (st.bond[k] !== '' && st.bond[k] !== null) st.bond[k] = money(st.bond[k]); });
   }
   return { st, audit, exams, exam };
@@ -363,7 +366,7 @@ function officerHtml(refs, cer, st, edit) {
         ${isBrgy(lgu) ? '<span class="hint">Barangay Treasurer: collecting and disbursing accountabilities are computed separately.</span>' : ''}</fieldset>
     </div>
     ${(st.functions || []).includes('collecting') ? `<fieldset class="field"><legend>Accountable forms used in collecting</legend>
-      <div class="cer-chips">${FORMS.map(([k, label]) => `<label class="cer-chip"><input type="checkbox" data-form="${k}" ${chk(st.forms, k)} ${dis}> ${esc(label)}</label>`).join('')}</div></fieldset>` : ''}`, opens.has('officer'))}
+      <div class="cer-chips">${formsForLgu(lgu).map(([k, label]) => `<label class="cer-chip"><input type="checkbox" data-form="${k}" ${chk(st.forms, k)} ${dis}> ${esc(label)}</label>`).join('')}</div></fieldset>` : ''}`, opens.has('officer'))}
 
     ${acc('bond', 'Bond and Limits', h.bond, `
       <div class="cer-g5">

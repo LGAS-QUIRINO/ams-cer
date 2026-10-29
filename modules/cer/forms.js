@@ -68,9 +68,9 @@ function wireSrcSelect(sel, refs, f, lguId, after, direct = false) {
     sel.value = have || name; prev = sel.value; if (after) after();
   });
 }
-const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
-// Each register keeps its own fund list (starts with the three above; Add Fund for the municipality's other funds).
-const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || DEFAULT_FUNDS;
+const DEFAULT_FUNDS = ['General Fund'];
+// Each register keeps its own fund list (starts with General Fund; Add Fund for the others). A fund already used stays listed.
+const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || [...new Set([...DEFAULT_FUNDS, ...(f.booklets || []).filter((b) => b.lguId === lguId && b.fund).map((b) => b.fund)])];
 // Checkbooks come from the bank straight to the disbursing officer, so by default they are the AOs' only and stay out of the
 // custodian's register (entered per officer with Add Checkbook). Ticked: the custodian controls the checks like other forms.
 const chkByCustodian = (f, lguId) => !!f.settings['chkctl|' + lguId]?.on;

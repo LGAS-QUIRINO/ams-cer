@@ -14,11 +14,13 @@
 //   cer_settings 'funds|<lguId>' { list }  the auditee's funds (General Fund, Special Education Fund, Trust Fund, plus any added)
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
-import { FORMS, hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
+import { FORMS, fixBrgyForm, hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
 import { loadForms, FORM_SHORT, exportXlsx, rangesText, mergeRanges } from './forms.js';
 
-const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
-export const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || DEFAULT_FUNDS;
+// Each auditee's funds: General Fund to start; the others are added with the Funds button. A fund already used stays listed.
+const DEFAULT_FUNDS = ['General Fund'];
+export const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || [...new Set([...DEFAULT_FUNDS,
+  ...(f.ors || []).filter((o) => o.lguId === lguId && o.fund).map((o) => o.fund), ...(f.reports || []).filter((r) => r.lguId === lguId && r.fund).map((r) => r.fund)])];
 const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
 const isBrgy = (l) => !!l && l.data.kind === 'barangay';
 // Barangays: AF 51 (and other ORs) go to the SCD (deposited in the bank); CTC goes to the SCR (remitted to the MTO).
@@ -149,7 +151,7 @@ export async function collectionsView(ctx) {
   const funds = fundsOf(f, audit.lguId);
   const fig = figuresOf(f, o, funds, audit.countDate, lgu);
   const isLO = (exam.functions || []).includes('liquidating');
-  const allForms = (exam.forms || []).length ? exam.forms : [...new Set(f.ors.filter((x) => x.officerId === o.id).map((x) => x.form))];
+  const allForms = [...new Set(((exam.forms || []).length ? exam.forms : f.ors.filter((x) => x.officerId === o.id).map((x) => x.form)).map((k) => fixBrgyForm(lgu, k)))];
   // Report types in use for this officer: from the forms ticked in Audit Setup, plus any already encoded.
   const active = (c) => c.figs.length || c.pend.nOrs || c.pend.dep || c.pend.remTotal || c.pend.beg;
   const usedKinds = fig.kinds.filter((k) => allForms.some((x) => kindOfForm(lgu, x) === k) || Object.values(fig.chains).some((c) => c.kind === k && active(c)));
