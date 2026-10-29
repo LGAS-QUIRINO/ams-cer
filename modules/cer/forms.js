@@ -19,6 +19,11 @@ const RECEIVED_FROM = ['Provincial Treasurer', 'National Printing Office', 'Bank
 const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
 // Each register keeps its own fund list (starts with the three above; Add Fund for the municipality's other funds).
 const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || DEFAULT_FUNDS;
+// Checkbooks come from the bank straight to the disbursing officer, so by default they are the AOs' only and stay out of the
+// custodian's register (entered per officer with Add Checkbook). Ticked: the custodian controls the checks like other forms.
+const chkByCustodian = (f, lguId) => !!f.settings['chkctl|' + lguId]?.on;
+const formsFor = (f, lguId) => (chkByCustodian(f, lguId) ? AF_FORMS : AF_FORMS.filter(([k]) => k !== 'chk'));
+const chkLabel = (b) => `${esc(FORM_SHORT[b.form] || b.form)}${b.form === 'chk' && b.bankAccount ? `<small>${esc(b.bankAccount)}</small>` : ''}`;
 const fundOpts = (f, lguId, sel = '') => `<option value="">No fund indicated</option>${fundsOf(f, lguId).map((x) => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join('')}`;
 const PER_BOOKLET = 50;
 const MAX_PCS = 50000;   // one entry covers at most this many pieces; a longer range is likely a typing mistake
@@ -159,7 +164,11 @@ function registerView(ctx, f, lguId) {
   const lgu = refs.lgu[lguId];
   const asOf = q.get('asof') || today();
   const offs = officersOf(refs, f, lguId);
-  const mine = f.booklets.filter((b) => b.lguId === lguId);
+  const ctl = chkByCustodian(f, lguId);
+  const allHere = f.booklets.filter((b) => b.lguId === lguId);
+  const mine = ctl ? allHere : allHere.filter((b) => b.form !== 'chk');
+  // Checkbooks put in the custodian's stock before checks were taken out of his register: to be issued to their officer or deleted.
+  const strayChk = ctl ? [] : allHere.filter((b) => b.form === 'chk' && b.status === 'stock');
   const oos = outOfSequence({ booklets: mine });
   const fForm = q.get('form') || '', fCust = q.get('cust') || '', fStat = q.get('st') || 'open', sort = q.get('sort') || 'days';
   let rows = mine.filter((b) => (!fForm || b.form === fForm)
@@ -187,6 +196,9 @@ function registerView(ctx, f, lguId) {
       <div class="field af-span2"><label for="af-find">Find a Serial No.</label><div class="af-pair af-findbox"><input class="input mono" id="af-find" inputmode="numeric" placeholder="e.g. 7311510" autocomplete="off"><button class="btn" type="button" id="af-findgo">Find</button></div></div>
     </div>
     <div id="af-found" aria-live="polite"></div>
+    ${strayChk.length ? `<div class="msg warn af-stray"><b>${strayChk.length} checkbook${strayChk.length > 1 ? 's are' : ' is'} in the custodian's stock from earlier entries.</b>
+      Checks are not controlled by the custodian, so they are kept out of this register. Open each one to Issue it to its officer, or Delete it and enter it with Add Checkbook in By Accountable Officer.
+      <div class="af-straylist">${strayChk.sort((a, b) => a.from - b.from).map((b) => `<button class="btn sm" type="button" data-open="${esc(b.id)}">Checks ${rangeText(b.from, b.to)}</button>`).join('')}</div></div>` : ''}
 
     <div class="stats">
       <div class="stat"><span>In Stock · Custodian</span><b>${stock.length}</b><small>booklets · ${stock.reduce((n, b) => n + b.qty, 0)} pcs</small></div>
@@ -200,7 +212,7 @@ function registerView(ctx, f, lguId) {
     <section class="panel" aria-labelledby="reg-h">
       <div class="panel-head"><h2 id="reg-h">Forms Register</h2><span class="pill">${rows.length}</span>
         <div class="af-filters">
-          ${pick('form', [['', 'All form types'], ...AF_FORMS.filter(([k]) => formsUsed.includes(k)).map(([k]) => [k, FORM_SHORT[k]])], fForm)}
+          ${pick('form', [['', 'All form types'], ...formsFor(f, lguId).filter(([k]) => formsUsed.includes(k)).map(([k]) => [k, FORM_SHORT[k]])], fForm)}
           ${pick('cust', [['', 'All custody'], ['stock', 'In stock (custodian)'], ['direct', 'Received directly by an AO'], ...offs.map((o) => [o.id, o.name])], fCust)}
           ${pick('st', [['open', 'Not exhausted'], ['all', 'All statuses'], ['stock', 'In stock'], ['new', 'Issued, not yet used'], ['part', 'Partly used'], ['done', 'Exhausted'], ['lost', 'Lost / Destroyed']], fStat)}
           ${pick('sort', [['days', 'Longest with AO first'], ['serial', 'By form and serial']], sort)}
@@ -211,7 +223,7 @@ function registerView(ctx, f, lguId) {
           const o = f.officers.find((x) => x.id === b.officerId); const st = statusOf(b); const d = daysWithAo(b, asOf); const sk = skippedOf(b);
           const flagSeq = oos.has(b.id);
           return `<tr class="${flagSeq ? 'flag' : ''}" data-bk="${esc(b.id)}" tabindex="0">
-            <td>${esc(FORM_SHORT[b.form] || b.form)}</td><td class="mono">${rangeText(b.from, b.to)}</td><td class="r">${b.qty}</td>
+            <td>${chkLabel(b)}</td><td class="mono">${rangeText(b.from, b.to)}</td><td class="r">${b.qty}</td>
             <td>${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${b.receivedDirect ? `<b class="af-direct">Received directly</b> · ` : ''}${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'import' ? 'Imported from Excel' : b.source === 'starting' ? 'Starting inventory' : ''))}</small></td>
             <td>${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock<small>Custodian (${custOf(lgu)})</small>`}</td>
             <td>${b.status !== 'stock' && b.issuedDate ? esc(fmtDate(b.issuedDate)) : '<span class="dim">—</span>'}</td>
@@ -282,7 +294,8 @@ function wirePart(pre, root, onChange) {
 const sel = (a, b) => (a === b ? 'selected' : '');
 function encodeHtml(refs, offs, q) {
   const mv = MOVES.some(([k]) => k === q.get('mv')) ? q.get('mv') : 'receive';
-  const formSel = `<div class="field"><label for="e-form">Form Type</label><select class="input" id="e-form">${AF_FORMS.map(([k, l]) => `<option value="${k}" ${sel(k, LAST.form)}>${esc(l)}</option>`).join('')}</select></div>`;
+  const ctl = chkByCustodian(offs.f, offs.lguId);
+  const formSel = `<div class="field"><label for="e-form">Form Type</label><select class="input" id="e-form">${formsFor(offs.f, offs.lguId).map(([k, l]) => `<option value="${k}" ${sel(k, LAST.form)}>${esc(l)}</option>`).join('')}</select></div>`;
   const range = `<div class="field"><label for="e-from">Serial From</label><input class="input r" id="e-from" inputmode="numeric" autocomplete="off"></div>
     <div class="field"><label for="e-to">Serial To</label><input class="input r" id="e-to" inputmode="numeric" autocomplete="off"></div>`;
   const per = `<div class="field"><label for="e-per">Per Booklet</label><input class="input r" id="e-per" inputmode="numeric" value="${LAST.per}"></div>`;
@@ -319,6 +332,8 @@ function encodeHtml(refs, offs, q) {
       <div class="af-headr">${mv !== 'starting' ? `<a href="#" class="af-tpl" id="af-tpl">Download ${mv === 'receive' ? 'Receive' : 'Issue'} Template</a><button class="btn" type="button" id="af-import">Import ${mv === 'receive' ? 'Receipts' : 'Issuances'} from Excel</button>` : ''}
       <div class="seg" role="group" aria-label="Movement">${MOVES.map(([k, l]) => `<a href="#" data-mv="${k}" class="${k === mv ? 'on' : ''}" aria-pressed="${k === mv}">${l}</a>`).join('')}</div></div></div>
     ${fields}
+    <label class="af-chkctl"><input type="checkbox" id="af-chkctl" ${ctl ? 'checked' : ''} ${isAuditor(refs) ? '' : 'disabled'}> Checks are controlled by the custodian (${custName})
+      <span class="dim">${ctl ? '· checkbooks are received and issued here' : '· unticked: checkbooks are entered per officer (By Accountable Officer → Add Checkbook) and kept out of this register'}</span></label>
     <div class="af-note" id="e-help">${esc(help)}</div></div></section>`;
 }
 
@@ -339,6 +354,19 @@ function wireRegister(ctx, f, lguId, offs) {
     const open = () => bookletModal(ctx, f, f.booklets.find((b) => b.id === tr.dataset.bk), offs);
     tr.onclick = open; tr.onkeydown = (e) => { if (e.key === 'Enter') open(); };
   });
+  $$('.af-stray [data-open]').forEach((btn) => { btn.onclick = () => bookletModal(ctx, f, f.booklets.find((b) => b.id === btn.dataset.open), offs); });
+  const ctlBox = $('#af-chkctl');
+  if (ctlBox) ctlBox.onchange = async () => {
+    const on = ctlBox.checked;
+    const v = await modal({ title: on ? 'Checks controlled by the custodian?' : 'Checks kept by the officers only?',
+      body: on ? `<p>Checkbooks will be received into the ${custOf(refs.lgu[lguId])}'s stock and issued to the officers from this register, like the other forms.</p>`
+        : '<p>Checkbooks will be kept out of the custodian\'s register. Each officer\'s checkbooks are entered in By Accountable Officer → Add Checkbook.</p>',
+      buttons: [{ label: 'Cancel', value: null }, { label: 'Confirm', cls: 'primary', value: 'yes' }] });
+    if (v !== 'yes') { ctlBox.checked = !on; return; }
+    if (!on && LAST.form === 'chk') LAST.form = 'af51';
+    await store.save('cer_settings', 'chkctl|' + lguId, { on }, by(refs));
+    toast(on ? 'Checks are now controlled by the custodian.' : 'Checks are now kept by the officers only.', 'ok');
+  };
   const enter = $('#e-enter');
   if (!enter) return;
   const mv = $('.seg a.on')?.dataset.mv || 'receive';
@@ -614,13 +642,14 @@ async function editBooklet(ctx, f, b, offs) {
   const srcs = RECEIVED_FROM.includes(b.receivedFrom) || !b.receivedFrom ? RECEIVED_FROM : [...RECEIVED_FROM, b.receivedFrom];
   const dis = locked ? 'disabled' : '';
   const body = `<div class="af-edit">
-      <div class="field"><label for="x-form">Form Type</label><select class="input" id="x-form" ${dis}>${AF_FORMS.map(([k, l]) => `<option value="${k}" ${sel(k, b.form)}>${esc(l)}</option>`).join('')}</select></div>
+      <div class="field"><label for="x-form">Form Type</label><select class="input" id="x-form" ${dis}>${(b.form === 'chk' ? AF_FORMS : formsFor(f, b.lguId)).map(([k, l]) => `<option value="${k}" ${sel(k, b.form)}>${esc(l)}</option>`).join('')}</select></div>
       <div class="field"><label for="x-from">Serial From</label><input class="input r mono" id="x-from" inputmode="numeric" value="${b.from}" ${dis}></div>
       <div class="field"><label for="x-to">Serial To</label><input class="input r mono" id="x-to" inputmode="numeric" value="${b.to}" ${dis}></div>
       ${locked ? '<p class="af-note af-span">Form type and serial range are locked: receipts or a Physical Check are already recorded against this booklet.</p>' : ''}
       <div class="field"><label for="x-rdate">Date Received</label><input class="input" type="date" id="x-rdate" value="${esc(b.receivedDate || '')}"></div>
       <div class="field"><label for="x-src">Received From</label><select class="input" id="x-src"><option value="">—</option>${srcs.map((x) => `<option ${sel(x, b.receivedFrom)}>${esc(x)}</option>`).join('')}</select></div>
       <div class="field"><label for="x-ref">Reference</label><input class="input" id="x-ref" value="${esc(b.reference || '')}"></div>
+      ${b.form === 'chk' ? `<div class="field af-span"><label for="x-acct">Bank / Account (optional)</label><input class="input" id="x-acct" value="${esc(b.bankAccount || '')}" placeholder="e.g. LBP – General Fund"></div>` : ''}
       ${withOff ? `<div class="field af-span2"><label for="x-off">Accountable Officer</label><select class="input" id="x-off"><option value="">— Choose the officer —</option>${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, b.officerId)}>${esc(officerLabel(refs, o))}</option>`).join('')}</select></div>
       <div class="field"><label for="x-idate">Date Issued</label><input class="input" type="date" id="x-idate" value="${esc(b.issuedDate || '')}"></div>
       <div class="af-span">${partBox('x', { on: partly, text: partly ? rangesText(b.unusedAtStart) : '', note: 'Partly used (unused on hand as of the start / last cash exam)' })}
@@ -636,6 +665,7 @@ async function editBooklet(ctx, f, b, offs) {
     const hit = overlaps(f, form, a, z, b.id);
     if (hit.length) return { error: `${FORM_SHORT[form]} ${rangeText(a, z)} overlaps ${rangeText(hit[0].from, hit[0].to)} already in the register.` };
     const next = { form, from: a, to: z, qty: z - a + 1, receivedDate: $('#x-rdate', bg).value, receivedFrom: $('#x-src', bg).value, reference: $('#x-ref', bg).value.trim() };
+    if ($('#x-acct', bg)) next.bankAccount = $('#x-acct', bg).value.trim();
     if (withOff) {
       next.officerId = $('#x-off', bg).value; next.issuedDate = $('#x-idate', bg).value;
       if (!next.officerId) return { error: 'Choose the accountable officer.' };
@@ -669,6 +699,7 @@ async function editBooklet(ctx, f, b, offs) {
   if ((n.receivedDate || '') !== (b.receivedDate || '')) changes.push(`date received ${fmtDate(b.receivedDate) || '—'} → ${fmtDate(n.receivedDate) || '—'}`);
   if ((n.receivedFrom || '') !== (b.receivedFrom || '')) changes.push(`received from ${b.receivedFrom || '—'} → ${n.receivedFrom || '—'}`);
   if ((n.reference || '') !== (b.reference || '')) changes.push(`reference ${b.reference || '—'} → ${n.reference || '—'}`);
+  if ('bankAccount' in n && (n.bankAccount || '') !== (b.bankAccount || '')) changes.push(`bank / account ${b.bankAccount || '—'} → ${n.bankAccount || '—'}`);
   if (withOff && n.officerId !== b.officerId) changes.push(`officer ${offName(b.officerId)} → ${offName(n.officerId)}`);
   if (withOff && (n.issuedDate || '') !== (b.issuedDate || '')) changes.push(`date issued ${fmtDate(b.issuedDate) || '—'} → ${fmtDate(n.issuedDate) || '—'}`);
   if (withOff && un(n.unusedAtStart) !== un(b.unusedAtStart ?? null)) changes.push(`unused on hand ${un(b.unusedAtStart ?? null)} → ${un(n.unusedAtStart)}`);
@@ -731,7 +762,7 @@ function officerView(ctx, f, lguId) {
             const isChk = b.form === 'chk', lc = c.lastCheck || b.lastCheck || {};
             const res = !c.seen ? (c.id ? ['p-flag', 'Not seen'] : ['p-stock', 'Not yet checked']) : isChk ? ['p-done', 'Last check recorded'] : counted && sameRanges(counted, reg) ? ['p-done', 'Agrees'] : ['p-flag', 'For checking'];
             return `<tr data-ck="${esc(b.id)}"><td><input type="checkbox" class="af-seen" ${c.seen ? 'checked' : ''} ${auditor ? '' : 'disabled'} aria-label="Seen: ${esc(FORM_SHORT[b.form])} ${b.from} to ${b.to}"></td>
-              <td>${esc(FORM_SHORT[b.form])}</td><td class="mono">${rangeText(b.from, b.to)}</td><td class="r">${days(b.issuedDate, exam.audit.countDate)}</td>
+              <td>${chkLabel(b)}</td><td class="mono">${rangeText(b.from, b.to)}</td><td class="r">${days(b.issuedDate, exam.audit.countDate)}</td>
               <td class="mono">${reg.length ? `${rangesText(reg)} (${n})` : 'None'}${sk.length ? `<small class="warn-t">Skipped: ${rangesText(sk)} · on hand, cancelled or not on hand?</small>` : ''}</td>
               <td>${isChk ? `<div class="af-lc"><input class="input af-sm mono af-lc-no" inputmode="numeric" placeholder="Last check No." value="${esc(lc.no || '')}" aria-label="Last check issued: check No." ${auditor ? '' : 'disabled'}>
                 <input class="input af-sm af-lc-date" type="date" value="${esc(lc.date || '')}" aria-label="Last check issued: date" ${auditor ? '' : 'disabled'}>
@@ -747,13 +778,13 @@ function officerView(ctx, f, lguId) {
     const list = tab === 'hand' ? inHand : mine.slice().sort((a, b) => String(b.issuedDate).localeCompare(String(a.issuedDate)));
     tabBody = list.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col">Issued</th><th scope="col" class="r">Days in Hand</th><th scope="col" class="r">Used</th><th scope="col">Unused</th><th scope="col">Status</th></tr></thead>
       <tbody>${list.map((b) => { const st = statusOf(b); const d = daysWithAo(b, asOf);
-        return `<tr data-bk="${esc(b.id)}" tabindex="0"><td>${esc(FORM_SHORT[b.form])}</td><td class="mono">${rangeText(b.from, b.to)}</td><td>${esc(fmtDate(b.issuedDate))}</td><td class="r">${d ?? '<span class="dim">—</span>'}</td><td class="r">${usedOf(b)}</td>
+        return `<tr data-bk="${esc(b.id)}" tabindex="0"><td>${chkLabel(b)}</td><td class="mono">${rangeText(b.from, b.to)}</td><td>${esc(fmtDate(b.issuedDate))}</td><td class="r">${d ?? '<span class="dim">—</span>'}</td><td class="r">${usedOf(b)}</td>
           <td class="mono">${unusedCell(b)}</td><td><span class="pill ${st.cls}">${st.label}</span>${skippedOf(b).length ? '<br><span class="pill p-flag">Skipped numbers</span>' : ''}</td></tr>`; }).join('')}</tbody></table></div>
       <p class="af-note">Click a booklet to see its history and to Transfer, Return or report it Lost.</p>`
       : `<div class="empty"><b>${tab === 'hand' ? 'No booklets in this officer\'s hands.' : 'No booklets issued to this officer yet.'}</b></div>`;
   }
   const body = `<div class="hello"><div><a href="#/cer/forms/officer?lgu=${esc(lguId)}" class="af-back">← All officers</a><h1>${esc(o.name)}</h1><p>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))} · booklets issued by the ${custOf(refs.lgu[lguId])}</p></div>
-      <div class="btn-row"><a class="btn" href="#/cer/forms?lgu=${esc(lguId)}&cust=${esc(o.id)}">Open in Forms Register</a><button class="btn" type="button" id="af-oxls">Export to Excel</button><button class="btn" type="button" id="af-clear">Print Clearance List</button></div></div>
+      <div class="btn-row">${canEncode(refs) && !chkByCustodian(f, lguId) ? '<button class="btn primary" type="button" id="af-addchk">Add Checkbook</button>' : ''}<a class="btn" href="#/cer/forms?lgu=${esc(lguId)}&cust=${esc(o.id)}">Open in Forms Register</a><button class="btn" type="button" id="af-oxls">Export to Excel</button><button class="btn" type="button" id="af-clear">Print Clearance List</button></div></div>
     <div class="stats">
       <div class="stat"><span>Booklets in Hand</span><b>${inHand.length}</b><small>not yet exhausted</small></div>
       <div class="stat"><span>Unused per Register</span><b style="color:#1d4fb8">${inHand.reduce((n, b) => n + unusedOf(b), 0)} pcs</b><small>${Object.entries(byForm).map(([k, n]) => `${FORM_SHORT[k]} ${n}`).join(' · ') || '—'}</small></div>
@@ -768,13 +799,67 @@ function officerView(ctx, f, lguId) {
   const exportRows = () => mine.slice().sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from).map((b) => {
     const c = exam ? f.checks.find((x) => x.id === exam.id + '|' + b.id) : null;
     const counted = c ? (Array.isArray(c.ranges) ? c.ranges : (c.unusedFrom && c.unusedTo ? [[c.unusedFrom, c.unusedTo]] : [])) : null;
-    return { Form: FORM_SHORT[b.form] || b.form, 'Series From': b.from, 'Series To': b.to, Qty: b.qty, 'Date Issued': fmtDate(b.issuedDate), 'Days in Hand': daysWithAo(b, asOf) ?? '',
+    return { Form: FORM_SHORT[b.form] || b.form, 'Bank / Account': b.bankAccount || '', 'Series From': b.from, 'Series To': b.to, Qty: b.qty, 'Date Issued': fmtDate(b.issuedDate), 'Days in Hand': daysWithAo(b, asOf) ?? '',
       Used: usedOf(b), 'Unused per Register': rangesText(unusedRanges(b)), 'Unused Qty': unusedOf(b), 'Skipped Numbers': rangesText(skippedOf(b)), Status: statusOf(b).label,
       ...(exam ? { 'Cash Count': fmtDate(exam.audit.countDate), Seen: c ? (c.seen ? 'Yes' : 'No') : '', 'Unused per Count': counted ? rangesText(counted) : '' } : {}) }; });
   return { crumb: 'Accountable Forms · By Accountable Officer', body, wire: () => {
     wireOfficer(ctx, f, lguId, o, exam, offs);
     $('#af-oxls').onclick = () => exportXlsx(`Accountable Forms ${o.name}${exam ? ' ' + exam.audit.countDate : ''}.xlsx`, 'Booklets', exportRows());
   } };
+}
+// Add Checkbook: checks received by the officer straight from the bank (kept out of the custodian's register).
+const LASTCHK = { per: 50, acct: '' };
+async function addCheckbook(refs, f, lguId, o) {
+  const accts = [...new Set(f.booklets.filter((b) => b.form === 'chk' && b.bankAccount).map((b) => b.bankAccount))].sort();
+  let plan = null;
+  const read = (bg) => {
+    const a = int($('#k-from', bg).value), z = int($('#k-to', bg).value), p = int($('#k-per', bg).value) || 50;
+    if (!a || !z || z < a) return { error: 'Enter the check numbers (From must not be after To).' };
+    if (z - a + 1 > MAX_PCS) return { error: `That range has ${(z - a + 1).toLocaleString('en-US')} checks. Check the numbers.` };
+    const [bs, be] = bookletOf(a, p);
+    if (bs !== a) return { error: `${a} is in the middle of checkbook ${rangeText(bs, be)}. Enter the complete series from ${bs}; tick Partly used for the checks already issued.` };
+    const parts = splitRange(a, z, p).map(([x, y]) => ({ x, y, unused: null }));
+    const pv = partVals('k', bg);
+    if (pv.on) {
+      if (!pv.text.trim()) return { error: `Type the ${pv.mode} check numbers, or untick Partly used.` };
+      const r = parseRanges(pv.text, a, z, 'the range entered'); if (r.error) return { error: r.error };
+      parts.forEach((s) => { s.unused = unusedFromTyped(r.ranges, pv.mode, s.x, s.y); });
+      if (parts.every((s) => !s.unused)) return { error: 'None of the numbers typed changed a checkbook. Check the numbers.' };
+    }
+    for (const s of parts) { const hit = overlaps(f, 'chk', s.x, s.y); if (hit.length) return { error: `Checks ${rangeText(s.x, s.y)} overlap ${rangeText(hit[0].from, hit[0].to)} already encoded${hit[0].officerId ? ' with ' + (f.officers.find((x) => x.id === hit[0].officerId)?.name || 'another officer') : ''}.` }; }
+    return { parts, per: p };
+  };
+  const show = (bg) => { const r = read(bg); const box = $('#k-prev', bg);
+    if (!int($('#k-from', bg).value) || !int($('#k-to', bg).value)) { box.innerHTML = ''; return; }
+    box.innerHTML = r.error ? `<b class="warn-t">${esc(r.error)}</b>` : startPreview({ parts: r.parts, held: o.id }).replace('in the officer\'s hands', 'in ' + esc(o.name) + '\'s hands').replace(/booklet/g, 'checkbook'); };
+  const v = await modal({ title: `Add Checkbook · ${o.name}`, wide: true,
+    body: `<div class="af-edit">
+        <div class="field"><label for="k-from">Check No. From</label><input class="input r mono" id="k-from" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="k-to">Check No. To</label><input class="input r mono" id="k-to" inputmode="numeric" autocomplete="off"></div>
+        <div class="field"><label for="k-per">Checks per Book</label><input class="input r" id="k-per" inputmode="numeric" value="${LASTCHK.per}"></div>
+        <div class="field af-span2"><label for="k-acct">Bank / Account (optional)</label><input class="input" id="k-acct" list="k-accts" value="${esc(LASTCHK.acct)}" placeholder="e.g. LBP – General Fund"><datalist id="k-accts">${accts.map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
+        <div class="field"><label for="k-date">Date Received from the Bank</label><input class="input" type="date" id="k-date"></div>
+        <div class="af-span">${partBox('k', { note: 'Partly used checkbooks (already in use at the start)' })}</div>
+      </div>
+      <p class="af-note">Enter the complete series. A date not known: use the start date of the register. These checkbooks show only on this officer's page, never in the custodian's register.</p>
+      <div class="af-note" id="k-prev"></div>`,
+    onOpen: (bg) => { $$('#k-from, #k-to, #k-per', bg).forEach((el) => { el.oninput = () => show(bg); });
+      $('#k-from', bg).addEventListener('change', () => { const a = int($('#k-from', bg).value), t = $('#k-to', bg); if (a && !t.value) { t.value = bookletOf(a, int($('#k-per', bg).value) || 50)[1]; show(bg); } });
+      wirePart('k', bg, () => show(bg)); },
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Save Checkbooks', cls: 'primary', value: 'save', check: (bg) => {
+      const r = read(bg); if (r.error) { toast(r.error, 'bad'); return false; }
+      const date = $('#k-date', bg).value; if (!date) { toast('Enter the date received from the bank.', 'bad'); return false; }
+      plan = { ...r, date, acct: $('#k-acct', bg).value.trim() }; return true; } }] });
+  if (v !== 'save' || !plan) return;
+  if (!(await confirmBig('chk', plan.parts[0].x, plan.parts[plan.parts.length - 1].y, plan.parts.length))) return;
+  Object.assign(LASTCHK, { per: plan.per, acct: plan.acct });
+  for (const s of plan.parts) {
+    await store.save('cer_booklets', newId('cerb'), { lguId, form: 'chk', from: s.x, to: s.y, qty: s.y - s.x + 1, receivedDate: plan.date, receivedFrom: 'Bank', reference: '',
+      receivedDirect: true, bankAccount: plan.acct, source: 'officer', status: 'issued', officerId: o.id, issuedDate: plan.date, usedBefore: null, unusedAtStart: s.unused,
+      history: [hist(refs, 'direct', plan.date, { officerId: o.id, note: 'From the bank' + (plan.acct ? ' · ' + plan.acct : '') + (s.unused ? ` · partly used: ${countRanges(s.unused)} unused` : '') })] }, by(refs), { quiet: true });
+  }
+  emitChange('local');
+  toast(`${plan.parts.length} checkbook${plan.parts.length > 1 ? 's' : ''} added for ${o.name}.`, 'ok');
 }
 function clearanceHtml(refs, f, o, mine, lguId) {
   const list = mine.filter(held).sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
@@ -787,6 +872,7 @@ function clearanceHtml(refs, f, o, mine, lguId) {
 }
 function wireOfficer(ctx, f, lguId, o, exam, offs) {
   const { refs } = ctx;
+  const addChk = $('#af-addchk'); if (addChk) addChk.onclick = () => addCheckbook(refs, f, lguId, o);
   $('#af-clear').onclick = () => { document.body.classList.add('af-printing'); $('#cer-print').hidden = false; window.print(); $('#cer-print').hidden = true; document.body.classList.remove('af-printing'); };
   const ex = $('#af-exam'); if (ex) ex.onchange = () => go({ exam: ex.value });
   $$('tr[data-bk]').forEach((tr) => { const open = () => bookletModal(ctx, f, f.booklets.find((b) => b.id === tr.dataset.bk), offs); tr.onclick = open; tr.onkeydown = (e) => { if (e.key === 'Enter') open(); }; });

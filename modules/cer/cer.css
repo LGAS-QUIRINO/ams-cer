@@ -381,3 +381,9 @@ ul.af-plan li{margin:2px 0}
 .btn.danger:hover{background:var(--bad-bg); border-color:var(--bad)}
 .modal .mf .btn.danger{margin-right:auto}
 @media (max-width:760px){ .af-offrow, .af-edit{grid-template-columns:1fr} .af-edit .af-span2{grid-column:auto} }
+/* Checks kept by the officers (29 Oct 2026) */
+.af-chkctl{display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--navy)}
+.af-chkctl .dim{font-weight:400}
+.af-stray{margin:0 0 16px; background:var(--warn-bg); color:var(--warn); line-height:1.5}
+.af-straylist{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px}
+.af-reg td small{display:block}
