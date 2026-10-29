@@ -412,3 +412,4 @@ table.cer-afbeg tr.click:hover td{background:#f5f8fe}
 .cer-mvrow td{background:#f7faf5}
 .af-nschip{justify-self:start}
 table.af-raaf2 td small{display:block; font-size:11px; color:var(--ok); font-weight:600}
+.modal [hidden], .af-encbox [hidden], .acc-b [hidden]{display:none !important}
