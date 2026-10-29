@@ -15,7 +15,7 @@
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { FORMS, fixBrgyForm, hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
-import { loadForms, FORM_SHORT, exportXlsx, rangesText, mergeRanges } from './forms.js';
+import { loadForms, FORM_SHORT, exportXlsx, rangesText, mergeRanges, bookletUnused, countRanges } from './forms.js';
 
 // Each auditee's funds: General Fund to start; the others are added with the Funds button. A fund already used stays listed.
 const DEFAULT_FUNDS = ['General Fund'];
@@ -212,14 +212,16 @@ export async function collectionsView(ctx) {
     ${remBlock}`;
 
   /* ----- 2 · Collections ----- */
-  const myBooklets = (form) => f.booklets.filter((b) => b.form === form && b.officerId === o.id && b.status !== 'lost').sort((a, b) => a.from - b.from);
+  const myBooklets = (form) => f.booklets.filter((b) => b.form === form && b.officerId === o.id && b.status !== 'lost' && !b.noSerial).sort((a, b) => a.from - b.from);
   const ckey = o.id + '|' + selId;
   if (LASTC.key !== ckey) Object.assign(LASTC, { key: ckey, form: '', bookletId: '', serial: '', focus: '' });
   const form = forms.includes(LASTC.form) ? LASTC.form : forms[0] || '';
   const bks = myBooklets(form);
-  const unusedOfBk = (b) => { const used = new Set(f.ors.filter((x) => x.bookletId === b.id).map((x) => x.serial)); let n = 0; for (let s = b.from; s <= b.to; s++) if (!used.has(s)) n++; return n; };
+  // Unused per the Forms Register: numbers used before the beginning (partly used) and ORs already encoded are both taken out.
+  const unusedOfBk = (b) => countRanges(bookletUnused(b));
   const bk = LASTC.bookletId === '__none' ? null : bks.find((b) => b.id === LASTC.bookletId) || bks.find((b) => unusedOfBk(b) > 0 && b.status === 'issued') || bks[0] || null;
-  const nextSerial = (b) => { if (!b) return ''; const used = new Set(f.ors.filter((x) => x.bookletId === b.id).map((x) => x.serial)); const mx = Math.max(b.from - 1, ...used); return mx < b.to ? mx + 1 : ''; };
+  // Next OR: the first number after the last one used (skipped numbers below it are not offered).
+  const nextSerial = (b) => { if (!b) return ''; const rs = bookletUnused(b); const last = rs[rs.length - 1]; return last && last[1] === b.to ? last[0] : ''; };
   const serial = LASTC.serial !== '' && LASTC.serial !== undefined ? LASTC.serial : nextSerial(bk);
   const parts = [...new Set(f.ors.filter((x) => x.lguId === audit.lguId).flatMap((x) => (x.items || []).map((i) => i.p)).filter(Boolean))].sort();
   const show = q.get('show') === 'all' ? 'all' : 'sel';

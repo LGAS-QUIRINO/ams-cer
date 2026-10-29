@@ -133,6 +133,8 @@ function rawUnused(b, date) {
   return cut.length ? subtractRanges(base, cut) : base;
 }
 const unusedRanges = (b) => (b.status === 'lost' ? [] : rawUnused(b));
+// For Collections: a booklet's unused numbers (beginning balance and ORs already encoded both taken out).
+export const bookletUnused = (b) => unusedRanges(b);
 function usedOf(b) { return b.qty - countRanges(rawUnused(b)); }
 // Unused numbers below the last number used: skipped ORs, for the auditor to confirm at the Physical Check.
 export function skippedOf(b) {
