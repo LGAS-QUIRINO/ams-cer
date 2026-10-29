@@ -21,7 +21,17 @@ const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
 const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || DEFAULT_FUNDS;
 const fundOpts = (f, lguId, sel = '') => `<option value="">No fund indicated</option>${fundsOf(f, lguId).map((x) => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join('')}`;
 const PER_BOOKLET = 50;
-const MAX_PCS = 10000;   // one entry covers at most this many pieces; a longer range is likely a typing mistake
+const MAX_PCS = 50000;   // one entry covers at most this many pieces; a longer range is likely a typing mistake
+const BIG_PCS = 5000;    // above this, the encoder confirms the range before it is saved
+// Asks before saving a large range (a wrong digit in Serial To would add thousands of booklets).
+async function confirmBig(form, a, z, n) {
+  const pcs = z - a + 1;
+  if (pcs <= BIG_PCS) return true;
+  const v = await modal({ title: 'Check the range',
+    body: `<p>This will add <b>${n.toLocaleString('en-US')} booklets (${pcs.toLocaleString('en-US')} pcs)</b> of ${esc(FORM_SHORT[form] || form)}, ${a} – ${z}.</p><p>Is the range correct?</p>`,
+    buttons: [{ label: 'Go Back', value: null }, { label: 'Yes, Save', cls: 'primary', value: 'yes' }] });
+  return v === 'yes';
+}
 const today = () => new Date().toISOString().slice(0, 10);
 const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
 const int = (s) => { const v = parseInt(String(s ?? '').replace(/[^\d]/g, ''), 10); return isNaN(v) ? null : v; };
@@ -339,7 +349,7 @@ function wireRegister(ctx, f, lguId, offs) {
     const a = int($('#e-from').value), z = int($('#e-to').value), p = int(per?.value) || PER_BOOKLET;
     if (mv === 'issue') return;
     if (!a || !z || z < a) { help.innerHTML = helpText; return; }
-    if (z - a + 1 > MAX_PCS) { help.innerHTML = `<b class="warn-t">That range has ${z - a + 1} pieces. Check the serial numbers.</b>`; return; }
+    if (z - a + 1 > MAX_PCS) { help.innerHTML = `<b class="warn-t">That range has ${(z - a + 1).toLocaleString('en-US')} pieces, more than one entry takes (${MAX_PCS.toLocaleString('en-US')}). Check the serial numbers.</b>`; return; }
     if (mv === 'starting') { help.innerHTML = startPreview(startPlan()); return; }
     const parts = splitRange(a, z, p), n = parts.length;
     const mid = bookletOf(a, p)[0] !== a ? ` <b class="warn-t">${a} is in the middle of booklet ${rangeText(...bookletOf(a, p))}; check the serial numbers.</b>` : '';
@@ -413,7 +423,7 @@ const bad = (m) => { toast(m, 'bad'); return false; };
 async function doReceive(refs, f, lguId) {
   const form = $('#e-form').value, a = int($('#e-from').value), z = int($('#e-to').value), p = int($('#e-per').value) || PER_BOOKLET, date = $('#e-date').value;
   if (!a || !z || z < a) return bad('Enter the serial range (From must not be after To).');
-  if (z - a + 1 > MAX_PCS) return bad(`That range has ${z - a + 1} pieces. Check the serial numbers (one entry takes up to ${MAX_PCS}).`);
+  if (z - a + 1 > MAX_PCS) return bad(`That range has ${z - a + 1} pieces. Check the serial numbers (one entry takes up to ${MAX_PCS.toLocaleString('en-US')}).`);
   if (!date) return bad('Enter the date received.');
   const parts = splitRange(a, z, p);
   const plan = [];
@@ -427,6 +437,7 @@ async function doReceive(refs, f, lguId) {
   const rby = $('#e-rby').value;
   const officer = rby !== 'custodian' ? f.officers.find((o) => o.id === rby) : null;
   if (rby !== 'custodian' && !officer) return bad('Choose who received the booklets.');
+  if (!(await confirmBig(form, a, z, plan.length))) return false;
   const info = { receivedDate: date, receivedFrom: $('#e-src').value, reference: $('#e-ref').value.trim(), receivedDirect: !!officer };
   for (const s of plan) {
     if (s.match) {
@@ -475,7 +486,7 @@ async function doIssue(refs, f, lguId) {
 function startPlan() {
   const a = int($('#e-from').value), z = int($('#e-to').value), p = int($('#e-per').value) || PER_BOOKLET;
   if (!a || !z || z < a) return { error: 'Enter the serial range (From must not be after To).' };
-  if (z - a + 1 > MAX_PCS) return { error: `That range has ${z - a + 1} pieces. Check the serial numbers (one entry takes up to ${MAX_PCS}).` };
+  if (z - a + 1 > MAX_PCS) return { error: `That range has ${z - a + 1} pieces. Check the serial numbers (one entry takes up to ${MAX_PCS.toLocaleString('en-US')}).` };
   const [bs, be] = bookletOf(a, p);
   if (bs !== a) return { error: `${a} is in the middle of booklet ${rangeText(bs, be)}. Enter the complete series from ${bs}; if the booklet is already in use, choose the accountable officer under Held By and tick Partly used.` };
   const held = $('#e-held').value;
@@ -510,6 +521,7 @@ async function doStarting(refs, f, lguId) {
   if (plan.held !== 'custodian' && !officer) return bad('Choose who holds the booklets.');
   if (officer && idate && idate > date) return bad('The date issued is after the as-of date.');
   for (const s of plan.parts) { const hit = overlaps(f, form, s.x, s.y); if (hit.length) return bad(`${FORM_SHORT[form]} ${rangeText(s.x, s.y)} overlaps ${rangeText(hit[0].from, hit[0].to)} already in the register.`); }
+  if (!(await confirmBig(form, plan.parts[0].x, plan.parts[plan.parts.length - 1].y, plan.parts.length))) return false;
   for (const s of plan.parts) {
     const base = { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, receivedDate: '', receivedFrom: '', reference: '', source: 'starting' };
     await store.save('cer_booklets', newId('cerb'), officer
