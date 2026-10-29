@@ -92,7 +92,8 @@ function gf74a(c) {
   const items = (cnt.items || []).map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return { ...it, allowed: a, dis: r2((+it.presented || 0) - a) }; });
   const allowed = r2(items.reduce((n, x) => n + x.allowed, 0)), disallowed = r2(items.reduce((n, x) => n + x.dis, 0));
   const forms = unusedFormsOf(c.f, o.id, exam, A.to);
-  const formsQty = forms.reduce((n, x) => n + x.qty, 0);
+  const withMv = forms.filter((x) => x.face && x.qty), without = forms.filter((x) => !x.face);
+  const formsQty = without.reduce((n, x) => n + x.qty, 0), formsAmt = withMv.reduce((n, x) => n + x.amount, 0);
   const total = A.T('balance');
   const head = `<div class="rp-top"><span>General Form No. 74(A)<br>Revised December 22, 1983</span><span class="r">Republic of the Philippines<br><b>COMMISSION ON AUDIT</b></span></div>
     <h2 class="rp-title">REPORT OF CASH EXAMINATION</h2>
@@ -120,15 +121,15 @@ function gf74a(c) {
     <h3>C. INVENTORY OF UNUSED ACCOUNTABLE FORMS</h3>
     <div class="rp-two">
       <table class="rp-t"><thead><tr><th colspan="5">With Money Value</th></tr><tr><th>Name of Form</th><th class="r">Qty.</th><th>Inclusive Serial No.</th><th class="r">Denomination</th><th class="r">Amount</th></tr></thead>
-        <tbody><tr><td colspan="5" class="c">None</td></tr><tr class="tot"><td colspan="4">Total</td><td class="r">₱ 0.00</td></tr></tbody></table>
+        <tbody>${withMv.length ? withMv.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${x.ns ? 'No serial' : esc(x.text)}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td></tr>`).join('') : '<tr><td colspan="5" class="c">None</td></tr>'}<tr class="tot"><td colspan="4">Total</td><td class="r">₱ ${money(formsAmt)}</td></tr></tbody></table>
       <table class="rp-t"><thead><tr><th colspan="3">Without Money Value</th></tr><tr><th>Name of Form</th><th class="r">Qty.</th><th>Inclusive Serial No.</th></tr></thead>
-        <tbody>${forms.length ? forms.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${esc(x.text) || 'None'}</td></tr>`).join('') : '<tr><td colspan="3" class="c">None</td></tr>'}
+        <tbody>${without.length ? without.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${esc(x.text) || 'None'}</td></tr>`).join('') : '<tr><td colspan="3" class="c">None</td></tr>'}
         <tr class="tot"><td>Total</td><td class="r">${formsQty}</td><td></td></tr></tbody></table>
     </div>
     <h3>CERTIFICATION</h3>
     <p class="rp-just">I HEREBY CERTIFY on my official oath: (1) That upon demand by the Auditor / Examiner I produced all my cash, treasury warrants, checks, money orders, cash items, paid vouchers, unused accountable forms, etc., for which I am officially accountable; (2) That the inventory of such cash items and unused accountable forms in my possession and produced to the Auditor / Examiner at the time of cash count today, ${esc(fmtDate(audit.countDate))}, is correctly stated above and is broken down as follows:</p>
     <table class="rp-kv rp-cert"><tr><td>1) Cash and / or cash items</td><td class="r">₱ ${money(r2(cash + allowed + disallowed))}</td></tr>
-      <tr><td>2) Unused accountable forms with money value</td><td class="r">₱ 0.00</td></tr>
+      <tr><td>2) Unused accountable forms with money value</td><td class="r">₱ ${money(formsAmt)}</td></tr>
       <tr><td>3) Unused accountable forms without money value</td><td class="r">${formsQty} pcs.</td></tr></table>
     <p class="rp-just">of which (₱ ${money(disallowed)}) was disallowed by the Auditor / Examiner and (3) That said cash, treasury warrants, checks, money orders, cash items, paid vouchers, unused accountable forms, etc., were returned to me intact after the cash count.</p>
     <div class="rp-signs">${sign('Accountable Officer', { name: o.name, pos: o.designation || '' })}${sign('Signed in the presence of', prep)}</div>`;
@@ -144,7 +145,7 @@ function gf74a(c) {
   const rows = [
     ...bills.map((x) => ({ Part: 'B. Cash on hand', Item: `₱${x.v}`, Qty: x.n, Amount: x.v * x.n })), { Part: 'B. Cash on hand', Item: 'Coins', Qty: '', Amount: +cnt.coins || 0 },
     ...items.map((x) => ({ Part: 'B. Cash items', Item: x.particulars, Qty: '', Amount: +x.presented || 0, Allowed: x.allowed, Disallowed: x.dis })),
-    ...forms.map((x) => ({ Part: 'C. Unused forms', Item: x.name, Qty: x.qty, Amount: '', Allowed: x.text })),
+    ...forms.map((x) => ({ Part: x.face ? 'C. Unused forms with money value' : 'C. Unused forms without money value', Item: x.name, Qty: x.qty, Amount: x.face ? x.amount : '', Allowed: x.text })),
     ...A.st.map((x) => ({ Part: 'D. Statement of accountability', Item: x.label, Qty: '', Amount: x.balance, Allowed: x.inv ?? '', Disallowed: x.sh ?? '' }))];
   return { html: `<div class="rp-page">${front}${back}</div>`, rows };
 }
@@ -165,7 +166,7 @@ function soaTable(A) {
 function saaf(c) {
   const { f, audit, exam, o, A, agency, station, prep, sign } = c;
   const rows = saafRows(f, o.id, exam, A.from, A.to);
-  const cells = (rs) => rs.length ? [rs.map(([a]) => a).join('<br>'), rs.map(([, z]) => z).join('<br>'), countRanges(rs)] : ['', '', ''];
+  const cells = (rs, ns) => rs.length ? (ns ? ['', '', countRanges(rs)] : [rs.map(([a]) => a).join('<br>'), rs.map(([, z]) => z).join('<br>'), countRanges(rs)]) : ['', '', ''];
   const groups = [];
   rows.forEach((r) => { const g = groups.find((x) => x.form === r.form) || (groups.push({ form: r.form, name: r.name, rows: [] }), groups[groups.length - 1]); g.rows.push(r); });
   const tot = (k) => rows.reduce((n, r) => n + countRanges(r[k] || []), 0);
@@ -174,14 +175,15 @@ function saaf(c) {
     <table class="rp-kv"><tr><td>Name of Accountable Officer</td><td><b>${esc(o.name)}</b></td></tr><tr><td>Designation</td><td>${esc(o.designation || '')}</td></tr><tr><td>Office / Station</td><td>${esc(agency)}, ${esc(station)}</td></tr></table>
     <table class="rp-t rp-saaf"><thead><tr><th rowspan="2">Name of Form</th><th colspan="3">Balance Beg.</th><th colspan="3">Received</th><th colspan="3">Issued</th><th colspan="3">Balance End</th><th colspan="3">Balance per Count</th><th rowspan="2" class="r">Difference</th></tr>
       <tr>${'<th>From</th><th>To</th><th class="r">Qty.</th>'.repeat(5)}</tr></thead>
-      <tbody>${groups.length ? groups.map((g) => g.rows.map((r, i) => { const pc = r.count === null ? ['', '', ''] : cells(r.count); return `<tr><td>${i ? '' : `<b>${esc(g.name)}</b>`}</td>${[r.beg, r.rec, r.issued, r.end].map((rs) => cells(rs).map((v, j) => `<td class="${j === 2 ? 'r' : ''}">${v}</td>`).join('')).join('')}${pc.map((v, j) => `<td class="${j === 2 ? 'r' : ''}">${v}</td>`).join('')}<td class="r">${r.diff === null ? '' : r.diff}</td></tr>`; }).join('')).join('')
+      <tbody>${groups.length ? groups.map((g) => g.rows.map((r, i) => { const pc = r.count === null ? ['', '', ''] : cells(r.count, r.ns); return `<tr><td>${i ? '' : `<b>${esc(g.name)}</b>`}${r.ns ? '<br><small>no serial</small>' : ''}${r.face ? `<br><small>₱${money(r.face)} each</small>` : ''}</td>${[r.beg, r.rec, r.issued, r.end].map((rs) => cells(rs, r.ns).map((v, j) => `<td class="${j === 2 ? 'r' : ''}">${v}</td>`).join('')).join('')}${pc.map((v, j) => `<td class="${j === 2 ? 'r' : ''}">${v}</td>`).join('')}<td class="r">${r.diff === null ? '' : r.diff}</td></tr>`; }).join('')).join('')
         : '<tr><td colspan="17" class="c">No accountable forms for this officer within the scope of audit.</td></tr>'}
       <tr class="tot"><td>Total</td><td></td><td></td><td class="r">${tot('beg')}</td><td></td><td></td><td class="r">${tot('rec')}</td><td></td><td></td><td class="r">${tot('issued')}</td><td></td><td></td><td class="r">${tot('end')}</td><td></td><td></td><td class="r">${rows.reduce((n, r) => n + (r.count ? countRanges(r.count) : 0), 0)}</td><td class="r">${rows.reduce((n, r) => n + (r.diff || 0), 0)}</td></tr></tbody></table>
     <p class="rp-just">I HEREBY CERTIFY that the above Statement of Accountability for Accountable Forms without Money Value is true and correct.</p>
     <div class="rp-signs">${sign('Prepared by', prep)}${sign('Accountable Officer', { name: o.name, pos: o.designation || '' })}</div></div>`;
   const xr = (rs) => rs.map(([a, z]) => (a === z ? `${a}` : `${a}-${z}`)).join(', ');
-  return { html, rows: rows.map((r) => ({ Form: r.name, Booklet: `${r.booklet[0]}-${r.booklet[1]}`, 'Balance Beg.': xr(r.beg), 'Beg. Qty': countRanges(r.beg), Received: xr(r.rec), 'Rec. Qty': countRanges(r.rec),
-    Issued: xr(r.issued), 'Iss. Qty': countRanges(r.issued), 'Balance End': xr(r.end), 'End Qty': countRanges(r.end), 'Per Count': r.count ? xr(r.count) : '', 'Count Qty': r.count ? countRanges(r.count) : '', Difference: r.diff ?? '' })) };
+  const xs = (r, rs) => (r.ns ? (rs.length ? `${countRanges(rs)} pcs` : '') : xr(rs));
+  return { html, rows: rows.map((r) => ({ Form: r.name, Booklet: r.ns ? 'No serial' : `${r.booklet[0]}-${r.booklet[1]}`, 'Balance Beg.': xs(r, r.beg), 'Beg. Qty': countRanges(r.beg), Received: xs(r, r.rec), 'Rec. Qty': countRanges(r.rec),
+    Issued: xs(r, r.issued), 'Iss. Qty': countRanges(r.issued), 'Balance End': xs(r, r.end), 'End Qty': countRanges(r.end), 'Per Count': r.count ? xs(r, r.count) : '', 'Count Qty': r.count ? countRanges(r.count) : '', Difference: r.diff ?? '' })) };
 }
 
 /* ---------- Annex C / D · Statement of Accountability by month ---------- */

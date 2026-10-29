@@ -119,8 +119,9 @@ export async function countView(ctx) {
         <a class="btn" style="margin-left:auto" href="#/cer/forms/officer?lgu=${esc(registerOf(refs, o.lguId))}&o=${esc(o.id)}&exam=${esc(exam.id)}&tab=check">Open Physical Check</a></div>
       ${forms.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col" class="r">Unused Qty</th><th scope="col">Unused Serial No.</th><th scope="col">Physical Check</th></tr></thead>
         <tbody>${forms.map((x) => `<tr><td><b>${esc(x.name)}</b>${x.lastCheck && x.lastCheck.no ? `<small>Last check ${esc(x.lastCheck.no)}${x.lastCheck.date ? ' · ' + esc(fmtDate(x.lastCheck.date)) : ''}${x.lastCheck.payee ? ' · ' + esc(x.lastCheck.payee) : ''}${x.lastCheck.amount ? ' · ₱' + money(x.lastCheck.amount) : ''}</small>` : ''}</td>
-          <td class="mono">${x.from} – ${x.to}</td><td class="r">${x.qty}</td><td class="mono">${esc(x.text) || '<span class="dim">None</span>'}</td><td><span class="pill ${x.status[0]}">${x.status[1]}</span></td></tr>`).join('')}
-          <tr class="cc-tot"><td colspan="2">Total unused forms without money value</td><td class="r">${forms.reduce((n, x) => n + x.qty, 0)}</td><td colspan="2"></td></tr></tbody></table></div>
+          <td class="mono">${x.ns ? 'No serial' : `${x.from} – ${x.to}`}</td><td class="r">${x.qty}${x.face && x.qty ? `<small>₱${money(x.amount)}</small>` : ''}</td><td class="mono">${esc(x.text) || '<span class="dim">None</span>'}</td><td><span class="pill ${x.status[0]}">${x.status[1]}</span></td></tr>`).join('')}
+          ${forms.some((x) => x.face) ? `<tr class="cc-tot"><td colspan="2">Total unused forms with money value</td><td class="r">₱${money(forms.reduce((n, x) => n + (x.face ? x.amount : 0), 0))}</td><td colspan="2" class="dim">${forms.filter((x) => x.face).reduce((n, x) => n + x.qty, 0)} pcs at face value</td></tr>` : ''}
+          <tr class="cc-tot"><td colspan="2">Total unused forms without money value</td><td class="r">${forms.reduce((n, x) => n + (x.face ? 0 : x.qty), 0)}</td><td colspan="2"></td></tr></tbody></table></div>
         <p class="af-note cc-pad">One row per booklet in the officer's hands on the count date. Checkbooks: unused checks follow the last check issued, entered in the Physical Check.</p>`
       : '<div class="empty"><b>No accountable forms in this officer\'s hands on the count date.</b>Booklets and checkbooks come from Accountable Forms.</div>'}
     </section>
@@ -224,7 +225,7 @@ function wireCount(c) {
       ...BILLS.map((v) => ({ Part: 'Cash on hand', Item: `₱${v}`, Pieces: parseInt(d.bills[v], 10) || 0, Amount: v * (parseInt(d.bills[v], 10) || 0) })),
       { Part: 'Cash on hand', Item: 'Coins', Pieces: '', Amount: num(d.coins) || 0 }, { Part: 'Cash on hand', Item: 'Total', Pieces: '', Amount: k.cash },
       ...d.items.map((it) => ({ Part: 'Cash item', Item: it.particulars, Pieces: '', Amount: +it.presented || 0, Allowed: num(it.allowed ?? it.presented) ?? 0, 'Applies to': books.find((b) => b.key === it.appliesTo)?.label || it.appliesTo })),
-      ...c.forms.map((x) => ({ Part: 'Unused forms', Item: `${x.name} ${x.from}–${x.to}`, Pieces: x.qty, Amount: '', Allowed: '', 'Applies to': x.text })),
+      ...c.forms.map((x) => ({ Part: 'Unused forms', Item: `${x.name} ${x.from}–${x.to}`, Pieces: x.qty, Amount: x.face ? x.amount : '', Allowed: '', 'Applies to': x.text })),
       ...books.map((b) => ({ Part: 'Split', Item: b.label, Pieces: '', Amount: b.books, Allowed: k.inv[b.key], 'Applies to': `Shortage/(Overage) ${money(k.sh[b.key])}` }))]);
   };
   $('#cc-print').onclick = () => {
@@ -238,7 +239,7 @@ function wireCount(c) {
       <table><thead><tr><th>Cash items</th><th>Presented</th><th>Allowed</th><th>Disallowed</th></tr></thead><tbody>
       ${d.items.length ? d.items.map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return `<tr><td>${esc(it.particulars)}</td><td>${money(it.presented)}</td><td>${money(a)}</td><td>${money(r2((+it.presented || 0) - a))}</td></tr>`; }).join('') : '<tr><td colspan="4">None</td></tr>'}</tbody></table>
       <table><thead><tr><th>Unused accountable forms</th><th>Qty</th><th>Inclusive serial No.</th></tr></thead><tbody>
-      ${c.forms.length ? c.forms.map((x) => `<tr><td>${esc(x.name)}</td><td>${x.qty}</td><td>${esc(x.text)}</td></tr>`).join('') : '<tr><td colspan="3">None</td></tr>'}</tbody></table>
+      ${c.forms.length ? c.forms.map((x) => `<tr><td>${esc(x.name)}${x.face ? ` (₱${money(x.amount)})` : ''}</td><td>${x.qty}</td><td>${esc(x.text)}</td></tr>`).join('') : '<tr><td colspan="3">None</td></tr>'}</tbody></table>
       <table><thead><tr><th></th>${books.map((b) => `<th>${esc(b.label)}</th>`).join('')}</tr></thead><tbody>
       <tr><td>Balance per books</td>${books.map((b) => `<td>${money(b.books)}</td>`).join('')}</tr>
       <tr><td>Inventory of cash and allowed cash items</td>${books.map((b) => `<td>${money(k.inv[b.key])}</td>`).join('')}</tr>

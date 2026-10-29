@@ -406,3 +406,9 @@ table.cer-afbeg tr.click:hover td{background:#f5f8fe}
 .af-offrow.one{grid-template-columns:1fr}
 .af-offrow.one .af-part > .cer-chip{margin-top:0}
 .af-nw{white-space:nowrap}
+/* Forms with money value; cash tickets without serials (29 Oct 2026) */
+.af-amt{display:inline-block; margin-left:4px; font-family:"Segoe UI",system-ui,sans-serif; font-size:12px; font-weight:600; color:var(--ok)}
+.af-reg td.r small, .af-reg td small.af-amt{display:block}
+.cer-mvrow td{background:#f7faf5}
+.af-nschip{justify-self:start}
+table.af-raaf2 td small{display:block; font-size:11px; color:var(--ok); font-weight:600}
