@@ -42,7 +42,8 @@ const bad = (m) => { toast(m, 'bad'); return false; };
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
 
 // Kept between screen refreshes (each save redraws the screen).
-const OPEN = { rep: true, col: true, dep: true };
+// One section open at a time (opening one folds the others); Collections is open to start.
+const OPEN = { rep: false, col: true, dep: false };
 const LASTC = { key: '', form: '', bookletId: '', serial: '', date: '', auto: true, status: 'issued', focus: '' };
 
 /* ---------- figures ---------- */
@@ -260,7 +261,7 @@ export async function collectionsView(ctx) {
         <label class="sr-only" for="cd-show">Show</label><select class="input af-sm" id="cd-show"><option value="sel" ${show === 'sel' ? 'selected' : ''}>${esc(cur.pending ? 'Not yet reported · ' + cur.fund : repName(cur.rec, K))}</option><option value="all" ${show === 'all' ? 'selected' : ''}>All of this officer</option></select>
         <span class="cd-total">Total <b>₱ ${money(listOrs.reduce((n, x) => n + orAmount(x), 0))}</b></span>
         <button class="btn" type="button" id="cd-xls">Export to Excel</button></div>
-      ${listOrs.length ? `<div class="af-tbl"><table class="af-reg cd-ors"><thead><tr><th scope="col">No.</th><th scope="col">Form</th><th scope="col">OR No.</th><th scope="col">Date</th><th scope="col">Particulars</th><th scope="col">Fund</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Status</th><th scope="col">${K}</th><th scope="col" class="r"></th></tr></thead>
+      ${listOrs.length ? `<div class="af-tbl cd-orscroll"><table class="af-reg cd-ors"><thead><tr><th scope="col">No.</th><th scope="col">Form</th><th scope="col">OR No.</th><th scope="col">Date</th><th scope="col">Particulars</th><th scope="col">Fund</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Status</th><th scope="col">${K}</th><th scope="col" class="r"></th></tr></thead>
         <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => p.p).join(' ')).toLowerCase())}"><td>${listOrs.length - i}</td><td>${esc(FORM_SHORT[x.form] || x.form)}</td><td class="mono">${x.serial}</td><td>${esc(fmtDate(x.date))}</td>
           <td>${x.status === 'cancelled' ? '<span class="dim">—</span>' : esc((x.items || []).map((p) => p.p).join('; '))}</td><td>${esc(x.fund || '')}</td><td class="r">${money(orAmount(x))}</td>
           <td><span class="pill ${x.status === 'cancelled' ? 'p-stock' : 'p-done'}">${x.status === 'cancelled' ? 'Cancelled' : 'Issued'}</span></td><td>${repPill(x)}</td>
@@ -321,7 +322,10 @@ export async function collectionsView(ctx) {
 /* ---------- wiring ---------- */
 function wireAll(c) {
   const { refs, f, audit, K, o, cur, curFund, selId, isLO, enc } = c;
-  $$('details.cd-acc').forEach((d) => { d.ontoggle = () => { OPEN[d.dataset.acc] = d.open; }; });
+  $$('details.cd-acc').forEach((d) => { d.ontoggle = () => {
+    OPEN[d.dataset.acc] = d.open;
+    if (d.open) $$('details.cd-acc').forEach((x) => { if (x !== d && x.open) { x.open = false; OPEN[x.dataset.acc] = false; } });
+  }; });
   $('#cd-rep').onchange = (e) => go({ r: e.target.value });
   $('#cd-funds').onclick = () => fundsModal(refs, f, audit.lguId);
   $$('tr[data-pick]').forEach((tr) => { const pick = () => go({ r: tr.dataset.pick }); tr.onclick = pick; tr.onkeydown = (e) => { if (e.key === 'Enter') pick(); }; });

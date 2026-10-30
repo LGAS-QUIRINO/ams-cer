@@ -346,7 +346,7 @@ function officerHtml(refs, cer, st, edit) {
   const chk = (list, k) => (list || []).includes(k) ? 'checked' : '';
   const h = heads(refs, cer, st), opens = openState(location.hash, h);
   // When nothing open still needs input, the next section that does opens by itself.
-  if (![...opens].some((k) => h[k] && h[k][1] === 'need')) { const nx = ACC_ORDER.find((k) => k !== 'exam' && h[k] && h[k][1] === 'need'); if (nx) opens.add(nx); }
+  if (!opens.size) { const nx = ACC_ORDER.find((k) => k !== 'exam' && h[k] && h[k][1] === 'need'); if (nx) opens.add(nx); }
   const begRows = o && lastExam && FM && FX ? FM.beginningFormsOf(FX, o.id, lastExam) : [];
   const moneyForms = begRows.reduce((n, x) => n + FM.countRanges(x.unused) * FM.faceOf(x.b), 0);
   const during = o && FM && FX ? FM.receivedDuringOf(FX, o.id, lastExam, st.countDate) : [];
@@ -415,14 +415,18 @@ function wireSetup(refs, cer, q, rerender) {
   const refreshHeads = () => { const h = heads(refs, cer, st);
     Object.entries(h).forEach(([k, [sum, stat]]) => { const a = $(`[data-sum="${k}"]`), b = $(`[data-st="${k}"]`); if (a) a.innerHTML = sum; if (b) b.innerHTML = stHtml(stat); }); };
   const touch = () => { DRAFT.dirty = true; refreshHeads(); };
-  const wireAcc = () => $$('details.acc').forEach((d) => { d.ontoggle = () => { const set = OPEN[location.hash] || (OPEN[location.hash] = new Set()); if (d.open) set.add(d.dataset.acc); else set.delete(d.dataset.acc); }; });
+  // One section open at a time: opening one folds the others.
+  const wireAcc = () => $$('details.acc').forEach((d) => { d.ontoggle = () => {
+    const set = OPEN[location.hash] || (OPEN[location.hash] = new Set());
+    if (d.open) { set.clear(); set.add(d.dataset.acc); $$('details.acc').forEach((x) => { if (x !== d && x.open) x.open = false; }); } else set.delete(d.dataset.acc);
+  }; });
   const wireBeg = () => {
     const o = cer.officers.find((x) => x.id === st.officerId);
     const prev = prevExam(cer, st.officerId, st.countDate, st.examId), lastExam = prev ? prev.countDate : st.lastExamDate;
     const add = $('#cer-addbeg');
     if (add && o) add.onclick = async () => {
       // Saved straight to the booklet records; the unsaved Audit Setup stays as typed.
-      const set = OPEN[location.hash] || (OPEN[location.hash] = new Set()); set.add('forms');
+      const set = OPEN[location.hash] || (OPEN[location.hash] = new Set()); set.clear(); set.add('forms');
       await FM.addBeginningForms(refs, FX, FM.registerOf(refs, st.lguId), o, lastExam);
     };
     $$('tr[data-begbk]').forEach((tr) => { const go = () => FM.openBooklet(refs, FX, tr.dataset.begbk); tr.onclick = go; tr.onkeydown = (e) => { if (e.key === 'Enter') go(); }; });
@@ -466,7 +470,7 @@ function wireSetup(refs, cer, q, rerender) {
     });
     const last = $('#cer-last');
     if (last && !last.disabled) { last.oninput = () => { st.lastExamDate = last.value; touch(); $('#cer-scope').innerHTML = scopeText(st.lastExamDate, st.countDate); };
-      last.onchange = () => { const set = OPEN[location.hash]; if (set) set.add('period'); drawOfficer(); }; }
+      last.onchange = () => { const set = OPEN[location.hash]; if (set) { set.clear(); set.add('period'); } drawOfficer(); }; }
   }
   function pickOfficer(id) {
     st.officerId = id;

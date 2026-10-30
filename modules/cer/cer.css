@@ -420,3 +420,6 @@ table.af-raaf2 td small{display:block; font-size:11px; color:var(--ok); font-wei
 .cd-cxl .cd-prow .cd-p, .cd-cxl .cd-prow .cd-a, .cd-cxl .cd-prow .cd-x, .cd-cxl .cd-phead span:nth-child(n+2){visibility:hidden}
 .cd-cxl .cd-prow + .cd-prow{display:none}
 @media (max-width:760px){ .cd-entryt .cd-phead, .cd-entryt .cd-prow{grid-template-columns:1fr 110px 44px} .cd-entryt .cd-phead span:first-child, .cd-entryt .cd-prow > span:first-child{display:none} .cd-entryt .cd-dcell{grid-column:1 / -1} }
+/* Encoded ORs: about 5 rows, scroll for the rest, header kept in view (30 Oct 2026) */
+.cd-orscroll{max-height:350px; overflow-y:auto}
+.cd-orscroll thead th{position:sticky; top:0; z-index:1; background:#f6f8fc}
