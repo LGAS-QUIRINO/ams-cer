@@ -554,3 +554,4 @@ table.cd-sumtbl{min-width:0; width:100%}
 /* OR Total under the Amount column */
 .cd-one .cd-pfoot .cd-ortotal{grid-column:6 / 7; text-align:right; padding-right:10px; white-space:nowrap; font-size:12px; color:var(--muted)}
 .cd-one .cd-pfoot .cd-ortotal b{font-size:14px; color:var(--navy); margin-left:6px}
+.cd-orscroll{max-height:268px !important}
