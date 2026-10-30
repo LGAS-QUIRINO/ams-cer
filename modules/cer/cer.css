@@ -505,3 +505,20 @@ table.af-raaf2 td small{display:block; font-size:11px; color:var(--ok); font-wei
 .cd-head .cd-tabt b{font-size:13.5px; white-space:nowrap}
 @media (max-width:900px){ .cd-headrow{grid-template-columns:1fr} .cd-head .cd-tabt{flex-direction:column; gap:0} }
 .cd-headrow .field{flex-direction:row !important} .cd-headrow .field label{flex:none; text-align:left} .cd-headrow .field .input{flex:1; min-width:0}
+/* SCD table: one straight line per entry (30 Oct 2026) */
+table.cd-sumtbl{min-width:0; width:100%}
+.cd-sumtbl th, .cd-sumtbl td{white-space:nowrap !important; vertical-align:middle}
+.cd-sumtbl td.cd-rng{max-width:340px; overflow:hidden; text-overflow:ellipsis}
+.cd-sumtbl .cd-rngt{font-size:12px}
+.cd-sumtbl td.cd-rng small{display:inline !important; font-size:11px}
+.cd-sumtbl td:last-child, .cd-sumtbl td:nth-last-child(2){width:1%}
+.cd-sumtbl .cd-chk{display:inline-block; margin:0 0 0 4px}
+.cd-sumtbl .cd-chk ul{position:absolute; z-index:5; background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px 12px 8px 26px; box-shadow:0 6px 18px rgba(16,32,72,.12); white-space:normal; width:300px; max-width:none}
+.cd-sumtbl td{position:relative}
+.cd-sumtbl th, .cd-sumtbl td{padding:7px 8px; font-size:12px}
+.cd-sumtbl td.cd-rng{max-width:250px}
+.cd-sumtbl td:last-child, .cd-sumtbl th:last-child{min-width:0 !important; max-width:none !important; width:1% !important}
+.cd-sumtbl td.cd-rng{max-width:200px}
+.cd-sumtbl td.cd-rng{max-width:none; overflow:visible} .cd-sumtbl .cd-rngt{display:inline-block; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom}
+.cd-sumtbl td.cd-rng small{white-space:nowrap !important; font-family:inherit}
+.cd-sumtbl .cd-rngt{max-width:140px}
