@@ -193,6 +193,7 @@ export async function render(ctx) {
     const { body, crumb, wire } = parts[0] === 'forms' ? await (await import('./forms.js')).formsView(ctx)
       : parts[0] === 'collections' ? await (await import('./collections.js')).collectionsView(ctx) : parts[0] === 'advances' ? await (await import('./advances.js')).advancesView(ctx) : parts[0] === 'banks' ? await (await import('./banks.js')).banksView(ctx) : parts[0] === 'count' ? await (await import('./count.js')).countView(ctx) : parts[0] === 'verify' ? await (await import('./verify.js')).verifyView(ctx) : await (await import('./reports.js')).reportsView(ctx);
     app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: parts[0], crumb, me, roleText, body });
+    tidyTop();
     $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
     if (wire) wire();
     return;
@@ -204,9 +205,29 @@ export async function render(ctx) {
   if (open) { FM = await import('./forms.js'); FX = await FM.loadForms(); }
   const body = open ? setupHtml(refs, cer, q) : listHtml(refs, cer);
   app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: view, crumb: open ? 'Audit Setup' : 'Audit Setup · Cash Examinations', me, roleText, body });
+  tidyTop();
   $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
   if (open) wireSetup(refs, cer, q, ctx.rerender);
   else if (parts[0] && parts[0] !== 'setup') history.replaceState(null, '', '#/cer/setup');
+}
+
+// The screen's big title repeats the top bar: it is taken out, and its explanation moves to a small ⓘ beside the
+// top bar label (hover, or click/tap to open). Titles that say something new (e.g. an officer's name) stay.
+function tidyTop() {
+  const crumb = $('.mtop .crumb'), hello = $('.mcontent > .hello');
+  if (!crumb || !hello) return;
+  const h1 = $('h1', hello);
+  if (!h1 || !crumb.textContent.toLowerCase().includes(h1.textContent.trim().toLowerCase())) return;
+  const p = h1.nextElementSibling && h1.nextElementSibling.tagName === 'P' ? h1.nextElementSibling : null;
+  const tip = p ? p.innerHTML : '';
+  h1.remove(); if (p) p.remove();
+  if (!hello.textContent.trim() && !$('a, button, select, input', hello)) hello.remove();
+  else hello.classList.add('hello-slim');
+  if (!tip) return;
+  crumb.insertAdjacentHTML('beforeend', `<button class="crumb-i" type="button" aria-label="About this screen" aria-expanded="false" title="${esc(p.textContent.trim())}">ⓘ</button><div class="crumb-tip" hidden>${tip}</div>`);
+  const btn = $('.crumb-i', crumb), box = $('.crumb-tip', crumb);
+  btn.onclick = (e) => { e.stopPropagation(); box.hidden = !box.hidden; btn.setAttribute('aria-expanded', String(!box.hidden)); };
+  document.addEventListener('click', (e) => { if (!box.hidden && !box.contains(e.target)) { box.hidden = true; btn.setAttribute('aria-expanded', 'false'); } });
 }
 
 /* ================= Cash Examinations list ================= */
