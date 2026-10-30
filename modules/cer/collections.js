@@ -15,7 +15,7 @@
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { FORMS, fixBrgyForm, hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
-import { loadForms, FORM_SHORT, exportXlsx, rangesText, mergeRanges, bookletUnused, countRanges } from './forms.js';
+import { loadForms, FORM_SHORT, exportXlsx, rangesText, mergeRanges, bookletUnused, countRanges, loadXlsx, excelDate } from './forms.js';
 
 // Each auditee's funds: General Fund to start; the others are added with the Funds button. A fund already used stays listed.
 const DEFAULT_FUNDS = ['General Fund'];
@@ -45,6 +45,7 @@ const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[
 // One section open at a time (opening one folds the others); Collections is open to start.
 const OPEN = { rep: true, col: false, dep: false };   // which tab is shown (one at a time); 1 SCD when the screen is opened
 export const resetTabs = () => { Object.keys(OPEN).forEach((k) => { OPEN[k] = k === 'rep'; }); };
+const NO_PART = 'No particular';   // an imported OR whose particular was left blank
 const LASTC = { key: '', form: '', bookletId: '', serial: '', date: '', auto: true, status: 'issued', focus: '' };
 
 /* ---------- figures ---------- */
@@ -246,9 +247,9 @@ export async function collectionsView(ctx) {
   // Next OR: the first number after the last one used (skipped numbers below it are not offered).
   const nextSerial = (b) => { if (!b) return ''; const rs = bookletUnused(b); const last = rs[rs.length - 1]; return last && last[1] === b.to ? last[0] : ''; };
   const serial = LASTC.serial !== '' && LASTC.serial !== undefined ? LASTC.serial : nextSerial(bk);
-  const parts = [...new Set(f.ors.filter((x) => x.lguId === audit.lguId).flatMap((x) => (x.items || []).map((i) => i.p)).filter(Boolean))].sort();
+  const parts = [...new Set(f.ors.filter((x) => x.lguId === audit.lguId).flatMap((x) => (x.items || []).map((i) => i.p)).filter((p) => p && p !== NO_PART))].sort();
   const show = q.get('show') === 'sel' ? 'sel' : q.get('show') === 'all' || cur.pending ? 'all' : 'sel';
-  const listOrs = (show === 'all' ? f.ors.filter((x) => x.officerId === o.id) : cur.ors).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.serial - a.serial);
+  const listOrs = (show === 'all' ? f.ors.filter((x) => x.officerId === o.id) : cur.ors).slice().sort((a, b) => String(a.form).localeCompare(String(b.form)) || a.serial - b.serial);
   const repPill = (x) => { if (!x.reportId) return `<span class="pill p-part">Not yet in an ${K}</span>`; const r = f.reports.find((y) => y.id === x.reportId); return `<span class="pill p-stock">${esc(r ? (r.no ? `${K} ${r.no}` : repName(r, K)) : '—')}</span>`; };
   // The first line also carries the Date of Collection (one date per OR); the other lines leave that column empty.
   const dateCell = `<div class="cd-dcell"><label class="sr-only" for="cd-ordate">Date of Collection</label><input class="input" type="date" id="cd-ordate" value="${esc(LASTC.date)}"></div>`;
@@ -279,13 +280,15 @@ export async function collectionsView(ctx) {
         <label class="sr-only" for="cd-search">Search ORs</label><input class="input af-sm" id="cd-search" placeholder="Search OR No. or particular…">
         <label class="sr-only" for="cd-show">Show</label><select class="input af-sm" id="cd-show"><option value="sel" ${show === 'sel' ? 'selected' : ''}>${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</option><option value="all" ${show === 'all' ? 'selected' : ''}>All of this officer</option></select>
         <span class="cd-total">Total <b>₱ ${money(listOrs.reduce((n, x) => n + orAmount(x), 0))}</b></span>
-        <button class="btn" type="button" id="cd-xls">Export to Excel</button></div>
+        ${enc && forms.length ? '<a href="#" class="cd-link cd-tpl" id="cd-ortpl">Template</a><button class="btn" type="button" id="cd-orimp">Import from Excel</button>' : ''}<button class="btn" type="button" id="cd-xls">Export to Excel</button></div>
       ${listOrs.length ? `<div class="af-tbl cd-orscroll"><table class="af-reg cd-ors"><thead><tr><th scope="col">No.</th><th scope="col">OR No.</th><th scope="col">Date</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Status</th><th scope="col">${K}</th><th scope="col" class="r"></th></tr></thead>
-        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => p.p).join(' ')).toLowerCase())}"><td>${listOrs.length - i}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.serial}</td><td>${esc(fmtDate(x.date))}</td>
-          <td>${x.status === 'cancelled' ? '<span class="dim">—</span>' : esc((x.items || []).map((p) => p.p).join('; '))}</td><td class="r">${money(orAmount(x))}</td>
+        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => p.p).join(' ')).toLowerCase())}"><td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.serial}</td><td>${esc(fmtDate(x.date))}</td>
+          ${(() => { const one = enc && x.status !== 'cancelled' && (x.items || []).length <= 1, p = (x.items || [])[0]?.p || '';
+            return `<td ${one ? `class="cd-ed" data-ip="${esc(x.id)}" tabindex="0" title="Click to change the particular"` : ''}>${x.status === 'cancelled' ? '<span class="dim">—</span>' : (x.items || []).length > 1 ? esc(x.items.map((q) => q.p).join('; ')) : p === NO_PART || !p ? `<span class="cd-nopart">${NO_PART}</span>` : esc(p)}</td>
+            <td class="r ${one ? 'cd-ed' : ''}" ${one ? `data-ia="${esc(x.id)}" tabindex="0" title="Click to change the amount"` : ''}>${money(orAmount(x))}</td>`; })()}
           <td><span class="pill ${x.status === 'cancelled' ? 'p-stock' : 'p-done'}">${x.status === 'cancelled' ? 'Cancelled' : 'Issued'}</span></td><td>${repPill(x)}</td>
           <td class="r">${enc ? `<button class="btn sm" type="button" data-edit="${esc(x.id)}" aria-label="Edit OR ${x.serial}">Edit</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
-        <p class="af-note">Latest ORs first. Delete is only for an encoding mistake; a cancelled OR is encoded as Cancelled, not deleted.</p>`
+        <p class="af-note">In OR No. order. Click a particular or an amount to change it (an OR with several particulars: Edit). Delete is only for an encoding mistake; a cancelled OR is encoded as Cancelled, not deleted.</p>`
       : `<div class="empty"><b>No ORs encoded here yet.</b>${enc ? 'Encode them above, one OR at a time.' : ''}</div>`}`;
 
   /* ----- 3 · Deposits (SCR: remittances to the MTO) ----- */
@@ -411,6 +414,38 @@ function wireAll(c) {
     };
   }
   $$('[data-edit]').forEach((b) => { b.onclick = () => editOrModal(c, f.ors.find((x) => x.id === b.dataset.edit)); });
+  // Encoded ORs: kept where it was after a change in the list, else scrolled to the latest OR No.
+  const box = $('.cd-orscroll');
+  if (box) { if (LASTC.scroll !== undefined && LASTC.scroll !== null) { box.scrollTop = LASTC.scroll; LASTC.scroll = null; } else box.scrollTop = box.scrollHeight; }
+  // Click a particular or an amount to change it in place (ORs with one particular).
+  const cellEdit = (td, kind) => {
+    if (td.querySelector('input')) return;
+    const x = f.ors.find((y) => y.id === (td.dataset.ip || td.dataset.ia)); if (!x) return;
+    const it = (x.items || [])[0] || { p: NO_PART, amt: x.amount || 0 };
+    const was = td.innerHTML;
+    td.innerHTML = kind === 'p' ? `<input class="input af-sm cd-cell" list="cd-parts" value="${esc(it.p === NO_PART ? '' : it.p)}" placeholder="${NO_PART}" aria-label="Particular of OR ${x.serial}">`
+      : `<input class="input af-sm r cd-cell" inputmode="decimal" value="${esc(money(it.amt))}" aria-label="Amount of OR ${x.serial}">`;
+    const inp = $('input', td); inp.focus(); inp.select();
+    let done = false;
+    const finish = async (save) => {
+      if (done) return; done = true;
+      if (!save) { td.innerHTML = was; return; }
+      const v = inp.value.trim().replace(/\s+/g, ' ');
+      const next = kind === 'p' ? { p: v || NO_PART, amt: it.amt } : { p: it.p, amt: num(v) };
+      if (kind === 'a' && (next.amt === null || next.amt <= 0)) { toast('Enter an amount more than zero.', 'bad'); td.innerHTML = was; return; }
+      if (next.p === it.p && next.amt === it.amt) { td.innerHTML = was; return; }
+      LASTC.scroll = box ? box.scrollTop : null;
+      await store.save('cer_ors', x.id, { ...strip(x), items: [next], amount: r2(next.amt) }, by(refs));
+      toast(`OR ${x.serial} ${kind === 'p' ? 'particular' : 'amount'} saved.`, 'ok');
+    };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); };
+    inp.onblur = () => finish(true);
+  };
+  $$('td[data-ip]').forEach((td) => { td.onclick = () => cellEdit(td, 'p'); td.onkeydown = (e) => { if (e.key === 'Enter') cellEdit(td, 'p'); }; });
+  $$('td[data-ia]').forEach((td) => { td.onclick = () => cellEdit(td, 'a'); td.onkeydown = (e) => { if (e.key === 'Enter') cellEdit(td, 'a'); }; });
+  const imp = $('#cd-orimp'); if (imp) imp.onclick = () => importOrs(c);
+  const tpl = $('#cd-ortpl'); if (tpl) tpl.onclick = async (e) => { e.preventDefault(); try { const XLSX = await loadXlsx(); const ws = XLSX.utils.aoa_to_sheet([['Date', 'OR No.', 'Particular', 'Amount']]); ws['!cols'] = [{ wch: 12 }, { wch: 12 }, { wch: 40 }, { wch: 12 }];
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'ORs'); XLSX.writeFile(wb, 'OR Import Template.xlsx'); } catch (err) { toast(err.message || String(err), 'bad'); } };
 
   /* Collections entry */
   const enter = $('#cd-enter');
@@ -598,6 +633,81 @@ async function createReport(c, K, out) {
   if (prec) await store.save('cer_reports', p.id, { ...strip(prec), pending: true, begTyped: first ? 0 : prec.begTyped, deposits: deps.filter((d) => d.date > out.date), remittances: rems.filter((m) => m.date > out.date) }, by(refs), { quiet: true });
   for (const x of p.ors.filter((x) => inRanges(out.ranges, x.serial))) await store.save('cer_ors', x.id, { ...strip(x), reportId: id, fund: out.fund }, by(refs), { quiet: true });
   return id;
+}
+
+/* ---------- Import ORs from Excel: Date, OR No., Particular, Amount ---------- */
+// Particular "Cancelled" → a cancelled OR; blank → "No particular"; anything else (e.g. Various) as written.
+// Several rows with the same OR No. become one OR with several particulars.
+async function importOrs(c) {
+  const { refs, f, o, lgu, curFund } = c;
+  const form = $('#cd-form') ? $('#cd-form').value : '';
+  if (!form) return bad('Choose the Form Type first.');
+  let plan = null, XLSX = null;
+  const read = async (file) => {
+    XLSX = await loadXlsx();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const cols = [['date', /date/i], ['or', /or\s*no|^\s*o\.?\s*r\.?\s*(#|number)?\s*$|receipt/i], ['part', /particular|nature|description/i], ['amt', /amount|amt/i]];
+    let sheet = null;
+    for (const n of wb.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
+      for (let r = 0; r < Math.min(rows.length, 15) && !sheet; r++) {
+        const map = {}; rows[r].forEach((cell, i) => { const t = String(cell || ''); cols.forEach(([k, re]) => { if (map[k] === undefined && re.test(t)) map[k] = i; }); });
+        if (map.or !== undefined && map.date !== undefined) sheet = { rows, header: r, map };
+      }
+      if (sheet) break;
+    }
+    if (!sheet) return { error: 'No sheet with the columns Date and OR No. was found. Use the template.' };
+    const M = sheet.map, get = (row, k) => (M[k] === undefined ? '' : row[M[k]]);
+    const kind = kindOfForm(lgu, form), ch = c.fig.chains[`${kind}|${curFund}`];
+    const byNo = new Map(), problems = [];
+    sheet.rows.slice(sheet.header + 1).forEach((row, i) => {
+      const line = sheet.header + i + 2;
+      const noTxt = String(get(row, 'or')).trim(), dTxt = get(row, 'date'), pTxt = String(get(row, 'part') ?? '').trim().replace(/\s+/g, ' '), aTxt = get(row, 'amt');
+      if (!noTxt && !String(dTxt).trim() && !pTxt && String(aTxt).trim() === '') return;
+      const n = parseInt(noTxt.replace(/[^\d]/g, ''), 10);
+      if (!n) { problems.push({ line, why: `OR No. "${noTxt}" is not a number.` }); return; }
+      const date = excelDate(XLSX, dTxt);
+      if (!date) { problems.push({ line, no: n, why: date === null ? `Date "${dTxt}" is not a date.` : 'Date is missing.' }); return; }
+      const cancelled = /^cancel+ed$/i.test(pTxt);
+      const amt = typeof aTxt === 'number' ? aTxt : num(aTxt);
+      if (!cancelled && (amt === null || amt <= 0)) { problems.push({ line, no: n, why: String(aTxt).trim() ? `Amount "${aTxt}" is not a number.` : 'Amount is missing.' }); return; }
+      const g = byNo.get(n) || { n, date, items: [], cancelled: false, lines: [] };
+      g.lines.push(line); if (cancelled) g.cancelled = true; else g.items.push({ p: pTxt || NO_PART, amt: r2(amt) });
+      byNo.set(n, g);
+    });
+    const taken = new Set(f.ors.filter((x) => x.form === form).map((x) => x.serial));
+    const add = [];
+    [...byNo.values()].sort((a, b) => a.n - b.n).forEach((g) => {
+      if (taken.has(g.n)) { problems.push({ line: g.lines[0], no: g.n, why: 'Already encoded.' }); return; }
+      const b = f.booklets.find((y) => y.form === form && y.officerId === o.id && !y.noSerial && y.from <= g.n && g.n <= y.to);
+      add.push({ ...g, bookletId: b ? b.id : '', reportId: placeIn(ch, g.date, g.n) });
+    });
+    return { add, problems, form };
+  };
+  const show = (bg, p) => {
+    const box = $('#oi-res', bg);
+    if (p.error) { box.innerHTML = `<div class="msg bad">${esc(p.error)}</div>`; return; }
+    const iss = p.add.filter((x) => !x.cancelled), cx = p.add.length - iss.length;
+    const np = iss.filter((x) => x.items.some((i) => i.p === NO_PART)).length, nb = p.add.filter((x) => !x.bookletId).length;
+    const ns = p.add.filter((x) => !x.reportId).length;
+    box.innerHTML = `<div class="oi-sum"><b>${p.add.length} OR${p.add.length === 1 ? '' : 's'} to add</b> · ₱ ${money(r2(iss.reduce((t, x) => t + x.items.reduce((u, i) => u + i.amt, 0), 0)))}
+        ${cx ? `<span>${cx} read as Cancelled</span>` : ''}${np ? `<span class="warn-t">${np} with No particular</span>` : ''}${nb ? `<span class="warn-t">${nb} not in a booklet of this officer</span>` : ''}${ns ? `<span>${ns} not yet in an SCD</span>` : ''}</div>
+      ${p.add.length ? `<div class="af-tbl oi-prev"><table class="af-reg"><thead><tr><th>OR No.</th><th>Date</th><th>Particular</th><th class="r">Amount</th></tr></thead><tbody>${p.add.slice(0, 200).map((x) => `<tr><td class="mono">${x.n}</td><td>${esc(fmtDate(x.date))}</td><td>${x.cancelled ? '<span class="pill p-stock">Cancelled</span>' : esc(x.items.map((i) => i.p).join('; '))}</td><td class="r">${x.cancelled ? '0.00' : money(r2(x.items.reduce((t, i) => t + i.amt, 0)))}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${p.problems.length ? `<div class="af-probs"><b>Rows not imported (${p.problems.length})</b>${p.problems.slice(0, 60).map((q) => `<div>Row ${q.line}${q.no ? ` · OR ${q.no}` : ''} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
+  };
+  const v = await modal({ title: `Import ORs · ${FORM_SHORT[form] || form}`, wide: true,
+    body: `<p class="af-note">Excel columns: <b>Date, OR No., Particular, Amount</b>. Particular "Cancelled" → a cancelled OR; blank → "${NO_PART}"; anything else (e.g. Various) is kept as written. Rows with the same OR No. become one OR. ORs go to the SCD whose OR Range has their number; the fund is ${esc(curFund)}.</p>
+      <div class="field"><label for="oi-file">Excel file</label><input class="input" type="file" id="oi-file" accept=".xlsx,.xls,.csv"></div>
+      <div id="oi-res"></div>`,
+    onOpen: (bg) => { $('#oi-file', bg).onchange = async (e) => { const fl = e.target.files[0]; if (!fl) return; $('#oi-res', bg).innerHTML = '<p class="af-note">Reading…</p>';
+      try { plan = await read(fl); show(bg, plan); } catch (err) { plan = null; $('#oi-res', bg).innerHTML = `<div class="msg bad">${esc(err.message || String(err))}</div>`; } }; },
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; } if (!plan.add.length) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
+  if (v !== 'go') return;
+  for (const x of plan.add) {
+    await store.save('cer_ors', newId('ceror'), { lguId: c.audit.lguId, officerId: o.id, form: plan.form, bookletId: x.bookletId, serial: x.n, date: x.date, status: x.cancelled ? 'cancelled' : 'issued',
+      items: x.cancelled ? [] : x.items, amount: x.cancelled ? 0 : r2(x.items.reduce((t, i) => t + i.amt, 0)), fund: curFund, reportId: x.reportId }, by(refs), { quiet: true });
+  }
+  emitChange('local'); toast(`${plan.add.length} OR${plan.add.length === 1 ? '' : 's'} imported.`, 'ok');
 }
 
 /* ---------- + SCD / SCR / RCD and Edit: one window ---------- */

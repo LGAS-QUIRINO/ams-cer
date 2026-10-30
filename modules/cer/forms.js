@@ -1178,7 +1178,7 @@ export async function exportXlsx(file, sheet, rows) {
 // Two imports, each with its own template: Receive (booklets received) and Issue (issuances: new ones from stock, and past
 // issuances from the issuance list or logbook). Only booklets not yet in the register are added; the rest are skipped.
 let xlsxReady = null;
-function loadXlsx() {
+export function loadXlsx() {
   if (window.XLSX) return Promise.resolve(window.XLSX);
   if (!xlsxReady) xlsxReady = new Promise((res, rej) => {
     const sc = document.createElement('script'); sc.src = 'lib/xlsx.full.min.js';
@@ -1224,7 +1224,7 @@ function findColumns(rows, cols) {
   }
   return null;
 }
-function excelDate(XLSX, v) {
+export function excelDate(XLSX, v) {
   if (v === '' || v === null || v === undefined) return '';
   if (typeof v === 'number') { const d = XLSX.SSF.parse_date_code(v); return d ? `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}` : ''; }
   const t = String(v).trim();
