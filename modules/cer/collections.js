@@ -43,7 +43,8 @@ const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[
 
 // Kept between screen refreshes (each save redraws the screen).
 // One section open at a time (opening one folds the others); Collections is open to start.
-const OPEN = { rep: false, col: true, dep: false };   // which tab is shown (one at a time)
+const OPEN = { rep: true, col: false, dep: false };   // which tab is shown (one at a time); 1 SCD when the screen is opened
+export const resetTabs = () => { Object.keys(OPEN).forEach((k) => { OPEN[k] = k === 'rep'; }); };
 const LASTC = { key: '', form: '', bookletId: '', serial: '', date: '', auto: true, status: 'issued', focus: '' };
 
 /* ---------- figures ---------- */

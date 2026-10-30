@@ -123,6 +123,7 @@ function navItems() {
 
 // Unsaved Audit Setup changes survive a screen refresh (e.g. a sync) until saved or left.
 let DRAFT = null;   // { key, st, dirty }
+let LASTPART = '';   // the CER screen last shown
 let FM = null, FX = null;   // Accountable Forms module and its data (for the Beginning Inventory of Accountable Forms)
 // Folding sections (accordion). Which ones are open is kept per screen, so a refresh after a save keeps them as they were.
 const OPEN = {};
@@ -190,6 +191,9 @@ export async function render(ctx) {
   if (parts[0] === 'forms' || parts[0] === 'collections' || parts[0] === 'advances' || parts[0] === 'banks' || parts[0] === 'count' || parts[0] === 'verify' || parts[0] === 'reports') {
     // Accountable Forms (Forms Register, Accountable Officer view, RAAF Reconciliation) and Collections & Deposits.
     DRAFT = null;
+    // Opening Collections & Deposits from another screen starts on tab 1 (SCD); redraws on the same screen keep the tab.
+    if (parts[0] === 'collections' && LASTPART !== 'collections') (await import('./collections.js')).resetTabs();
+    LASTPART = parts[0];
     const { body, crumb, wire } = parts[0] === 'forms' ? await (await import('./forms.js')).formsView(ctx)
       : parts[0] === 'collections' ? await (await import('./collections.js')).collectionsView(ctx) : parts[0] === 'advances' ? await (await import('./advances.js')).advancesView(ctx) : parts[0] === 'banks' ? await (await import('./banks.js')).banksView(ctx) : parts[0] === 'count' ? await (await import('./count.js')).countView(ctx) : parts[0] === 'verify' ? await (await import('./verify.js')).verifyView(ctx) : await (await import('./reports.js')).reportsView(ctx);
     app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: parts[0], crumb, me, roleText, body });
@@ -198,6 +202,7 @@ export async function render(ctx) {
     if (wire) wire();
     return;
   }
+  LASTPART = 'setup';
   const cer = await loadCer();
   const view = 'setup';
   const open = q.get('a') || (q.get('new') ? 'new' : '');
