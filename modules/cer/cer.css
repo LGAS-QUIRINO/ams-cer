@@ -486,3 +486,8 @@ table.af-raaf2 td small{display:block; font-size:11px; color:var(--ok); font-wei
 .cd-sumtbl td:nth-child(4){white-space:normal}
 .cd-sumtbl td:last-child{min-width:0; width:150px}
 .cd-chk{display:block; margin-top:3px}
+/* SCD window */
+.rp-grid{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px}
+.rp-grid .rp-wide{grid-column:span 2}
+.rp-grid [hidden]{display:none}
+@media (max-width:760px){ .rp-grid{grid-template-columns:1fr} .rp-grid .rp-wide{grid-column:auto} }
