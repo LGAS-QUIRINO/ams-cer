@@ -522,3 +522,32 @@ table.cd-sumtbl{min-width:0; width:100%}
 .cd-sumtbl td.cd-rng{max-width:none; overflow:visible} .cd-sumtbl .cd-rngt{display:inline-block; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom}
 .cd-sumtbl td.cd-rng small{white-space:nowrap !important; font-family:inherit}
 .cd-sumtbl .cd-rngt{max-width:140px}
+/* Collections tab: settings line + OR on one line (30 Oct 2026) */
+.cd-set{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
+.cd-set .field{display:flex; flex-direction:row !important; align-items:center; gap:8px; margin:0}
+.cd-set .field label{white-space:nowrap; font-size:11.5px; margin:0}
+.cd-set .input{font-size:13px !important; padding:6px 9px !important; min-width:240px}
+.cd-goes{margin-left:auto; font-size:12.5px; color:var(--muted)}
+.cd-goes b{color:var(--navy)}
+.cd-entry.cd-one{padding:10px 12px; border:1px solid #bcd0f5; background:#f5f8ff; border-radius:10px; gap:6px}
+.cd-one .cd-parts{border:0; background:none; overflow:visible}
+.cd-one .cd-phead, .cd-one .cd-prow, .cd-one .cd-pfoot{display:grid; grid-template-columns:150px 58px 170px 150px minmax(0,1fr) 140px 32px 78px; gap:8px; align-items:center; padding:0; border:0; background:none}
+.cd-one .cd-phead{font-size:10.5px; margin-bottom:4px}
+.cd-one .cd-prow + .cd-prow{margin-top:6px}
+.cd-one .input{font-size:13px !important; padding:6px 9px !important; height:34px}
+.cd-one .cd-orno{font-size:15px !important; font-weight:700}
+.cd-one .cd-auto{font-size:12px; display:flex; gap:4px; align-items:center; margin:0}
+.cd-one .seg.cd-st{display:flex; height:34px}
+.cd-one .seg.cd-st a{flex:1; display:grid; place-items:center; padding:0 8px; font-size:12px}
+.cd-one .cd-x{height:30px; padding:0}
+.cd-one #cd-enter{height:34px; padding:0 10px}
+.cd-one .cd-pfoot{margin-top:4px; font-size:12.5px}
+.cd-one .cd-pfoot .cd-ortotal{grid-column:6 / 9; text-align:right}
+.cd-one .cd-pfoot .cd-ortotal[hidden]{display:none}
+.cd-one .cd-link{font-size:12.5px; padding:0}
+.cd-one.cd-entry .cd-cxl .cd-phead span:nth-child(n+2){visibility:visible}
+.cd-one .cd-cxl .cd-phead span:nth-child(n+5){visibility:hidden}
+@media (max-width:1100px){ .cd-one .cd-phead{display:none} .cd-one .cd-prow, .cd-one .cd-pfoot{grid-template-columns:1fr 1fr} .cd-one .cd-prow > span:empty, .cd-one .cd-pfoot > span:empty{display:none} .cd-one .cd-pfoot .cd-ortotal{grid-column:auto} }
+.cd-ors th, .cd-ors td{padding:6px 10px; font-size:12.5px; white-space:nowrap; vertical-align:middle}
+.cd-ors td:nth-child(4){white-space:normal}
+.cd-ors .btn.sm{padding:3px 9px}
