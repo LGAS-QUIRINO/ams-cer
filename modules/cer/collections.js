@@ -227,7 +227,9 @@ export async function collectionsView(ctx) {
   const show = q.get('show') === 'all' ? 'all' : 'sel';
   const listOrs = (show === 'all' ? f.ors.filter((x) => x.officerId === o.id) : cur.ors).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.serial - a.serial);
   const repPill = (x) => { if (!x.reportId) return '<span class="pill p-part">Not yet reported</span>'; const r = f.reports.find((y) => y.id === x.reportId); return `<span class="pill p-stock">${esc(r ? (r.no ? `${K} ${r.no}` : repName(r, K)) : '—')}</span>`; };
-  const partRow = (p = {}, i = 0) => `<div class="cd-prow"><label class="sr-only" for="cd-p${i}">Particular ${i + 1}</label><input class="input cd-p" id="cd-p${i}" list="cd-parts" value="${esc(p.p || '')}" placeholder="Type to search or add a new particular…" autocomplete="off">
+  // The first line also carries the Date of Collection (one date per OR); the other lines leave that column empty.
+  const dateCell = `<div class="cd-dcell"><label class="sr-only" for="cd-ordate">Date of Collection</label><input class="input" type="date" id="cd-ordate" value="${esc(LASTC.date)}"></div>`;
+  const partRow = (p = {}, i = 0) => `<div class="cd-prow">${i ? '<span></span>' : dateCell}<label class="sr-only" for="cd-p${i}">Particular ${i + 1}</label><input class="input cd-p" id="cd-p${i}" list="cd-parts" value="${esc(p.p || '')}" placeholder="Type to search or add a new particular…" autocomplete="off">
       <label class="sr-only" for="cd-a${i}">Amount ${i + 1}</label><input class="input r cd-a" id="cd-a${i}" inputmode="decimal" value="${p.amt ? esc(money(p.amt)) : ''}" placeholder="0.00" autocomplete="off">
       <button class="btn sm cd-x" type="button" aria-label="Remove particular">✕</button></div>`;
   const colBody = !forms.length ? `<div class="cd-info">This officer has no accountable forms ticked in Audit Setup${isLO ? '. A Liquidating Officer who issues ORs himself needs Collecting and the forms ticked there' : ''}. ${isLO ? 'Remittances and deposits are entered in parts 1 and 3.' : ''}</div>`
@@ -244,12 +246,9 @@ export async function collectionsView(ctx) {
           <div class="field"><span class="cd-lbl">Status</span><div class="seg" role="group" aria-label="Status"><a href="#" data-st="issued" class="${LASTC.status !== 'cancelled' ? 'on' : ''}" aria-pressed="${LASTC.status !== 'cancelled'}">Issued</a><a href="#" data-st="cancelled" class="${LASTC.status === 'cancelled' ? 'on' : ''}" aria-pressed="${LASTC.status === 'cancelled'}">Cancelled</a></div></div>
         </div>
         <div id="cd-skip"></div>
-        <div class="cd-line">
-          <div class="field cd-datecol"><label for="cd-ordate">Date of Collection</label><input class="input" type="date" id="cd-ordate" value="${esc(LASTC.date)}"></div>
-          <div class="cd-parts" id="cd-partsbox" ${LASTC.status === 'cancelled' ? 'hidden' : ''}>
-            <div class="cd-phead"><span>Particulars</span><span class="r">Amount (₱)</span><span></span></div>
-            <div id="cd-prows">${partRow({}, 0)}</div>
-          </div>
+        <div class="cd-parts cd-entryt ${LASTC.status === 'cancelled' ? 'cd-cxl' : ''}" id="cd-partsbox">
+          <div class="cd-phead"><span>Date of Collection</span><span>Particulars</span><span class="r">Amount (₱)</span><span></span></div>
+          <div id="cd-prows">${partRow({}, 0)}</div>
         </div>
         <datalist id="cd-parts">${parts.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
         <div class="cd-actions"><button class="cd-link" type="button" id="cd-addp" ${LASTC.status === 'cancelled' ? 'hidden' : ''}>+ Add Particular</button>
@@ -427,7 +426,7 @@ function wireAll(c) {
   const total = () => { const t = $$('.cd-a', rows).reduce((n, i) => n + (num(i.value) || 0), 0); $('#cd-ortot').textContent = '₱ ' + money(LASTC.status === 'cancelled' ? 0 : t); };
   const wireParts = () => {
     $$('.cd-prow', rows).forEach((r) => {
-      $('.cd-x', r).onclick = () => { if ($$('.cd-prow', rows).length > 1) r.remove(); else { $('.cd-p', r).value = ''; $('.cd-a', r).value = ''; } total(); };
+      $('.cd-x', r).onclick = () => { if ($$('.cd-prow', rows).length > 1 && !r.contains(dateIn)) r.remove(); else { $('.cd-p', r).value = ''; $('.cd-a', r).value = ''; } total(); };
       $('.cd-a', r).oninput = total;
       $('.cd-a', r).onblur = (e) => { const v = num(e.target.value); if (v !== null) e.target.value = money(v); };
       $('.cd-a', r).onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); if (e.altKey) addPart(); else enter.click(); };
@@ -435,7 +434,7 @@ function wireAll(c) {
     });
   };
   function addPart() { addPartRow(); }
-  const addPartRow = () => { const n = $$('.cd-prow', rows).length; const d = document.createElement('div'); d.innerHTML = partRowHtml(n); rows.appendChild(d.firstElementChild); wireParts(); $$('.cd-p', rows).pop().focus(); };
+  const addPartRow = () => { const n = $$('.cd-prow', rows).length; const d = document.createElement('div'); d.innerHTML = partRowHtml(n); d.firstElementChild.prepend(document.createElement('span')); rows.appendChild(d.firstElementChild); wireParts(); $$('.cd-p', rows).pop().focus(); };
   $('#cd-addp').onclick = addPart;
   // Date → Enter → first particular (a cancelled OR is saved right away).
   dateIn.onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); LASTC.date = dateIn.value; if (LASTC.status === 'cancelled') enter.click(); else $('.cd-p', rows).focus(); };
@@ -443,7 +442,7 @@ function wireAll(c) {
   $$('[data-st]').forEach((a) => { a.onclick = (e) => {
     e.preventDefault(); LASTC.status = a.dataset.st;
     $$('[data-st]').forEach((x) => { x.classList.toggle('on', x === a); x.setAttribute('aria-pressed', String(x === a)); });
-    $('#cd-partsbox').hidden = LASTC.status === 'cancelled'; $('#cd-addp').hidden = LASTC.status === 'cancelled'; total();
+    $('#cd-partsbox').classList.toggle('cd-cxl', LASTC.status === 'cancelled'); $('#cd-addp').hidden = LASTC.status === 'cancelled'; total();
   }; });
   // Skipped-OR notice: numbers between the last one encoded in the booklet and this OR No.
   const skipBox = $('#cd-skip');
