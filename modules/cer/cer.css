@@ -491,3 +491,17 @@ table.af-raaf2 td small{display:block; font-size:11px; color:var(--ok); font-wei
 .rp-grid .rp-wide{grid-column:span 2}
 .rp-grid [hidden]{display:none}
 @media (max-width:760px){ .rp-grid{grid-template-columns:1fr} .rp-grid .rp-wide{grid-column:auto} }
+/* Collections & Deposits: choices and tabs in one compact panel (30 Oct 2026) */
+.cd-head{padding:10px 14px; display:flex; flex-direction:column; gap:10px}
+.cd-headrow{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:16px}
+.cd-headrow .field{display:flex; align-items:center; gap:8px; margin:0}
+.cd-headrow .field label{white-space:nowrap; font-size:11.5px; margin:0}
+.cd-headrow .input{font-size:13px; padding:6px 9px}
+.cd-head .cd-tabs{border-top:1px solid var(--line); padding-top:10px; margin:0; gap:6px}
+.cd-head .cd-tab{padding:6px 12px; border-radius:9px; gap:8px}
+.cd-head .cd-tab.on{box-shadow:inset 0 -2px 0 var(--blue)}
+.cd-head .cd-tab .cd-num{width:20px; height:20px; font-size:11px; flex:none}
+.cd-head .cd-tabt{flex-direction:row; align-items:baseline; gap:8px}
+.cd-head .cd-tabt b{font-size:13.5px; white-space:nowrap}
+@media (max-width:900px){ .cd-headrow{grid-template-columns:1fr} .cd-head .cd-tabt{flex-direction:column; gap:0} }
+.cd-headrow .field{flex-direction:row !important} .cd-headrow .field label{flex:none; text-align:left} .cd-headrow .field .input{flex:1; min-width:0}

@@ -150,10 +150,10 @@ export async function collectionsView(ctx) {
   const lgu = refs.lgu[audit.lguId];
   const exams = f.exams.filter((e) => e.auditId === audit.id).map((e) => ({ ...e, o: f.officers.find((x) => x.id === e.officerId) })).filter((e) => e.o);
   const exam = exams.find((e) => e.id === q.get('e')) || exams[0] || null;
-  const topBar = (extra = '') => `<div class="panel cd-bar">
+  const topBar = (extra = '', open = false) => `<div class="panel ${open ? 'cd-head' : 'cd-bar'}">${open ? '<div class="cd-headrow">' : ''}
       <div class="field"><label for="cd-audit">Cash Examination</label><select class="input" id="cd-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>
       <div class="field"><label for="cd-exam">Accountable Officer</label><select class="input" id="cd-exam">${exams.length ? exams.map((e) => `<option value="${esc(e.id)}" ${exam && e.id === exam.id ? 'selected' : ''}>${esc(e.o.name)}${e.o.designation ? ' · ' + esc(e.o.designation) : ''}</option>`).join('') : '<option value="">No officer in this examination</option>'}</select></div>
-      ${extra}</div>`;
+      ${extra}${open ? '</div>' : '</div>'}`;
   const wireTop = () => {
     $('#cd-audit').onchange = (e) => go({ a: e.target.value, e: '', r: '', show: '' });
     $('#cd-exam').onchange = (e) => go({ e: e.target.value, r: '', show: '' });
@@ -192,7 +192,7 @@ export async function collectionsView(ctx) {
     realIds.length ? `<optgroup label="Submitted ${usedKinds.join(' / ')}">${realIds.map((id) => fig.byId[id]).sort((a, b) => String(b.rec.date).localeCompare(String(a.rec.date))).map((g) => `<option value="${esc(g.id)}" ${g.id === selId ? 'selected' : ''}>${esc(label(g))}</option>`).join('')}</optgroup>` : ''].join('');
   // Parts 1–3 as tabs in one row: the chosen part shows below; the summary under them always stays.
   const tabs = (list) => { const on = list.find(([k]) => OPEN[k])?.[0] || 'col';
-    return `<div class="cd-tabs" role="tablist">${list.map(([k, t, sub], i) => `<button type="button" role="tab" class="cd-tab ${k === on ? 'on' : ''}" data-tab="${k}" aria-selected="${k === on}" aria-controls="cd-pane-${k}"><span class="cd-num">${i + 1}</span><span class="cd-tabt"><b>${t}</b><span class="cd-sub">${sub}</span></span></button>`).join('')}</div>
+    return `<div class="cd-tabs" role="tablist">${list.map(([k, t, sub], i) => `<button type="button" role="tab" class="cd-tab ${k === on ? 'on' : ''}" data-tab="${k}" aria-selected="${k === on}" aria-controls="cd-pane-${k}"><span class="cd-num">${i + 1}</span><span class="cd-tabt"><b>${t}</b><span class="cd-sub">${sub}</span></span></button>`).join('')}</div></div>
       ${list.map(([k, , , inner]) => `<section class="panel cd-pane" id="cd-pane-${k}" role="tabpanel" ${k === on ? '' : 'hidden'}><div class="cd-body">${inner}</div></section>`).join('')}`; };
   const acc = (key, title, sub, inner) => `<details class="panel cd-acc" data-acc="${key}" ${OPEN[key] ? 'open' : ''}><summary><span class="cd-num">${{ rep: 1, col: 2, dep: 3 }[key]}</span><b>${title}</b><span class="cd-sub">${sub}</span></summary><div class="cd-body">${inner}</div></details>`;
 
@@ -324,7 +324,8 @@ export async function collectionsView(ctx) {
 
   const nPend = pends.reduce((n, ch) => n + ch.pend.nOrs, 0);
   const subRep = cur.pending ? (nPend ? `${nPend} OR${nPend > 1 ? 's' : ''} not yet in an ${K}` : `${realFigs.length} ${K}${realFigs.length === 1 ? '' : 's'} · none selected`) : (cur.rec.no ? `${esc(repName(cur.rec, K))} · ${esc(fmtDate(cur.rec.date))}` : esc(repName(cur.rec, K)));
-  const body = hello() + topBar() + `
+  // One compact panel on top: the two choices on one line, the three tabs under them.
+  const body = hello() + topBar('', true) + `
     ${tabs([['rep', K, subRep, repBody], ['col', 'Collections', `${cur.nOrs} OR${cur.nOrs === 1 ? '' : 's'} · ₱ ${money(cur.orsTotal)}`, colBody],
       ['dep', isRem ? 'Remittances to MTO' : 'Deposits', `₱ ${money(cur.dep)} ${isRem ? 'remitted' : 'deposited'} · ₱ ${money(cur.end)} ${isRem ? 'unremitted' : 'undeposited'}`, depBody]])}
     <section class="panel" id="cd-sumpanel" aria-labelledby="cd-sumh" ${OPEN.rep ? 'hidden' : ''}><div class="panel-head"><h2 id="cd-sumh">Collections Summary by ${KS}</h2><span class="pill">${allFigs.length}</span><button class="btn" type="button" id="cd-sumxls" style="margin-left:auto">Export to Excel</button></div>${sumBody}</section>`;
