@@ -25,7 +25,7 @@ const LAST = { caDate: '', lqDate: '', focus: '' };
 const BEG_KEYS = ['ca', 'sdo', 'pcf'];
 
 function figures(advs, liqs) {
-  const list = advs.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.checkNo).localeCompare(String(b.checkNo), undefined, { numeric: true }))
+  const list = advs.slice().sort((a, b) => (b.rest ? 1 : 0) - (a.rest ? 1 : 0) || String(a.date).localeCompare(String(b.date)) || String(a.checkNo).localeCompare(String(b.checkNo), undefined, { numeric: true }))
     .map((a) => {
       const mine = liqs.filter((l) => l.advanceId === a.id);
       const liq = r2(mine.reduce((n, l) => n + (+l.amount || 0), 0));
@@ -57,12 +57,17 @@ export async function advancesView(ctx) {
   if (!exam) return { crumb, body: hello + top + '<div class="panel"><div class="empty"><b>No accountable officer in this cash examination.</b>Add the officers in Audit Setup.</div></div>', wire: wireTop };
 
   const o = exam.o;
-  const advs = advs0.map(flat).filter((a) => a.officerId === o.id);
+  const allAdv = advs0.map(flat).filter((a) => a.officerId === o.id);
+  const advs = allAdv.filter((a) => !a.beg);   // cash advances during the period
+  // Beginning checks: entered in Audit Setup, unliquidated as of the last cash exam (amount = what was still unliquidated).
+  const begChecks = allAdv.filter((a) => a.beg && a.begExamId === exam.id);
   const liqs = liqs0.map(flat).filter((l) => l.officerId === o.id);
   const beg = r2(BEG_KEYS.reduce((n, k) => n + (+(exam.balances?.[k]?.amount) || 0), 0));
-  // The beginning balance is listed first, like a cash advance, so liquidations of older advances can be put against it.
-  const begRow = beg ? [{ id: '__beg', beg: true, date: exam.lastExamDate || '', checkNo: 'Beginning', particulars: 'Balance as of the last cash exam', amount: beg }] : [];
-  const list = figures([...begRow, ...advs], liqs);
+  const begSum = r2(begChecks.reduce((n, a) => n + (+a.amount || 0), 0));
+  const rest = r2(beg - begSum);
+  // What is not itemized is listed as one row, like a cash advance, so liquidations of older advances can be put against it.
+  const begRow = rest > 0.004 || liqs.some((l) => l.advanceId === '__beg') ? [{ id: '__beg', beg: true, rest: true, date: exam.lastExamDate || '', checkNo: 'Beginning', particulars: 'Beginning balance (not itemized)', amount: Math.max(rest, 0) }] : [];
+  const list = figures([...begRow, ...begChecks, ...advs], liqs);
   const totCa = r2(advs.reduce((n, a) => n + (+a.amount || 0), 0));
   const totLq = r2(liqs.reduce((n, l) => n + (+l.amount || 0), 0));
   const unliq = r2(beg + totCa - totLq);
@@ -72,7 +77,7 @@ export async function advancesView(ctx) {
   const fns = exam.functions || [];
   const noFn = !['disbursing', 'special', 'pettycash'].some((k) => fns.includes(k));
   const acc = (key, n, title, sub, inner) => `<details class="panel cd-acc" data-acc="${key}" ${OPEN[key] ? 'open' : ''}><summary><span class="cd-num">${n}</span><b>${title}</b><span class="cd-sub">${sub}</span></summary><div class="cd-body">${inner}</div></details>`;
-  const advLabel = (a) => (a.beg ? `Beginning balance · ₱${money(a.bal)} left` : `${a.checkNo} · ${a.particulars || fmtDate(a.date)} · ₱${money(a.bal)} left`);
+  const advLabel = (a) => (a.rest ? `Beginning balance (not itemized) · ₱${money(a.bal)} left` : `${a.checkNo}${a.beg ? ' (Beginning)' : ''} · ${a.particulars || fmtDate(a.date)} · ₱${money(a.bal)} left`);
   const sorted = list.slice().reverse();   // latest first in the table
 
   const caBody = `${enc ? `<div class="cd-entry ca-entry">
@@ -82,8 +87,8 @@ export async function advancesView(ctx) {
         <div class="field"><label for="ca-amt">Amount (₱)</label><input class="input r" id="ca-amt" inputmode="decimal" autocomplete="off"></div>
         <button class="btn primary" type="button" id="ca-enter">Enter</button></div>` : ''}
     ${list.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col" class="r">Liquidated (₱)</th><th scope="col" class="r">Balance (₱)</th><th scope="col">Status</th><th scope="col" class="r"></th></tr></thead>
-      <tbody>${sorted.map((a) => `<tr${a.beg ? ' class="cd-begrow"' : ''}><td>${esc(fmtDate(a.date))}</td><td class="mono">${a.beg ? '<span class="dim">—</span>' : `<b>${esc(a.checkNo)}</b>`}</td><td>${esc(a.particulars || '')}</td><td class="r">${money(a.amount)}</td><td class="r">${money(a.liq)}</td><td class="r"><b>${money(a.bal)}</b></td>
-        <td><span class="pill ${a.st[0]}">${a.st[1]}</span></td><td class="r">${enc && !a.beg ? `<button class="btn sm" type="button" data-eca="${esc(a.id)}" aria-label="Edit check ${esc(a.checkNo)}">Edit</button>` : ''}</td></tr>`).join('')}</tbody>
+      <tbody>${sorted.map((a) => `<tr${a.beg ? ' class="cd-begrow"' : ''}><td>${esc(fmtDate(a.date))}</td><td class="mono">${a.rest ? '<span class="dim">—</span>' : `<b>${esc(a.checkNo)}</b>${a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : ''}`}</td><td>${esc(a.particulars || '')}</td><td class="r">${money(a.amount)}</td><td class="r">${money(a.liq)}</td><td class="r"><b>${money(a.bal)}</b></td>
+        <td><span class="pill ${a.st[0]}">${a.st[1]}</span></td><td class="r">${a.beg && !a.rest ? `<a class="btn sm" href="#/cer/setup?a=${esc(audit.id)}&o=${esc(exam.id)}" title="Beginning checks are edited in Audit Setup, Beginning Balances">Setup</a>` : enc && !a.beg ? `<button class="btn sm" type="button" data-eca="${esc(a.id)}" aria-label="Edit check ${esc(a.checkNo)}">Edit</button>` : ''}</td></tr>`).join('')}</tbody>
       <tfoot><tr class="cd-foot"><td colspan="3">Total</td><td class="r">${money(r2(beg + totCa))}</td><td class="r">${money(r2(list.reduce((n, a) => n + a.liq, 0)))}</td><td class="r">${money(r2(list.reduce((n, a) => n + a.bal, 0)))}</td><td></td><td></td></tr></tfoot></table></div>`
       : `<div class="empty"><b>No cash advance encoded for this officer yet.</b>${enc ? 'Enter each check issued to the officer as a cash advance.' : ''}</div>`}
     ${noFn ? '<p class="af-note">This officer has no Disbursing, Special Disbursing or Petty Cash Custodian function ticked in Audit Setup.</p>' : ''}`;
@@ -98,17 +103,17 @@ export async function advancesView(ctx) {
         <button class="btn primary" type="button" id="lq-enter">Enter</button></div>` : '<div class="cd-info">Encode the cash advance first, then its liquidations.</div>') : ''}
     ${lqRows.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">LR No. / Reference</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">For Check No.</th><th scope="col" class="r"></th></tr></thead>
       <tbody>${lqRows.map((l) => { const a = list.find((x) => x.id === l.advanceId); return `<tr><td>${esc(fmtDate(l.date))}</td><td class="mono">${esc(l.ref || '')}</td><td>${esc(l.particulars || '')}</td><td class="r">${money(l.amount)}</td>
-        <td class="mono">${a ? (a.beg ? 'Beginning balance' : esc(a.checkNo)) : '<span class="pill p-flag">No check</span>'}${a && a.bal < -0.004 ? ' <span class="pill p-flag">Over-liquidated</span>' : ''}</td><td class="r">${enc ? `<button class="btn sm" type="button" data-elq="${esc(l.id)}" aria-label="Edit liquidation ${esc(l.ref || '')}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
+        <td class="mono">${a ? (a.rest ? 'Beginning balance' : esc(a.checkNo) + (a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : '')) : '<span class="pill p-flag">No check</span>'}${a && a.bal < -0.004 ? ' <span class="pill p-flag">Over-liquidated</span>' : ''}</td><td class="r">${enc ? `<button class="btn sm" type="button" data-elq="${esc(l.id)}" aria-label="Edit liquidation ${esc(l.ref || '')}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
       <tfoot><tr class="cd-foot"><td colspan="3">Total</td><td class="r">${money(totLq)}</td><td></td><td></td></tr></tfoot></table></div>`
       : '<div class="empty"><b>No liquidation encoded yet.</b></div>'}
-    <p class="af-note">For Check No. starts on the oldest open cash advance; pick another when the LR names it. A liquidation larger than what is left on its check is flagged. A refund is entered here with its OR No. as the reference.</p>`;
+    ${begChecks.length ? '<p class="af-note">Checks tagged Beginning were unliquidated as of the last cash exam; their amount is what was still unliquidated then. They are entered in Audit Setup, Beginning Balances.</p>' : ''}<p class="af-note">For Check No. starts on the oldest open cash advance; pick another when the LR names it. A liquidation larger than what is left on its check is flagged. A refund is entered here with its OR No. as the reference.</p>`;
 
   const body = `${hello}${top}
     <div class="stats">
-      <div class="stat"><span>Beginning Balance</span><b>₱ ${money(beg)}</b><small>from Audit Setup, as of ${esc(fmtDate(exam.lastExamDate)) || 'the last cash exam'}</small></div>
+      <div class="stat"><span>Beginning Balance</span><b>₱ ${money(beg)}</b><small>from Audit Setup, as of ${esc(fmtDate(exam.lastExamDate)) || 'the last cash exam'}${begChecks.length ? ` · ${begChecks.length} check${begChecks.length === 1 ? '' : 's'}${rest > 0.004 ? ` + ₱${money(rest)} not itemized` : ''}` : ''}</small></div>
       <div class="stat"><span>Cash Advances</span><b>₱ ${money(totCa)}</b><small>${advs.length} check${advs.length === 1 ? '' : 's'}</small></div>
       <div class="stat"><span>Liquidations</span><b style="color:var(--ok)">₱ ${money(totLq)}</b><small>${liqs.length} entr${liqs.length === 1 ? 'y' : 'ies'}</small></div>
-      <div class="stat"><span>Unliquidated</span><b style="color:#1d4fb8">₱ ${money(unliq)}</b><small>${openChecks} cash advance${openChecks === 1 ? '' : 's'} open${list.some((a) => a.beg && a.bal > 0.004) ? ' + beginning balance' : ''}</small></div>
+      <div class="stat"><span>Unliquidated</span><b style="color:#1d4fb8">₱ ${money(unliq)}</b><small>${openChecks} cash advance${openChecks === 1 ? '' : 's'} open${list.some((a) => a.beg && a.bal > 0.004) ? ' + beginning' : ''}</small></div>
     </div>
     ${acc('ca', 1, 'Cash Advance', `${advs.length} check${advs.length === 1 ? '' : 's'} · ₱ ${money(totCa)}`, caBody)}
     ${acc('lq', 2, 'Liquidation', `${liqs.length} entr${liqs.length === 1 ? 'y' : 'ies'} · ₱ ${money(totLq)}`, lqBody)}
@@ -118,8 +123,8 @@ export async function advancesView(ctx) {
     wireTop();
     $$('details.cd-acc').forEach((d) => { d.ontoggle = () => { OPEN[d.dataset.acc] = d.open; }; });
     $('#ca-xls').onclick = () => exportXlsx(`Cash Advances ${o.name} ${audit.countDate}.xlsx`, 'Cash Advances', [
-      ...list.map((a) => ({ Entry: a.beg ? 'Beginning Balance' : 'Cash Advance', Date: fmtDate(a.date), 'Check No.': a.checkNo, 'LR No. / Reference': '', Particulars: a.particulars || '', 'Cash Advance': a.amount, Liquidation: '', 'Balance of the Check': a.bal, Status: a.st[1] })),
-      ...liqs.slice().sort((x, y) => String(x.date).localeCompare(String(y.date))).map((l) => ({ Entry: 'Liquidation', Date: fmtDate(l.date), 'Check No.': (() => { const a = list.find((x) => x.id === l.advanceId); return a ? (a.beg ? 'Beginning balance' : a.checkNo) : ''; })(), 'LR No. / Reference': l.ref || '', Particulars: l.particulars || '', 'Cash Advance': '', Liquidation: l.amount, 'Balance of the Check': '', Status: '' })),
+      ...list.map((a) => ({ Entry: a.rest ? 'Beginning Balance (not itemized)' : a.beg ? 'Beginning Check' : 'Cash Advance', Date: fmtDate(a.date), 'Check No.': a.checkNo, 'LR No. / Reference': '', Particulars: a.particulars || '', 'Cash Advance': a.amount, Liquidation: '', 'Balance of the Check': a.bal, Status: a.st[1] })),
+      ...liqs.slice().sort((x, y) => String(x.date).localeCompare(String(y.date))).map((l) => ({ Entry: 'Liquidation', Date: fmtDate(l.date), 'Check No.': (() => { const a = list.find((x) => x.id === l.advanceId); return a ? (a.rest ? 'Beginning balance' : a.checkNo) : ''; })(), 'LR No. / Reference': l.ref || '', Particulars: l.particulars || '', 'Cash Advance': '', Liquidation: l.amount, 'Balance of the Check': '', Status: '' })),
       { Entry: 'Unliquidated', Date: fmtDate(audit.countDate), 'Check No.': '', 'LR No. / Reference': '', Particulars: `Beginning ${money(beg)} + cash advances ${money(totCa)} − liquidations ${money(totLq)}`, 'Cash Advance': '', Liquidation: '', 'Balance of the Check': unliq, Status: '' }]);
     if (!enc) return;
     const base = { lguId: audit.lguId, officerId: o.id };
@@ -131,7 +136,7 @@ export async function advancesView(ctx) {
       amtBlur('#ca-amt'); enterOn(['#ca-check', '#ca-part', '#ca-amt'], '#ca-enter');
       ce.onclick = async () => {
         const v = { date: $('#ca-date').value, checkNo: $('#ca-check').value.trim(), particulars: $('#ca-part').value.trim(), amount: num($('#ca-amt').value) };
-        const err = checkAdv(v, advs, ''); if (err) return bad(err);
+        const err = checkAdv(v, allAdv, ''); if (err) return bad(err);
         LAST.caDate = v.date; LAST.focus = 'ca';
         await store.save('cer_cashadv', newId('cerca'), { ...base, ...v }, by(refs));
         toast(`Check No. ${v.checkNo} saved.`, 'ok');
@@ -150,7 +155,7 @@ export async function advancesView(ctx) {
         toast('Liquidation saved.', 'ok');
       };
     }
-    $$('[data-eca]').forEach((b) => { b.onclick = () => editAdv(refs, list.find((a) => a.id === b.dataset.eca), advs, liqs); });
+    $$('[data-eca]').forEach((b) => { b.onclick = () => editAdv(refs, list.find((a) => a.id === b.dataset.eca), allAdv, liqs); });
     $$('[data-elq]').forEach((b) => { b.onclick = () => editLiq(refs, liqs.find((l) => l.id === b.dataset.elq), list); });
     if (LAST.focus) { const el = $(LAST.focus === 'ca' ? '#ca-check' : '#lq-ref'); if (el) el.focus(); LAST.focus = ''; }
   } };
@@ -211,7 +216,7 @@ async function editLiq(refs, l, list) {
       <div class="field"><label for="el-ref">LR No. / Reference</label><input class="input mono" id="el-ref" value="${esc(l.ref || '')}"></div>
       <div class="field"><label for="el-part">Particulars</label><input class="input" id="el-part" value="${esc(l.particulars || '')}"></div>
       <div class="field"><label for="el-amt">Amount (₱)</label><input class="input r" id="el-amt" inputmode="decimal" value="${esc(money(l.amount))}"></div>
-      <div class="field"><label for="el-for">For Check No.</label><select class="input" id="el-for">${list.map((a) => `<option value="${esc(a.id)}" ${a.id === l.advanceId ? 'selected' : ''}>${esc(a.beg ? `Beginning balance · ₱${money(a.bal)} left` : `${a.checkNo} · ${a.particulars || fmtDate(a.date)} · ₱${money(a.bal)} left`)}</option>`).join('')}</select></div></div>`,
+      <div class="field"><label for="el-for">For Check No.</label><select class="input" id="el-for">${list.map((a) => `<option value="${esc(a.id)}" ${a.id === l.advanceId ? 'selected' : ''}>${esc(a.rest ? `Beginning balance (not itemized) · ₱${money(a.bal)} left` : `${a.checkNo}${a.beg ? ' (Beginning)' : ''} · ${a.particulars || fmtDate(a.date)} · ₱${money(a.bal)} left`)}</option>`).join('')}</select></div></div>`,
     buttons: [{ label: 'Delete', value: 'del' }, { label: 'Cancel', value: null }, { label: 'Save', cls: 'primary', value: 'save', check: (bg) => {
       const x = { date: $('#el-date', bg).value, ref: $('#el-ref', bg).value.trim(), particulars: $('#el-part', bg).value.trim(), amount: num($('#el-amt', bg).value), advanceId: $('#el-for', bg).value };
       const err = checkLiq(x); if (err) return bad(err);

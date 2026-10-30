@@ -8,7 +8,7 @@
 //   cer_exams     one officer's exam record inside a cash examination
 //                 { auditId, officerId, functions[], forms[], bond{maxCash, amount, riskNo, from, to}, lastExamDate, lastExamSource,
 //                   balances{ key: { amount, source } }, endBalances{} (filled later by the examination) }
-import { store, newId } from '../../js/store.js';
+import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { roleLine } from '../../js/views/admin.js';
 import { moduleFrame } from '../../js/frame.js';
@@ -125,6 +125,21 @@ function navItems() {
 let DRAFT = null;   // { key, st, dirty }
 let LASTPART = '';   // the CER screen last shown
 let FM = null, FX = null;   // Accountable Forms module and its data (for the Beginning Inventory of Accountable Forms)
+let CA = [];   // cash advance records (for the beginning checks of the cash advance balances)
+// Beginning cash advance balances: a lump sum, the checks unliquidated at the last cash exam, or both.
+// The checks are saved as cash advances marked beginning { beg: true, begKey, begExamId }; the balance is the larger of the lump sum and the checks.
+const BEG_CA = { ca: 'Cash Advances', sdo: 'Cash Advances – Special Disbursing', pcf: 'Petty Cash Fund' };
+const begChecksOf = (st, k) => (st.examId ? CA.filter((a) => a.beg && a.begExamId === st.examId && (a.begKey || 'ca') === k) : []);
+const sumOf = (list) => Math.round(list.reduce((n, a) => n + (+a.amount || 0), 0) * 100) / 100;
+function begLine(st, k, lump) {
+  const ch = begChecksOf(st, k), sum = sumOf(ch), l = +lump || 0;
+  const n = `${ch.length} check${ch.length === 1 ? '' : 's'}`;
+  if (!ch.length) return '<span class="dim">No check itemized: shown as one beginning balance in Cash Advances.</span>';
+  if (!l) return `₱${money(sum)} · from ${n}`;
+  if (sum > l + 0.004) return `<span class="cer-begover">⚠ ${n} total ₱${money(sum)}, more than the ₱${money(l)} typed. Check the amount; ₱${money(sum)} is used.</span>`;
+  const rest = Math.round((l - sum) * 100) / 100;
+  return `₱${money(l)} · ${n} ₱${money(sum)}${rest > 0.004 ? ` + ₱${money(rest)} not itemized` : ''}`;
+}
 // Folding sections (accordion). Which ones are open is kept per screen, so a refresh after a save keeps them as they were.
 const OPEN = {};
 const ST_PILL = { ok: '<span class="acc-pill ok">✓ Complete</span>', need: '<span class="acc-pill need">Needs input</span>', warn: '<span class="acc-pill warn">⚠ Check</span>', info: '' };
@@ -152,7 +167,9 @@ function heads(refs, cer, st) {
   else {
     let total = 0, missing = 0;
     rows.forEach((r) => { const carried = prev && prev.endBalances && prev.endBalances[r.key] !== undefined && prev.endBalances[r.key] !== null;
-      const v = carried ? Number(prev.endBalances[r.key]) : num(st.balances[r.key]); if (v === null || v === undefined) missing++; else total += v; });
+      let v = carried ? Number(prev.endBalances[r.key]) : num(st.balances[r.key]);
+      if (BEG_CA[r.key]) { const s = sumOf(begChecksOf(st, r.key)); if (s) v = Math.max(v || 0, s); }
+      if (v === null || v === undefined) missing++; else total += v; });
     h.bal = [`₱${money(total)}${missing ? ` · ${missing} not entered` : ''}`, missing ? 'need' : 'ok'];
   }
   if (!o) h.forms = ['Choose the officer first', 'info'];
@@ -207,7 +224,7 @@ export async function render(ctx) {
   const view = 'setup';
   const open = q.get('a') || (q.get('new') ? 'new' : '');
   // Beginning Inventory of Accountable Forms reads the same booklet records as Accountable Forms.
-  if (open) { FM = await import('./forms.js'); FX = await FM.loadForms(); }
+  if (open) { FM = await import('./forms.js'); FX = await FM.loadForms(); CA = (await store.list('cer_cashadv')).map((r) => ({ id: r.id, ...r.data })); }
   const body = open ? setupHtml(refs, cer, q) : listHtml(refs, cer);
   app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: view, crumb: open ? 'Audit Setup' : 'Audit Setup · Cash Examinations', me, roleText, body });
   tidyTop();
@@ -280,7 +297,7 @@ function stateFrom(refs, cer, q) {
   if (exam) {
     Object.assign(st, { examId: exam.id, officerId: exam.officerId, functions: [...(exam.functions || [])], forms: [...new Set((exam.forms || []).map((k) => fixBrgyForm(lgu, k)))],
       bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '',
-      balances: Object.fromEntries(Object.entries(exam.balances || {}).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, v && v.amount !== null && v.amount !== undefined ? money(v.amount) : ''])) });
+      balances: Object.fromEntries(Object.entries(exam.balances || {}).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, (() => { const x = v && v.lump !== undefined ? v.lump : v && v.amount; return x !== null && x !== undefined ? money(x) : ''; })()])) });
     ['maxCash', 'amount'].forEach((k) => { if (st.bond[k] !== '' && st.bond[k] !== null) st.bond[k] = money(st.bond[k]); });
   }
   return { st, audit, exams, exam };
@@ -419,11 +436,13 @@ function officerHtml(refs, cer, st, edit) {
         <tbody>${rows.map((r) => {
           const carried = prev && prev.endBalances && prev.endBalances[r.key] !== undefined && prev.endBalances[r.key] !== null;
           const val = carried ? money(prev.endBalances[r.key]) : (st.balances[r.key] ?? '');
-          return `<tr><td><b>${esc(r.label)}</b></td><td class="dim">${esc(r.fn)}</td>
+          const bl = BEG_CA[r.key] ? `<div class="cer-begline"><span data-begline="${r.key}">${begLine(st, r.key, carried ? prev.endBalances[r.key] : num(st.balances[r.key]))}</span>
+            <button class="btn sm" type="button" data-begchk="${r.key}" data-edit="${edit ? 1 : 0}">${edit ? 'Beginning checks' : 'View checks'}</button></div>` : '';
+          return `<tr><td><b>${esc(r.label)}</b>${bl}</td><td class="dim">${esc(r.fn)}</td>
             <td class="r"><label class="sr-only" for="bal-${r.key}">${esc(r.label)} balance</label><input class="input amt" id="bal-${r.key}" data-bal="${r.key}" inputmode="decimal" value="${esc(val)}" ${carried ? 'readonly disabled' : dis}></td>
             <td>${carried ? '<span class="pill ok">Carried from last exam</span>' : `<span class="pill blue">${lastFromPrev ? 'Typed' : 'Typed (first exam)'}</span>`}</td></tr>`;
         }).join('')}${moneyForms ? `<tr class="cer-mvrow"><td><b>Unused accountable forms with money value</b></td><td class="dim">Forms</td><td class="r"><b>${money(moneyForms)}</b></td><td><span class="pill">From Beginning Inventory</span></td></tr>` : ''}</tbody></table></div>
-        <span class="hint">Rows follow the officer's ticked functions and forms. Collecting and disbursing balances stay separate.${moneyForms ? ' The forms with money value (AF 52, AF 53, AF 54, Cash Tickets) come from the Beginning Inventory of Accountable Forms below, at face value.' : ''}</span>`
+        <span class="hint">Rows follow the officer's ticked functions and forms. Collecting and disbursing balances stay separate.${rows.some((r) => BEG_CA[r.key]) ? ' Cash advances: type the lump sum, enter the checks unliquidated at the last cash exam (Beginning checks), or both. What is not itemized stays as one beginning balance in Cash Advances.' : ''}${moneyForms ? ' The forms with money value (AF 52, AF 53, AF 54, Cash Tickets) come from the Beginning Inventory of Accountable Forms below, at face value.' : ''}</span>`
       : `<p class="cer-wait">${(st.functions || []).length === 1 && st.functions[0] === 'custodian' ? 'Custodian accountability is kept in Accountable Forms by quantity, not in pesos.' : 'Tick the officer\'s functions to list the balances.'}</p>`}
       ${(st.functions || []).includes('custodian') && rows.length ? '<span class="hint">Custodian accountability is kept in Accountable Forms by quantity, not in pesos.</span>' : ''}`, opens.has('bal'))}
 
@@ -455,6 +474,7 @@ function wireSetup(refs, cer, q, rerender) {
       const set = OPEN[location.hash] || (OPEN[location.hash] = new Set()); set.clear(); set.add('forms');
       await FM.addBeginningForms(refs, FX, FM.registerOf(refs, st.lguId), o, lastExam);
     };
+    $$('[data-begchk]').forEach((b) => { b.onclick = () => begChecksModal(refs, cer, st, b.dataset.begchk, b.dataset.edit === '1'); });
     $$('tr[data-begbk]').forEach((tr) => { const go = () => FM.openBooklet(refs, FX, tr.dataset.begbk); tr.onclick = go; tr.onkeydown = (e) => { if (e.key === 'Enter') go(); }; });
   };
   wireAcc(); wireBeg();
@@ -491,7 +511,7 @@ function wireSetup(refs, cer, q, rerender) {
       if (i.classList.contains('amt')) i.onblur = () => { const v = num(i.value); if (v !== null) { i.value = money(v); st.bond[i.dataset.bond] = i.value; } };
     });
     $$('[data-bal]').forEach((i) => {
-      i.oninput = () => { st.balances[i.dataset.bal] = i.value; touch(); };
+      i.oninput = () => { st.balances[i.dataset.bal] = i.value; touch(); const k = i.dataset.bal, ln = $(`[data-begline="${k}"]`); if (ln) ln.innerHTML = begLine(st, k, num(i.value)); };
       i.onblur = () => { const v = num(i.value); if (v !== null) { i.value = money(v); st.balances[i.dataset.bal] = i.value; } };
     });
     const last = $('#cer-last');
@@ -560,6 +580,85 @@ async function officerModal(refs, lguId, cur) {
   return out;
 }
 
+// Beginning checks of a cash advance balance: the checks still unliquidated at the last cash exam, one by one.
+// Saved as cash advances marked beginning, so the liquidations in Cash Advances are put against each check.
+async function begChecksModal(refs, cer, st, k, edit) {
+  if (!st.examId) return toast('Save the Audit Setup first, then enter the beginning checks.', 'bad');
+  const o = cer.officers.find((x) => x.id === st.officerId); if (!o) return;
+  const prev = prevExam(cer, st.officerId, st.countDate, st.examId);
+  const carried = prev && prev.endBalances && prev.endBalances[k] !== undefined && prev.endBalances[k] !== null;
+  const lump = carried ? Number(prev.endBalances[k]) : num(st.balances[k]);
+  const lastExam = prev ? prev.countDate : st.lastExamDate;
+  const liqs = (await store.list('cer_liquid')).map((r) => ({ id: r.id, ...r.data }));
+  const others = CA.filter((a) => a.officerId === o.id);
+  const rows = begChecksOf(st, k).sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.checkNo).localeCompare(String(b.checkNo), undefined, { numeric: true }))
+    .map((a) => ({ ...a, n: liqs.filter((l) => l.advanceId === a.id).length }));
+  const removed = [];
+  const dis = edit ? '' : 'disabled';
+  const rowHtml = (a, i) => `<tr data-r="${i}"><td><label class="sr-only" for="bc-d${i}">Date</label><input class="input" type="date" id="bc-d${i}" data-f="date" value="${esc(a.date || '')}" ${dis}></td>
+    <td><label class="sr-only" for="bc-c${i}">Check No.</label><input class="input mono" id="bc-c${i}" data-f="checkNo" value="${esc(a.checkNo || '')}" autocomplete="off" ${dis}></td>
+    <td><label class="sr-only" for="bc-p${i}">Particulars</label><input class="input" id="bc-p${i}" data-f="particulars" value="${esc(a.particulars || '')}" autocomplete="off" ${dis}></td>
+    <td><label class="sr-only" for="bc-a${i}">Unliquidated amount</label><input class="input r" id="bc-a${i}" data-f="amount" inputmode="decimal" value="${num(String(a.amount ?? '')) !== null ? esc(money(num(String(a.amount)))) : ''}" autocomplete="off" ${dis}></td>
+    <td class="r">${edit ? `<button class="btn sm" type="button" data-rm="${i}" aria-label="Remove check ${esc(a.checkNo || '')}"${a.n ? ` title="Has ${a.n} liquidation${a.n > 1 ? 's' : ''}"` : ''}>×</button>` : ''}</td></tr>`;
+  const foot = () => { const s = sumOf(rows.map((a) => ({ amount: num(String(a.amount)) || 0 })));
+    const l = +lump || 0, rest = Math.round((l - s) * 100) / 100;
+    return `Checks ₱${money(s)}${l ? ` · Lump sum ₱${money(l)}${s > l + 0.004 ? ` · <span class="cer-begover">⚠ more than the lump sum by ₱${money(s - l)}; ₱${money(s)} will be used</span>` : rest > 0.004 ? ` · ₱${money(rest)} not itemized` : ' · fully itemized'}` : ' · no lump sum typed: the balance is the total of the checks'}`; };
+  let box;
+  const draw = () => {
+    $('tbody', box).innerHTML = rows.length ? rows.map(rowHtml).join('') : `<tr><td colspan="5" class="dim">No check entered yet.${edit ? ' Add each check still unliquidated as of the last cash exam.' : ''}</td></tr>`;
+    $('.bc-foot', box).innerHTML = foot();
+    $$('input[data-f]', box).forEach((inp) => {
+      const i = +inp.closest('tr').dataset.r, f = inp.dataset.f;
+      inp.oninput = () => { rows[i][f] = inp.value; if (f === 'amount') $('.bc-foot', box).innerHTML = foot(); };
+      if (f === 'amount') inp.onblur = () => { const v = num(inp.value); if (v !== null) { inp.value = money(v); rows[i].amount = inp.value; } };
+    });
+    $$('[data-rm]', box).forEach((b) => { b.onclick = () => { const a = rows[+b.dataset.rm];
+      if (a.n) return toast(`Check No. ${a.checkNo} has ${a.n} liquidation${a.n > 1 ? 's' : ''} in Cash Advances. Move or delete them first.`, 'bad');
+      rows.splice(+b.dataset.rm, 1); if (a.id) removed.push(a); draw(); }; });
+  };
+  let out = null;
+  const v = await modal({ title: `Beginning checks · ${BEG_CA[k]}`, wide: true,
+    body: `<p class="hint" style="margin:0 0 10px">${esc(o.name)} · checks unliquidated as of the last cash exam${lastExam ? ` (${esc(fmtDate(lastExam))})` : ''}. Enter the amount still unliquidated on each check. They show in Cash Advances tagged Beginning, and their liquidations are matched per check.</p>
+      <div class="cer-tbl"><table class="cer-bal bc-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">Particulars</th><th scope="col" class="r">Unliquidated (₱)</th><th scope="col"></th></tr></thead><tbody></tbody></table></div>
+      <div class="bc-bar">${edit ? '<button class="btn" type="button" id="bc-add">+ Add check</button>' : '<span></span>'}<span class="bc-foot"></span></div>`,
+    onOpen: (bg) => { box = bg; draw(); const add = $('#bc-add', bg);
+      if (add) add.onclick = () => { rows.push({ date: rows.length ? rows[rows.length - 1].date : (lastExam || ''), checkNo: '', particulars: '', amount: '', n: 0 }); draw(); const c = $(`#bc-c${rows.length - 1}`, bg); if (c) c.focus(); }; },
+    buttons: edit ? [{ label: 'Cancel', value: null }, { label: 'Save', cls: 'primary', value: 'save', check: () => {
+      const list = rows.filter((a) => a.id || String(a.checkNo).trim() || String(a.amount).trim());
+      const seen = new Set();
+      for (const a of list) {
+        const no = String(a.checkNo || '').trim(), amt = num(String(a.amount));
+        if (!no) { toast('Enter the check No. of each row.', 'bad'); return false; }
+        if (!amt || amt <= 0) { toast(`Enter the unliquidated amount of Check No. ${no}.`, 'bad'); return false; }
+        if (!a.date) { toast(`Enter the date of Check No. ${no}.`, 'bad'); return false; }
+        const key = no.toUpperCase();
+        if (seen.has(key) || others.some((x) => x.id !== a.id && !removed.some((r) => r.id === x.id) && String(x.checkNo).trim().toUpperCase() === key)) { toast(`Check No. ${no} is already encoded for this officer.`, 'bad'); return false; }
+        seen.add(key);
+      }
+      out = list.map((a) => ({ ...a, checkNo: String(a.checkNo).trim(), particulars: String(a.particulars || '').trim(), amount: num(String(a.amount)) }));
+      return true; } }] : [{ label: 'Close', cls: 'primary', value: null }] });
+  if (v !== 'save' || !out) return;
+  const who = by(refs);
+  for (const a of removed) { const { id, n, ...rec } = a; await store.save('cer_cashadv', id, rec, who, { quiet: true, deleted: true }); }
+  for (const a of out) {
+    const { id, n, ...rec } = a;
+    const data = { ...rec, lguId: st.lguId, officerId: o.id, beg: true, begKey: k, begExamId: st.examId };
+    const old = id ? CA.find((x) => x.id === id) : null;
+    if (old && ['date', 'checkNo', 'particulars', 'amount'].every((f) => String(old[f] ?? '') === String(data[f] ?? ''))) continue;
+    await store.save('cer_cashadv', id || newId('cerca'), data, who, { quiet: true });
+  }
+  // The exam's balance follows: the larger of the lump sum and the checks.
+  const ex = await store.get('cer_exams', st.examId);
+  if (ex && !ex.deleted) {
+    const s = sumOf(out), bal = { ...(ex.data.balances || {}) };
+    bal[k] = { ...(bal[k] || { source: carried ? 'carried' : 'typed' }), lump, amount: Math.max(lump || 0, s) };
+    await store.save('cer_exams', st.examId, { ...ex.data, balances: bal }, who, { quiet: true });
+  }
+  const set = OPEN[location.hash] || (OPEN[location.hash] = new Set()); set.clear(); set.add('bal');
+  toast(`${out.length} beginning check${out.length === 1 ? '' : 's'} saved.`, 'ok');
+  emitChange('local');
+}
+
 async function saveSetup(refs, cer, st) {
   const lgu = refs.lgu[st.lguId];
   const bad = (m) => { toast(m, 'bad'); return null; };
@@ -582,6 +681,8 @@ async function saveSetup(refs, cer, st) {
   balanceRows(st).forEach((r) => {
     const carried = prev && prev.endBalances && prev.endBalances[r.key] !== undefined && prev.endBalances[r.key] !== null;
     balances[r.key] = carried ? { amount: prev.endBalances[r.key], source: 'carried' } : { amount: num(st.balances[r.key]) ?? 0, source: 'typed' };
+    if (BEG_CA[r.key]) { const lump = carried ? Number(prev.endBalances[r.key]) : num(st.balances[r.key]); const s = sumOf(begChecksOf(st, r.key));
+      balances[r.key] = { ...balances[r.key], lump, amount: Math.max(lump || 0, s) }; }
   });
   const oldAudit = cer.audits.find((a) => a.id === auditId);
   await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: oldAudit ? oldAudit.preparedBy : (refs.me ? refs.me.id : ''), reviewedBy: st.reviewedBy || '' }, by(refs));

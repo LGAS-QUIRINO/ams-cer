@@ -566,3 +566,12 @@ table.cd-sumtbl{min-width:0; width:100%}
 .oi-prev{max-height:260px; overflow:auto}
 .oi-prev th, .oi-prev td{padding:5px 9px; font-size:12px}
 .oi-prev table.af-reg{min-width:0}
+
+/* Beginning cash advance checks (Audit Setup pop-up, Cash Advances tag) */
+.cer-begline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; font-size: 12.5px; font-weight: 400; }
+.cer-begover { color: var(--bad, #b42318); font-weight: 600; }
+.bc-tbl input.input { min-width: 0; width: 100%; }
+.bc-tbl td { padding: 4px 6px; }
+.bc-tbl th:nth-child(1) { width: 150px; } .bc-tbl th:nth-child(2) { width: 140px; } .bc-tbl th:nth-child(4) { width: 150px; } .bc-tbl th:nth-child(5) { width: 44px; }
+.bc-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; }
+.ca-begtag { font-size: 10.5px; padding: 1px 6px; margin-left: 4px; vertical-align: 1px; }

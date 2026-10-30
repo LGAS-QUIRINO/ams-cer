@@ -70,7 +70,7 @@ export async function banksView(ctx) {
     items.push({ key, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0,
       from: `${r.pending ? 'Not yet reported' : repName(r)} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });
   }));
-  advs0.map(flat).filter((a) => a.lguId === audit.lguId).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0,
+  advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0,
     from: `Cash advance · ${officers.find((o) => o.id === a.officerId)?.name || ''}` }));
   (rec.otherChecks || []).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0, from: `Typed here${c.payee ? ' · ' + c.payee : ''}`, other: c }));
   const list = items.filter((x) => x.date && x.date <= asOf && !foundElsewhere.has(x.key)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.kind.localeCompare(b.kind));

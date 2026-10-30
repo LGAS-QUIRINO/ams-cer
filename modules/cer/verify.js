@@ -46,7 +46,7 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
     let beg = 0;
     if (b.key === 'ca') {
       beg = BEG_CA.reduce((n, k) => n + (+(bal[k]?.amount) || 0), 0);
-      advs.filter((a) => a.officerId === o.id && inScope(a.date)).forEach((a) => m.push({ date: a.date, debit: +a.amount || 0, credit: 0 }));
+      advs.filter((a) => a.officerId === o.id && !a.beg && inScope(a.date)).forEach((a) => m.push({ date: a.date, debit: +a.amount || 0, credit: 0 }));
       liqs.filter((l) => l.officerId === o.id && inScope(l.date)).forEach((l) => m.push({ date: l.date, debit: 0, credit: +l.amount || 0 }));
     } else {
       const kind = b.kind;
@@ -112,7 +112,7 @@ export async function verifyView(ctx) {
   f.ors.filter((x) => x.officerId === o.id && x.date > to).slice(0, 1).forEach(() => add('afterct', 'Collections', `${f.ors.filter((x) => x.officerId === o.id && x.date > to).length} OR(s) dated after the cash count.`, '#/cer/collections'));
   f.booklets.filter((b) => b.officerId === o.id && b.status === 'issued').forEach((b) => { const sk = skippedOf(b); if (sk.length) add(`skip|${b.id}|${rangesText(sk)}`, 'Accountable Forms', `${FORM_SHORT[b.form] || b.form} ${rangesText(sk)} skipped between used numbers (booklet ${b.from} – ${b.to}).`, '#/cer/forms'); });
   unusedFormsOf(f, o.id, exam, to).forEach((x) => { if (x.status[1] === 'Not seen' || x.status[1] === 'For checking' || x.status[1] === 'Not yet checked') add(`pc|${x.id}|${x.status[1]}`, 'Accountable Forms', `${x.name} ${x.ns ? "(no serial)" : x.from + " – " + x.to}: Physical Check ${x.status[1].toLowerCase()}.`, '#/cer/forms'); });
-  const mineAdv = advs.filter((a) => a.officerId === o.id);
+  const mineAdv = advs.filter((a) => a.officerId === o.id && (!a.beg || a.begExamId === exam.id));
   mineAdv.forEach((a) => {
     const l = r2(liqs.filter((x) => x.advanceId === a.id && x.date <= to).reduce((n, x) => n + (+x.amount || 0), 0)); const left = r2((+a.amount || 0) - l);
     if (a.date <= to && left > 0.004) add(`ca|${a.id}`, 'Cash Advances', `Check No. ${a.checkNo} (₱${money(a.amount)}${a.particulars ? ', ' + a.particulars : ''}) has ₱${money(left)} unliquidated at the count.`, '#/cer/advances');

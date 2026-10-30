@@ -40,7 +40,7 @@ export function booksOf(refs, f, o, exam, audit, advs, liqs) {
       out.push({ key: 'col-' + kind, kind, label, books: bal, note: kind === 'SCR' ? 'Unremitted CTC, from Collections & Deposits' : 'Undeposited collections, from Collections & Deposits' });
     });
   }
-  const mine = advs.filter((a) => a.officerId === o.id);
+  const mine = advs.filter((a) => a.officerId === o.id && !a.beg);   // beginning checks are inside the beginning balance
   if (fns.some((k) => ['disbursing', 'special', 'pettycash'].includes(k)) || mine.length) {
     const beg = BEG_CA.reduce((n, k) => n + (+(exam.balances?.[k]?.amount) || 0), 0);
     const bal = r2(beg + mine.reduce((n, a) => n + (+a.amount || 0), 0) - liqs.filter((l) => l.officerId === o.id).reduce((n, l) => n + (+l.amount || 0), 0));
