@@ -472,3 +472,17 @@ table.af-raaf2 td small{display:block; font-size:11px; color:var(--ok); font-wei
 .cd-sumtbl td:last-child{min-width:150px; max-width:260px; white-space:normal}
 .cd-sumtbl .cd-issues{display:block; font-size:11px; color:#b4540a; line-height:1.35; margin-top:3px}
 .cd-sumtbl .cd-issues{overflow-wrap:anywhere}
+/* SCD entry line with OR Range */
+.cd-scdf{grid-template-columns:repeat(4,minmax(0,1fr))}
+.cd-scdf .cd-rangef{grid-column:span 2}
+.cd-scdact{grid-column:-2 / -1; justify-content:flex-end}
+.cd-sumtbl td.mono small{display:block; font-size:11px}
+@media (max-width:760px){ .cd-scdf .cd-rangef, .cd-scdact{grid-column:auto} }
+.cd-chk{display:inline-block; vertical-align:top; font-size:11.5px; color:#b4540a}
+.cd-chk > summary{cursor:pointer; font-weight:600; list-style:none}
+.cd-chk > summary::before{content:'▸ '}
+.cd-chk[open] > summary::before{content:'▾ '}
+.cd-chk ul{margin:4px 0 0; padding-left:16px; max-width:260px; overflow-wrap:anywhere; line-height:1.4}
+.cd-sumtbl td:nth-child(4){white-space:normal}
+.cd-sumtbl td:last-child{min-width:0; width:150px}
+.cd-chk{display:block; margin-top:3px}
