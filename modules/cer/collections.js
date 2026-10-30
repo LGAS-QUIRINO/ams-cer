@@ -43,7 +43,7 @@ const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[
 
 // Kept between screen refreshes (each save redraws the screen).
 // One section open at a time (opening one folds the others); Collections is open to start.
-const OPEN = { rep: false, col: true, dep: false };
+const OPEN = { rep: false, col: true, dep: false };   // which tab is shown (one at a time)
 const LASTC = { key: '', form: '', bookletId: '', serial: '', date: '', auto: true, status: 'issued', focus: '' };
 
 /* ---------- figures ---------- */
@@ -176,6 +176,10 @@ export async function collectionsView(ctx) {
   const repOpts = [
     ...shownKeys.map((key) => { const g = fig.chains[key].pend; return `<option value="${esc(g.id)}" ${g.id === selId ? 'selected' : ''}>${esc(label(g))}${g.nOrs ? ` (${g.nOrs} OR${g.nOrs > 1 ? 's' : ''})` : ''}</option>`; }),
     realIds.length ? `<optgroup label="Submitted ${usedKinds.join(' / ')}">${realIds.map((id) => fig.byId[id]).sort((a, b) => String(b.rec.date).localeCompare(String(a.rec.date))).map((g) => `<option value="${esc(g.id)}" ${g.id === selId ? 'selected' : ''}>${esc(label(g))}</option>`).join('')}</optgroup>` : ''].join('');
+  // Parts 1–3 as tabs in one row: the chosen part shows below; the summary under them always stays.
+  const tabs = (list) => { const on = list.find(([k]) => OPEN[k])?.[0] || 'col';
+    return `<div class="cd-tabs" role="tablist">${list.map(([k, t, sub], i) => `<button type="button" role="tab" class="cd-tab ${k === on ? 'on' : ''}" data-tab="${k}" aria-selected="${k === on}" aria-controls="cd-pane-${k}"><span class="cd-num">${i + 1}</span><span class="cd-tabt"><b>${t}</b><span class="cd-sub">${sub}</span></span></button>`).join('')}</div>
+      ${list.map(([k, , , inner]) => `<section class="panel cd-pane" id="cd-pane-${k}" role="tabpanel" ${k === on ? '' : 'hidden'}><div class="cd-body">${inner}</div></section>`).join('')}`; };
   const acc = (key, title, sub, inner) => `<details class="panel cd-acc" data-acc="${key}" ${OPEN[key] ? 'open' : ''}><summary><span class="cd-num">${{ rep: 1, col: 2, dep: 3 }[key]}</span><b>${title}</b><span class="cd-sub">${sub}</span></summary><div class="cd-body">${inner}</div></details>`;
 
   /* ----- 1 · SCD / RCD ----- */
@@ -310,9 +314,8 @@ export async function collectionsView(ctx) {
 
   const subRep = cur.pending ? `Not yet reported · ${esc(cur.fund)}` : (cur.rec.no ? `${esc(repName(cur.rec, K))} · ${esc(fmtDate(cur.rec.date))}` : esc(repName(cur.rec, K)));
   const body = hello() + topBar() + `
-    ${acc('rep', K, subRep, repBody)}
-    ${acc('col', 'Collections', `${cur.nOrs} OR${cur.nOrs === 1 ? '' : 's'} · ₱ ${money(cur.orsTotal)}`, colBody)}
-    ${acc('dep', isRem ? 'Remittances to MTO' : 'Deposits', `₱ ${money(cur.dep)} ${isRem ? 'remitted' : 'deposited'} · ₱ ${money(cur.end)} ${isRem ? 'unremitted' : 'undeposited'}`, depBody)}
+    ${tabs([['rep', K, subRep, repBody], ['col', 'Collections', `${cur.nOrs} OR${cur.nOrs === 1 ? '' : 's'} · ₱ ${money(cur.orsTotal)}`, colBody],
+      ['dep', isRem ? 'Remittances to MTO' : 'Deposits', `₱ ${money(cur.dep)} ${isRem ? 'remitted' : 'deposited'} · ₱ ${money(cur.end)} ${isRem ? 'unremitted' : 'undeposited'}`, depBody]])}
     <section class="panel" aria-labelledby="cd-sumh"><div class="panel-head"><h2 id="cd-sumh">Collections Summary by ${KS}</h2><span class="pill">${allFigs.length}</span><button class="btn" type="button" id="cd-sumxls" style="margin-left:auto">Export to Excel</button></div>${sumBody}</section>`;
 
   const ctxw = { refs, f, audit, lgu, K, KS, o, exam, fig, cur, curFund, curKey, selId, isLO, enc, funds, form, bk, bks, listOrs, allFigs, isFirst };
@@ -322,6 +325,10 @@ export async function collectionsView(ctx) {
 /* ---------- wiring ---------- */
 function wireAll(c) {
   const { refs, f, audit, K, o, cur, curFund, selId, isLO, enc } = c;
+  $$('.cd-tab').forEach((t) => { t.onclick = () => {
+    Object.keys(OPEN).forEach((k) => { OPEN[k] = k === t.dataset.tab; });
+    $$('.cd-tab').forEach((x) => { const on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', String(on)); $('#cd-pane-' + x.dataset.tab).hidden = !on; });
+  }; });
   $$('details.cd-acc').forEach((d) => { d.ontoggle = () => {
     OPEN[d.dataset.acc] = d.open;
     if (d.open) $$('details.cd-acc').forEach((x) => { if (x !== d && x.open) { x.open = false; OPEN[x.dataset.acc] = false; } });
