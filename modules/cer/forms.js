@@ -871,7 +871,7 @@ function officerView(ctx, f, lguId) {
   const asOf = exam ? exam.audit.countDate : today();   // days in hand are counted up to the cash count
   const tab = ['check', 'hand', 'all'].includes(q.get('tab')) ? q.get('tab') : 'check';
   const longest = inHand.map((b) => daysWithAo(b, asOf)).sort((a, b) => b - a)[0];
-  const checkRows = exam ? mine.filter((b) => b.status !== 'stock' && b.issuedDate && b.issuedDate <= exam.audit.countDate && statusOf(b).key !== 'done' && b.status !== 'lost').sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from) : [];
+  const checkRows = exam ? cutoffRowsOf(f, o, exam) : [];
   const chk = (b) => f.checks.find((c) => c.id === exam.id + '|' + b.id) || null;
   const seen = checkRows.filter((b) => chk(b)?.seen).length;
   const byForm = {}; inHand.forEach((b) => { byForm[b.form] = (byForm[b.form] || 0) + unusedOf(b); });
@@ -883,24 +883,7 @@ function officerView(ctx, f, lguId) {
     tabBody = !exam ? '<div class="empty"><b>No cash examination for this officer yet.</b>Set one up in Audit Setup; the Physical Check is done at its cash count.</div>'
       : `<div class="af-note top">Cash count of ${esc(fmtDate(exam.audit.countDate))}${exams.length > 1 ? ` · <label for="af-exam" class="sr-only">Cash examination</label><select class="input af-sm" id="af-exam">${exams.map((e) => `<option value="${esc(e.id)}" ${e.id === exam.id ? 'selected' : ''}>${esc(fmtDate(e.audit.countDate))}</option>`).join('')}</select>` : ''}.
           Tick each booklet seen and type the unused numbers actually on hand, as ranges (e.g. 7311510, 7311516-7311550). This fills the SAAF (Annex B) and the unused forms in the GF-74A.</div>
-        ${checkRows.length ? `<div class="af-tbl"><table class="af-reg">
-          <thead><tr><th scope="col">Seen</th><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col" class="r">Days in Hand</th><th scope="col">Unused per Register</th><th scope="col">Unused per Count</th><th scope="col" class="r">Difference</th><th scope="col">Result</th></tr></thead>
-          <tbody>${checkRows.map((b) => {
-            const c = chk(b) || {}; const reg = unusedRanges(b); const n = countRanges(reg); const sk = skippedOf(b);
-            const counted = Array.isArray(c.ranges) ? c.ranges : (c.unusedFrom && c.unusedTo ? [[c.unusedFrom, c.unusedTo]] : null);
-            const diff = counted === null ? null : n - countRanges(counted);
-            const isChk = b.form === 'chk', lc = c.lastCheck || b.lastCheck || {};
-            const res = !c.seen ? (c.id ? ['p-flag', 'Not seen'] : ['p-stock', 'Not yet checked']) : isChk ? ['p-done', 'Last check recorded'] : counted && sameRanges(counted, reg) ? ['p-done', 'Agrees'] : ['p-flag', 'For checking'];
-            return `<tr data-ck="${esc(b.id)}"><td><input type="checkbox" class="af-seen" ${c.seen ? 'checked' : ''} ${auditor ? '' : 'disabled'} aria-label="Seen: ${esc(FORM_SHORT[b.form])} ${b.from} to ${b.to}"></td>
-              <td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td class="r">${b.issuedAsOf ? '≥ ' : ''}${days(b.issuedDate, exam.audit.countDate)}</td>
-              <td class="mono">${reg.length ? (b.noSerial ? `${n} pcs` : `${rangesText(reg)} (${n})`) : 'None'}${faceOf(b) && n ? `<small>${peso(n * faceOf(b))}</small>` : ''}${sk.length ? `<small class="warn-t">Skipped: ${rangesText(sk)} · on hand, cancelled or not on hand?</small>` : ''}</td>
-              <td>${isChk ? `<div class="af-lc"><input class="input af-sm mono af-lc-no" inputmode="numeric" placeholder="Last check No." value="${esc(lc.no || '')}" aria-label="Last check issued: check No." ${auditor ? '' : 'disabled'}>
-                <input class="input af-sm af-lc-date" type="date" value="${esc(lc.date || '')}" aria-label="Last check issued: date" ${auditor ? '' : 'disabled'}>
-                <input class="input af-sm af-lc-payee" placeholder="Payee / particulars" value="${esc(lc.payee || '')}" aria-label="Last check issued: payee or particulars" ${auditor ? '' : 'disabled'}>
-                <input class="input af-sm r af-lc-amt" inputmode="decimal" placeholder="Amount" value="${lc.amount ? esc(Number(lc.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })) : ''}" aria-label="Last check issued: amount" ${auditor ? '' : 'disabled'}></div>
-                <small class="dim">Unused (from the last check; mark a skipped or cancelled check by editing):</small>` : ''}<input class="input af-sm mono af-ur" ${b.noSerial ? 'inputmode="numeric" placeholder="pcs"' : ''} value="${esc(b.noSerial ? String(countRanges(counted || reg)) : counted ? rangesText(counted).replace(/ – /g, '-') : rangesText(reg).replace(/ – /g, '-'))}" aria-label="Unused per count${b.noSerial ? ' (pieces)' : ''}" ${auditor ? '' : 'disabled'}></td>
-              <td class="r">${diff === null ? '<span class="dim">—</span>' : diff}</td><td><span class="pill ${res[0]}">${res[1]}</span></td></tr>`;
-          }).join('')}</tbody></table></div>
+        ${checkRows.length ? `${cutoffTableHtml(f, exam, checkRows, auditor)}
           <div class="af-foot"><p class="af-note">A booklet not seen, or a difference, goes to Verification for the auditor's judgment. It is never concluded as missing by the system.</p>
             ${auditor ? '<button class="btn primary" type="button" id="af-savecheck">Save Physical Check</button>' : '<span class="dim">The auditor does the Physical Check.</span>'}</div>`
         : '<div class="empty"><b>No booklets in this officer\'s hands on the count date.</b>Booklets issued on or before the cash count, not yet exhausted, are listed here.</div>'}`;
@@ -992,6 +975,66 @@ async function addCheckbook(refs, f, lguId, o) {
   emitChange('local');
   toast(`${plan.parts.length} checkbook${plan.parts.length > 1 ? 's' : ''} added for ${o.name}.`, 'ok');
 }
+// Cut-off / Physical Check of one officer at one cash examination: each booklet in the officer's hands on the count date,
+// seen or not, and the unused numbers actually on hand (checkbooks: the last check issued). Shown in Cash Count (Cut-off)
+// and in Accountable Forms (Physical Check); one record (cer_formcheck) either way.
+export function cutoffRowsOf(f, o, exam) {
+  const countDate = exam.audit ? exam.audit.countDate : (f.audits.find((a) => a.id === exam.auditId) || {}).countDate;
+  return f.booklets.filter((b) => b.officerId === o.id && b.status !== 'stock' && b.issuedDate && b.issuedDate <= countDate && statusOf(b).key !== 'done' && b.status !== 'lost').sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
+}
+export function cutoffTableHtml(f, exam0, checkRows, auditor) {
+  const exam = exam0.audit ? exam0 : { ...exam0, audit: f.audits.find((a) => a.id === exam0.auditId) };
+  const chk = (b) => f.checks.find((c) => c.id === exam.id + '|' + b.id) || null;
+  return `<div class="af-tbl"><table class="af-reg af-cutoff">
+          <thead><tr><th scope="col">Seen</th><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col" class="r">Days in Hand</th><th scope="col">Unused per Register</th><th scope="col">Unused per Count</th><th scope="col" class="r">Difference</th><th scope="col">Result</th></tr></thead>
+          <tbody>${checkRows.map((b) => {
+            const c = chk(b) || {}; const reg = unusedRanges(b); const n = countRanges(reg); const sk = skippedOf(b);
+            const counted = Array.isArray(c.ranges) ? c.ranges : (c.unusedFrom && c.unusedTo ? [[c.unusedFrom, c.unusedTo]] : null);
+            const diff = counted === null ? null : n - countRanges(counted);
+            const isChk = b.form === 'chk', lc = c.lastCheck || b.lastCheck || {};
+            const res = !c.seen ? (c.id ? ['p-flag', 'Not seen'] : ['p-stock', 'Not yet checked']) : isChk ? ['p-done', 'Last check recorded'] : counted && sameRanges(counted, reg) ? ['p-done', 'Agrees'] : ['p-flag', 'For checking'];
+            return `<tr data-ck="${esc(b.id)}"><td><input type="checkbox" class="af-seen" ${c.seen ? 'checked' : ''} ${auditor ? '' : 'disabled'} aria-label="Seen: ${esc(FORM_SHORT[b.form])} ${b.from} to ${b.to}"></td>
+              <td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td class="r">${b.issuedAsOf ? '≥ ' : ''}${days(b.issuedDate, exam.audit.countDate)}</td>
+              <td class="mono">${reg.length ? (b.noSerial ? `${n} pcs` : `${rangesText(reg)} (${n})`) : 'None'}${faceOf(b) && n ? `<small>${peso(n * faceOf(b))}</small>` : ''}${sk.length ? `<small class="warn-t">Skipped: ${rangesText(sk)} · on hand, cancelled or not on hand?</small>` : ''}</td>
+              <td>${isChk ? `<div class="af-lc"><input class="input af-sm mono af-lc-no" inputmode="numeric" placeholder="Last check No." value="${esc(lc.no || '')}" aria-label="Last check issued: check No." ${auditor ? '' : 'disabled'}>
+                <input class="input af-sm af-lc-date" type="date" value="${esc(lc.date || '')}" aria-label="Last check issued: date" ${auditor ? '' : 'disabled'}>
+                <input class="input af-sm af-lc-payee" placeholder="Payee / particulars" value="${esc(lc.payee || '')}" aria-label="Last check issued: payee or particulars" ${auditor ? '' : 'disabled'}>
+                <input class="input af-sm r af-lc-amt" inputmode="decimal" placeholder="Amount" value="${lc.amount ? esc(Number(lc.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })) : ''}" aria-label="Last check issued: amount" ${auditor ? '' : 'disabled'}></div>
+                <small class="dim">Unused (from the last check; mark a skipped or cancelled check by editing):</small>` : ''}<input class="input af-sm mono af-ur" ${b.noSerial ? 'inputmode="numeric" placeholder="pcs"' : ''} value="${esc(b.noSerial ? String(countRanges(counted || reg)) : counted ? rangesText(counted).replace(/ – /g, '-') : rangesText(reg).replace(/ – /g, '-'))}" aria-label="Unused per count${b.noSerial ? ' (pieces)' : ''}" ${auditor ? '' : 'disabled'}></td>
+              <td class="r">${diff === null ? '<span class="dim">—</span>' : diff}</td><td><span class="pill ${res[0]}">${res[1]}</span>${!isChk && !b.noSerial && c.seen && counted ? `<small class="dim">${counted.length && counted[0][0] > b.from ? `Last used: ${counted[0][0] - 1}` : !counted.length ? 'All used' : 'None used'}</small>` : ''}</td></tr>`;
+          }).join('')}</tbody></table></div>`;
+}
+// Wire the last-check box (fills the unused checks) and save every row of the cut-off inside root.
+export function wireCutoff(refs, f, exam, root = document, after = null) {
+  $$('tr[data-ck]', root).forEach((tr) => { const n = $('.af-lc-no', tr); if (!n) return;
+    const b = f.booklets.find((x) => x.id === tr.dataset.ck);
+    n.oninput = () => { const v = int(n.value); if (v && v >= b.from && v <= b.to) $('.af-ur', tr).value = v < b.to ? `${v + 1}-${b.to}` : ''; }; });
+  return async () => {
+    for (const tr of $$('tr[data-ck]', root)) {
+      const b = f.booklets.find((x) => x.id === tr.dataset.ck);
+      const p = b.noSerial ? (() => { const q = int($('.af-ur', tr).value) ?? 0; return q > b.qty ? { error: `more than the ${b.qty} pieces of the lot.` } : { ranges: q ? [[b.from, b.from + q - 1]] : [] }; })() : parseRanges($('.af-ur', tr).value, b.from, b.to);
+      if (p.error) { toast(`${FORM_SHORT[b.form]} ${serialText(b)}: ${p.error}`, 'bad'); return false; }
+      if (b.form === 'chk') { const no = int($('.af-lc-no', tr).value); if (no && (no < b.from || no > b.to)) { toast(`Check No. ${no} is outside the checkbook ${serialText(b)}.`, 'bad'); return false; } }
+    }
+    for (const tr of $$('tr[data-ck]', root)) {
+      const id = exam.id + '|' + tr.dataset.ck;
+      const b = f.booklets.find((x) => x.id === tr.dataset.ck);
+      const p = b.noSerial ? (() => { const q = int($('.af-ur', tr).value) ?? 0; return { ranges: q ? [[b.from, b.from + q - 1]] : [] }; })() : parseRanges($('.af-ur', tr).value, b.from, b.to);
+      const rec = { examId: exam.id, bookletId: b.id, seen: $('.af-seen', tr).checked, ranges: p.ranges };
+      if (b.form === 'chk') {
+        const no = int($('.af-lc-no', tr).value);
+        rec.lastCheck = { no: no || '', date: $('.af-lc-date', tr).value, payee: $('.af-lc-payee', tr).value.trim(), amount: parseFloat(String($('.af-lc-amt', tr).value).replace(/[,₱\s]/g, '')) || 0 };
+        // The checkbook's unused checks follow the cut-off (no check register yet).
+        if (rec.seen) await store.save('cer_booklets', b.id, { ...strip(b), unusedAtStart: p.ranges, lastCheck: rec.lastCheck }, by(refs), { quiet: true });
+      }
+      await store.save('cer_formcheck', id, rec, by(refs), { quiet: true });
+    }
+    if (after) after();
+    emitChange('local');
+    return true;
+  };
+}
+
 function clearanceHtml(refs, f, o, mine, lguId) {
   const list = mine.filter(held).sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
   return `<h2>Accountable Forms in the Officer's Hands</h2>
@@ -1007,32 +1050,9 @@ function wireOfficer(ctx, f, lguId, o, exam, offs) {
   $('#af-clear').onclick = () => { document.body.classList.add('af-printing'); $('#cer-print').hidden = false; window.print(); $('#cer-print').hidden = true; document.body.classList.remove('af-printing'); };
   const ex = $('#af-exam'); if (ex) ex.onchange = () => go({ exam: ex.value });
   $$('tr[data-bk]').forEach((tr) => { const open = () => bookletModal(ctx, f, f.booklets.find((b) => b.id === tr.dataset.bk), offs); tr.onclick = open; tr.onkeydown = (e) => { if (e.key === 'Enter') open(); }; });
-  $$('tr[data-ck]').forEach((tr) => { const n = $('.af-lc-no', tr); if (!n) return;
-    const b = f.booklets.find((x) => x.id === tr.dataset.ck);
-    n.oninput = () => { const v = int(n.value); if (v && v >= b.from && v <= b.to) $('.af-ur', tr).value = v < b.to ? `${v + 1}-${b.to}` : ''; }; });
   const save = $('#af-savecheck');
-  if (save) save.onclick = async () => {
-    save.disabled = true;
-    try {
-      for (const tr of $$('tr[data-ck]')) {
-        const id = exam.id + '|' + tr.dataset.ck;
-        const b = f.booklets.find((x) => x.id === tr.dataset.ck);
-        const p = b.noSerial ? (() => { const q = int($('.af-ur', tr).value) ?? 0; return q > b.qty ? { error: `more than the ${b.qty} pieces of the lot.` } : { ranges: q ? [[b.from, b.from + q - 1]] : [] }; })() : parseRanges($('.af-ur', tr).value, b.from, b.to);
-        if (p.error) { toast(`${FORM_SHORT[b.form]} ${serialText(b)}: ${p.error}`, 'bad'); return; }
-        const rec = { examId: exam.id, bookletId: b.id, seen: $('.af-seen', tr).checked, ranges: p.ranges };
-        if (b.form === 'chk') {
-          const no = int($('.af-lc-no', tr).value);
-          if (no && (no < b.from || no > b.to)) { toast(`Check No. ${no} is outside the checkbook ${serialText(b)}.`, 'bad'); return; }
-          rec.lastCheck = { no: no || '', date: $('.af-lc-date', tr).value, payee: $('.af-lc-payee', tr).value.trim(), amount: parseFloat(String($('.af-lc-amt', tr).value).replace(/[,₱\s]/g, '')) || 0 };
-          // The checkbook's unused checks follow the Physical Check (no check register yet).
-          if (rec.seen) await store.save('cer_booklets', b.id, { ...strip(b), unusedAtStart: p.ranges, lastCheck: rec.lastCheck }, by(refs), { quiet: true });
-        }
-        await store.save('cer_formcheck', id, rec, by(refs), { quiet: true });
-      }
-      emitChange('local');
-      toast('Physical Check saved.', 'ok');
-    } finally { save.disabled = false; }
-  };
+  if (save && exam) { const doSave = wireCutoff(refs, f, exam);
+    save.onclick = async () => { save.disabled = true; try { if (await doSave()) toast('Physical Check saved.', 'ok'); } finally { save.disabled = false; } }; }
 }
 
 /* ================= 3 · RAAF Reconciliation ================= */
@@ -1544,7 +1564,8 @@ export function openBooklet(refs, f, id) {
 }
 // Add the officer's forms on hand at the last cash exam. From the custodian: they go to the Forms Register as issuances
 // still in the officer's hands. From the bank (checks): they stay on this officer's records only.
-export async function addBeginningForms(refs, f, regId, o, asOf) {
+export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginning') {
+  const cut = mode === 'cutoff';
   const lgu = refs.lgu[regId], cust = custOf(lgu);
   let plan = null;
   const CUST = '__cust';
@@ -1594,7 +1615,7 @@ export async function addBeginningForms(refs, f, regId, o, asOf) {
     box.innerHTML = r.error ? `<b class="warn-t">${esc(r.error)}</b>` : startPreview({ parts: r.parts, held: o.id, ns: r.ns }).replace('in the officer\'s hands', `in ${esc(o.name)}'s hands at the last cash exam`);
   };
   const forms = formsFor(f, regId);
-  const v = await modal({ title: `Beginning Forms · ${o.name}`, wide: true,
+  const v = await modal({ title: `${cut ? 'Booklet Presented at the Cut-off' : 'Beginning Forms'} · ${o.name}`, wide: true,
     body: `<div class="af-pmode af-src" role="radiogroup" aria-label="Kind"><span>Entering:</span>
         <label class="cer-chip"><input type="radio" name="g-kind" value="forms" checked> Accountable Forms</label>
         <label class="cer-chip"><input type="radio" name="g-kind" value="bank"> Checkbook (Bank)</label></div>
@@ -1607,9 +1628,9 @@ export async function addBeginningForms(refs, f, regId, o, asOf) {
         <div class="field"><label for="g-to">Serial To</label><input class="input r mono" id="g-to" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="g-per">Per Booklet</label><input class="input r" id="g-per" inputmode="numeric" value="${LAST.per}"></div>
         <label class="cer-chip af-span af-nschip" id="g-nsbox" hidden><input type="checkbox" id="g-ns"> Cash tickets without serial numbers (counted by quantity)</label>
-        <div class="af-span">${partBox('g', { note: `Partly used (numbers used on or before the last cash exam, ${fmtDate(asOf)}); for cash tickets without serials, type the number of pieces` })}</div>
+        <div class="af-span">${partBox('g', { note: `Partly used (numbers used ${cut ? 'before the cut-off' : 'on or before the last cash exam'}, ${fmtDate(asOf)}); for cash tickets without serials, type the number of pieces` })}</div>
       </div>
-      <p class="af-note">Enter complete series. Everything here is the officer's beginning <b>as of the last cash exam (${esc(fmtDate(asOf))})</b>; the real date received and date issued, if known, are added later with Edit in Accountable Forms. Receipts encoded in Collections &amp; Deposits are taken out on top of this.</p>
+      <p class="af-note">Enter complete series. ${cut ? `For a booklet the officer presented at the cash count (${esc(fmtDate(asOf))}) that is not in the register yet. Then type its unused numbers in the cut-off.` : `Everything here is the officer's beginning <b>as of the last cash exam (${esc(fmtDate(asOf))})</b>;`} the real date received and date issued, if known, are added later with Edit in Accountable Forms. Receipts encoded in Collections &amp; Deposits are taken out on top of this.</p>
       <div class="af-note" id="g-prev"></div>`,
     onOpen: (bg) => {
       $$('input[name="g-kind"]', bg).forEach((r) => { r.onchange = () => show(bg); });
@@ -1617,7 +1638,7 @@ export async function addBeginningForms(refs, f, regId, o, asOf) {
       $$('#g-from, #g-to, #g-per, #g-form, #g-ns', bg).forEach((el) => { el.oninput = () => show(bg); el.onchange = () => show(bg); });
       $('#g-from', bg).addEventListener('change', () => { const a = int($('#g-from', bg).value), t = $('#g-to', bg); if (a && !t.value) { t.value = bookletOf(a, int($('#g-per', bg).value) || (srcNow(bg) === 'bank' ? CHK_PER : PER_BOOKLET))[1]; show(bg); } });
       wirePart('g', bg, () => show(bg)); show(bg); },
-    buttons: [{ label: 'Cancel', value: null }, { label: 'Save Beginning Forms', cls: 'primary', value: 'save', check: (bg) => {
+    buttons: [{ label: 'Cancel', value: null }, { label: cut ? 'Add Booklet' : 'Save Beginning Forms', cls: 'primary', value: 'save', check: (bg) => {
       const r = read(bg); if (r.error) { toast(r.error, 'bad'); return false; }
       plan = { ...r, acct: $('#g-acct', bg).value.trim(), other: $('#g-srcsel', bg).value }; return true; } }] });
   if (v !== 'save' || !plan) return false;
@@ -1629,13 +1650,13 @@ export async function addBeginningForms(refs, f, regId, o, asOf) {
   for (const s of plan.parts) {
     // The officer's beginning as of the last cash exam: dates not yet known (added with Edit when found).
     const rec = { lguId: regId, form: plan.form, from: s.x, to: s.y, qty: s.y - s.x + 1, reference: '', status: 'issued', officerId: o.id, ...(plan.ns ? { noSerial: true } : {}),
-      issuedDate: asOf, issuedAsOf: true, beginAs: 'ao', beginDate: asOf, usedBefore: null, unusedAtStart: s.unused,
+      issuedDate: asOf, issuedAsOf: true, ...(cut ? { foundAtCount: true } : { beginAs: 'ao', beginDate: asOf }), usedBefore: null, unusedAtStart: s.unused,
       receivedDate: '', receivedFrom: from, receivedDirect: direct, source: plan.src === 'bank' ? 'officer' : 'starting',
       ...(plan.src === 'bank' ? { bankAccount: plan.acct } : {}),
-      history: [hist(refs, 'starting', asOf, { officerId: o.id, note: `In the officer's hands at the last cash exam${from ? ' · from ' + from : ' · from the custodian'}${s.unused ? `, partly used: ${countRanges(s.unused)} unused` : ''} · Audit Setup` })] };
+      history: [hist(refs, 'starting', asOf, { officerId: o.id, note: `${cut ? 'Presented at the cash count (cut-off), not in the register before' : "In the officer's hands at the last cash exam"}${from ? ' · from ' + from : ' · from the custodian'}${s.unused ? `, partly used: ${countRanges(s.unused)} unused` : ''} · ${cut ? 'Cash Count' : 'Audit Setup'}` })] };
     await store.save('cer_booklets', newId('cerb'), rec, by(refs), { quiet: true });
   }
   emitChange('local');
-  toast(`${plan.parts.length} ${plan.src === 'bank' ? 'checkbook' : 'booklet'}${plan.parts.length > 1 ? 's' : ''} added to ${o.name}'s beginning forms.`, 'ok');
+  toast(`${plan.parts.length} ${plan.src === 'bank' ? 'checkbook' : 'booklet'}${plan.parts.length > 1 ? 's' : ''} added to ${cut ? `${o.name}'s forms at the cut-off` : `${o.name}'s beginning forms`}.`, 'ok');
   return true;
 }

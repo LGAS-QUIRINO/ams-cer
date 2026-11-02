@@ -1,16 +1,18 @@
 // CER · Cash Count (design approved 18 Oct 2026), following the GF 74-A.
-// Per accountable officer of a cash examination, at the cut-off:
-//   1. Cash on Hand            bills by number of pieces; coins as one amount.
-//   2. Cash Items              checks, paid vouchers / payrolls not yet liquidated, etc.: presented, allowed (auditor), disallowed.
-//   3. Unused Accountable Forms read from Accountable Forms (Physical Check), checkbooks included.
+// Per accountable officer of a cash examination, at the cut-off (done first, from what the officer presents):
+//   1. Cut-off                 each booklet in the officer's hands: seen, unused numbers on hand; checkbooks: last check issued.
+//                              Same record as the Physical Check in Accountable Forms (cer_formcheck); works even when the
+//                              collections, deposits and cash advances are not (all) encoded yet. A booklet not in the register is added here.
+//   2. Cash on Hand            bills by number of pieces; coins as one amount.
+//   3. Cash Items              checks, paid vouchers / payrolls not yet liquidated, etc.: presented, allowed (auditor), disallowed.
 //   4. Split by Accountability counted together, then split: Collections | Cash Advance, against the balance per books.
 //
 // Records:
 //   cer_cashcount  id = examId  { examId, bills{ '1000': pcs, … }, coins, items[{ particulars, appliesTo: 'col'|'ca', presented, allowed }], split{ col, ca } (typed; blank = automatic) }
 import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
-import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
-import { loadForms, unusedFormsOf, exportXlsx, registerOf } from './forms.js';
+import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
+import { loadForms, unusedFormsOf, exportXlsx, registerOf, cutoffRowsOf, cutoffTableHtml, wireCutoff, addBeginningForms } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm } from './collections.js';
 
 const canCount = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
@@ -55,8 +57,8 @@ export async function countView(ctx) {
   const [reports, advs0, liqs0, counts0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount'].map((t) => store.list(t)));
   f.reports = reports.map(flat);
   const advs = advs0.map(flat), liqs = liqs0.map(flat);
-  const crumb = 'Cash Count';
-  const hello = `<div class="hello"><div><h1>Cash Count</h1><p>Count everything the officer produces at the cut-off: cash on hand and cash items. The count is split by accountability and carried to the Report of Cash Examination (GF 74-A).</p></div></div>`;
+  const crumb = 'Cash Count (Cut-off)';
+  const hello = `<div class="hello"><div><h1>Cash Count (Cut-off)</h1><p>Done first, from what the officer presents: the accountable forms on hand (unused numbers, last check), then cash on hand and cash items. The count is split by accountability and carried to the Report of Cash Examination (GF 74-A).</p></div></div>`;
   const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   if (!audits.length) return { crumb, body: hello + '<div class="panel"><div class="empty"><b>No cash examination yet.</b>The auditors set one up in Audit Setup.</div></div>' };
   const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
@@ -81,6 +83,10 @@ export async function countView(ctx) {
   const enc = canCount(refs);
   const dis = enc ? '' : 'disabled';
   const caChecks = advs.filter((a) => a.officerId === o.id).map((a) => a.checkNo);
+  const cutRows = cutoffRowsOf(f, o, exam);
+  const auditor = isAuditor(refs);
+  const nSeen = cutRows.filter((b) => f.checks.find((c) => c.id === exam.id + '|' + b.id)?.seen).length;
+  const mv = forms.filter((x) => x.face), nomv = forms.filter((x) => !x.face);
 
   const billRows = BILLS.map((v) => `<tr><td>₱ ${v.toLocaleString('en-US')}</td><td class="r"><label class="sr-only" for="b${v}">₱${v} pieces</label><input class="input af-sm r cc-pc" id="b${v}" data-bill="${v}" inputmode="numeric" value="${esc(d.bills[v] || '')}" placeholder="0" ${dis}></td><td class="r" data-amt="${v}"></td></tr>`).join('');
   const itemRow = (it, i) => `<tr data-it="${i}"><td>${esc(it.particulars)}</td><td>${esc(books.find((b) => b.key === it.appliesTo)?.label || (it.appliesTo === 'ca' ? 'Cash advance' : 'Collections'))}</td><td class="r">${money(it.presented)}</td>
@@ -91,17 +97,25 @@ export async function countView(ctx) {
       <div class="stat"><span>Cash on Hand</span><b id="cc-s-cash">₱ 0.00</b><small>bills and coins counted</small></div>
       <div class="stat"><span>Cash Items Allowed</span><b id="cc-s-items" style="color:#1d4fb8">₱ 0.00</b><small id="cc-s-items2"></small></div>
       <div class="stat"><span>Total Inventory</span><b id="cc-s-inv">₱ 0.00</b><small>cash + allowed cash items</small></div>
-      <div class="stat"><span>Unused Forms</span><b>${forms.reduce((n, x) => n + x.qty, 0)} pcs</b><small>from the Physical Check</small></div>
+      <div class="stat"><span>Unused Forms</span><b>${forms.reduce((n, x) => n + x.qty, 0)} pcs</b><small>${nSeen} of ${cutRows.length} booklet${cutRows.length === 1 ? '' : 's'} seen at the cut-off</small></div>
     </div>
+    <section class="panel" aria-labelledby="cc-h0"><div class="cc-head"><span class="cd-num">1</span><h2 id="cc-h0">Cut-off: Accountable Forms Presented</h2><span class="cd-sub">booklets and checkbooks in the officer's hands at the count</span></div>
+      <div class="cd-body">
+        <p class="af-note cc-cutnote">Tick each booklet seen and type the unused numbers actually on hand, as ranges (e.g. 7311510, 7311516-7311550); for a checkbook, the last check issued. The last number used is known from this even when the collections, deposits and cash advances are not encoded yet.</p>
+        ${cutRows.length ? cutoffTableHtml(f, exam, cutRows, auditor) : '<div class="empty"><b>No booklets in this officer\'s hands on the count date.</b>Add the booklets the officer presents.</div>'}
+        ${cutRows.length ? `<div class="cc-mv">${mv.length ? `<span>Unused forms with money value <b>₱${money(mv.reduce((n, x) => n + x.amount, 0))}</b> <span class="dim">(${mv.reduce((n, x) => n + x.qty, 0)} pcs at face value)</span></span>` : ''}<span>Unused forms without money value <b>${nomv.reduce((n, x) => n + x.qty, 0)} pcs</b></span><span class="dim">as last saved</span></div>` : ''}
+        <div class="cd-actions">${auditor ? `<button class="btn" type="button" id="cc-addbk">+ Booklet not in the register</button>${cutRows.length ? '<button class="btn primary" type="button" id="cc-savecut">Save Cut-off</button>' : ''}` : '<span class="dim">The auditor does the cut-off.</span>'}</div>
+        <p class="af-note">A booklet not seen, or a difference from the register, goes to Verification for the auditor's judgment. The same record shows in Accountable Forms (Physical Check).</p>
+      </div></section>
     <div class="cc-grid">
-      <section class="panel" aria-labelledby="cc-h1"><div class="cc-head"><span class="cd-num">1</span><h2 id="cc-h1">Cash on Hand</h2></div>
+      <section class="panel" aria-labelledby="cc-h1"><div class="cc-head"><span class="cd-num">2</span><h2 id="cc-h1">Cash on Hand</h2></div>
         <table class="af-reg cc-tbl"><thead><tr><th scope="col">Denomination</th><th scope="col" class="r">No. of Pcs.</th><th scope="col" class="r">Amount (₱)</th></tr></thead>
         <tbody><tr class="cc-sec"><td colspan="3">Bills</td></tr>${billRows}
           <tr class="cc-sec"><td colspan="3">Coins</td></tr>
           <tr><td>Coins (total amount)</td><td class="r dim">type the amount</td><td class="r"><label class="sr-only" for="cc-coins">Coins amount</label><input class="input af-sm r" id="cc-coins" inputmode="decimal" value="${esc(d.coins === '' || d.coins === undefined || d.coins === null ? '' : money(d.coins))}" placeholder="0.00" ${dis}></td></tr>
           <tr class="cc-tot"><td colspan="2">Total cash on hand</td><td class="r" id="cc-cash"></td></tr></tbody></table>
       </section>
-      <section class="panel" aria-labelledby="cc-h2"><div class="cc-head"><span class="cd-num">2</span><h2 id="cc-h2">Cash Items</h2><span class="cd-sub">checks, paid vouchers / payrolls not yet liquidated, etc.</span></div>
+      <section class="panel" aria-labelledby="cc-h2"><div class="cc-head"><span class="cd-num">3</span><h2 id="cc-h2">Cash Items</h2><span class="cd-sub">checks, paid vouchers / payrolls not yet liquidated, etc.</span></div>
         <div class="cd-body">
           ${enc ? `<div class="cd-entry cc-entry">
             <div class="field"><label for="ci-part">Particulars</label><input class="input" id="ci-part" list="ci-list" autocomplete="off"><datalist id="ci-list">${caChecks.map((c) => `<option value="Paid vouchers / payroll, Check No. ${esc(c)}">`).join('')}</datalist></div>
@@ -115,16 +129,6 @@ export async function countView(ctx) {
         </div>
       </section>
     </div>
-    <section class="panel" aria-labelledby="cc-h3"><div class="cc-head"><span class="cd-num">3</span><h2 id="cc-h3">Unused Accountable Forms</h2><span class="cd-sub">from Accountable Forms · Physical Check</span>
-        <a class="btn" style="margin-left:auto" href="#/cer/forms/officer?lgu=${esc(registerOf(refs, o.lguId))}&o=${esc(o.id)}&exam=${esc(exam.id)}&tab=check">Open Physical Check</a></div>
-      ${forms.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col" class="r">Unused Qty</th><th scope="col">Unused Serial No.</th><th scope="col">Physical Check</th></tr></thead>
-        <tbody>${forms.map((x) => `<tr><td><b>${esc(x.name)}</b>${x.lastCheck && x.lastCheck.no ? `<small>Last check ${esc(x.lastCheck.no)}${x.lastCheck.date ? ' · ' + esc(fmtDate(x.lastCheck.date)) : ''}${x.lastCheck.payee ? ' · ' + esc(x.lastCheck.payee) : ''}${x.lastCheck.amount ? ' · ₱' + money(x.lastCheck.amount) : ''}</small>` : ''}</td>
-          <td class="mono">${x.ns ? 'No serial' : `${x.from} – ${x.to}`}</td><td class="r">${x.qty}${x.face && x.qty ? `<small>₱${money(x.amount)}</small>` : ''}</td><td class="mono">${esc(x.text) || '<span class="dim">None</span>'}</td><td><span class="pill ${x.status[0]}">${x.status[1]}</span></td></tr>`).join('')}
-          ${forms.some((x) => x.face) ? `<tr class="cc-tot"><td colspan="2">Total unused forms with money value</td><td class="r">₱${money(forms.reduce((n, x) => n + (x.face ? x.amount : 0), 0))}</td><td colspan="2" class="dim">${forms.filter((x) => x.face).reduce((n, x) => n + x.qty, 0)} pcs at face value</td></tr>` : ''}
-          <tr class="cc-tot"><td colspan="2">Total unused forms without money value</td><td class="r">${forms.reduce((n, x) => n + (x.face ? 0 : x.qty), 0)}</td><td colspan="2"></td></tr></tbody></table></div>
-        <p class="af-note cc-pad">One row per booklet in the officer's hands on the count date. Checkbooks: unused checks follow the last check issued, entered in the Physical Check.</p>`
-      : '<div class="empty"><b>No accountable forms in this officer\'s hands on the count date.</b>Booklets and checkbooks come from Accountable Forms.</div>'}
-    </section>
     <section class="panel" aria-labelledby="cc-h4"><div class="cc-head"><span class="cd-num">4</span><h2 id="cc-h4">Split of the Count by Accountability</h2><span class="cd-sub">counted together, then split</span><span id="cc-pill" style="margin-left:auto"></span></div>
       <div class="cd-body">
         ${books.length ? `<div class="af-tbl"><table class="af-reg cc-split"><thead><tr><th scope="col">Nature of Funds</th>${books.map((b) => `<th scope="col" class="r">${esc(b.label)}</th>`).join('')}<th scope="col" class="r">Totals</th></tr></thead>
@@ -142,7 +146,7 @@ export async function countView(ctx) {
     </section>
     <div id="cer-print" class="af-print" hidden></div>`;
 
-  return { crumb, body, wire: () => { wireTop(); wireCount({ rerender: ctx.rerender, refs, audit, exam, o, d, books, forms, saved, enc, lgu: refs.lgu[audit.lguId] }); } };
+  return { crumb, body, wire: () => { wireTop(); wireCount({ rerender: ctx.rerender, refs, audit, exam, o, d, books, forms, saved, enc, lgu: refs.lgu[audit.lguId], f, cutRows }); } };
 }
 
 export function compute(d, books) {
@@ -191,6 +195,10 @@ function wireCount(c) {
   };
   const refresh = () => c.rerender();
   paint();
+  // Cut-off: saved on its own, and together with the cash count.
+  const saveCut = c.cutRows.length && isAuditor(refs) ? wireCutoff(refs, c.f, { ...exam, audit }, $('.af-cutoff')?.closest('section') || document) : null;
+  const sc = $('#cc-savecut'); if (sc && saveCut) sc.onclick = async () => { sc.disabled = true; try { if (await saveCut()) toast('Cut-off saved.', 'ok'); } finally { sc.disabled = false; } };
+  const ab = $('#cc-addbk'); if (ab) ab.onclick = () => addBeginningForms(refs, c.f, registerOf(refs, o.lguId), o, audit.countDate, 'cutoff');
   $$('[data-bill]').forEach((i) => { i.oninput = () => { d.bills[i.dataset.bill] = i.value.replace(/[^\d]/g, ''); paint(); }; });
   const coins = $('#cc-coins');
   if (coins) { coins.oninput = () => { d.coins = coins.value; paint(); }; coins.onblur = () => { const v = num(coins.value); if (v !== null) coins.value = money(v); }; }
@@ -217,7 +225,7 @@ function wireCount(c) {
     if (Math.abs(k.unsplit) > 0.004) return bad(`₱${money(k.unsplit)} of the cash on hand is not split. Check the typed amounts.`);
     if (d.items.some((it) => (num(it.allowed ?? it.presented) ?? 0) > (+it.presented || 0) + 0.004)) return bad('An allowed amount is more than what was presented.');
     save.disabled = true;
-    try { DRAFT.key = ''; await store.save('cer_cashcount', exam.id, data(), by(refs)); toast('Cash Count saved.', 'ok'); } finally { save.disabled = false; }
+    try { if (saveCut && !(await saveCut())) return; DRAFT.key = ''; await store.save('cer_cashcount', exam.id, data(), by(refs)); toast('Cash Count saved.', 'ok'); } finally { save.disabled = false; }
   };
   $('#cc-xls').onclick = () => {
     const k = compute(d, books);
