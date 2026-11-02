@@ -36,7 +36,7 @@ const SOURCES = ['Soft copy (imported)', 'PDF', 'Printed', 'Bank confirmation'];
 
 export async function banksView(ctx) {
   const { refs, q } = ctx;
-  const [audits0, settings0, reports0, advs0, recs0, officers0, exams0] = await Promise.all(['cer_audits', 'cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_officers', 'cer_exams'].map((t) => store.list(t)));
+  const [audits0, settings0, reports0, advs0, recs0, officers0, exams0, books0, fchk0] = await Promise.all(['cer_audits', 'cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_officers', 'cer_exams', 'cer_booklets', 'cer_formcheck'].map((t) => store.list(t)));
   const audits = audits0.map(flat).filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   const settings = Object.fromEntries(settings0.map((s) => [s.id, s.data]));
   const crumb = 'Bank Statements';
@@ -81,14 +81,21 @@ export async function banksView(ctx) {
     from: `Cash advance · ${officers.find((o) => o.id === a.officerId)?.name || ''}` }));
   (rec.otherChecks || []).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0, from: `Typed here${c.payee ? ' · ' + c.payee : ''}`, other: c }));
   const list = items.filter((x) => x.date && x.date <= asOf && !foundElsewhere.has(x.key)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.kind.localeCompare(b.kind));
+  // Cut-off (Cash Count): the last check written in each checkbook at the count. A check numbered after it, in the same checkbook,
+  // was issued after the cut-off: not an outstanding check of this examination.
+  const examIds = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => e.id));
+  const cuts = fchk0.map(flat).filter((c) => examIds.has(c.examId) && c.lastCheck && c.lastCheck.no).map((c) => { const bk = books0.map(flat).find((b) => b.id === c.bookletId); return bk ? { from: +bk.from, to: +bk.to, last: +chqKey(c.lastCheck.no) } : null; }).filter(Boolean);
+  const afterCut = (x) => { if (x.kind !== 'chk') return false; const n = +chqKey(x.ref); return !!n && cuts.some((c) => n >= c.from && n <= c.to && n > c.last); };
+  list.forEach((x) => { x.after = afterCut(x) && !rec.found[x.key]; });
   const result = (x) => {
     const bd = rec.found[x.key];
+    if (x.after) return ['p-stock', 'Issued after the cut-off'];
     if (!bd) return x.kind === 'dep' ? ['p-part', 'Deposit in transit'] : ['p-part', 'Outstanding check'];
     if (x.kind === 'dep') { const late = bd && x.date ? days(x.date, bd) : 0; return late > 0 ? ['p-flag', `In the bank · ${late} day${late > 1 ? 's' : ''} later`] : ['p-done', 'In the bank']; }
     return ['p-done', 'Cleared'];
   };
   const dit = r2(list.filter((x) => x.kind === 'dep' && !rec.found[x.key]).reduce((n, x) => n + x.amount, 0));
-  const oc = r2(list.filter((x) => x.kind === 'chk' && !rec.found[x.key]).reduce((n, x) => n + x.amount, 0));
+  const oc = r2(list.filter((x) => x.kind === 'chk' && !rec.found[x.key] && !x.after).reduce((n, x) => n + x.amount, 0));
   // Bank-only items: the imported lines not matched to a deposit or check in the books, by their side
   // (credit → bank credit, debit → bank debit), plus any typed by hand (statements not imported).
   const linked = new Set(Object.entries(rec.lineOf || {}).filter(([k]) => rec.found[k]).map(([, i]) => i));
@@ -214,7 +221,7 @@ function wireBanks(c) {
   const rr = () => window.dispatchEvent(new HashChangeEvent('hashchange'));
   const only = $('#bk-only'); if (only) only.onchange = () => { UI.only = only.checked; rr(); };
   $('#bk-xls').onclick = () => exportXlsx(`Bank Reconciliation ${acct.accountNo || acct.fund} ${c.asOf}.xlsx`, 'Bank Reconciliation', [
-    ...list.map((x) => ({ Item: x.kind === 'dep' ? 'Deposit' : 'Check', 'Date (Books)': fmtDate(x.date), Reference: x.ref, From: x.from, Amount: x.amount, 'Date (Bank)': fmtDate(rec.found[x.key] || ''), Result: rec.found[x.key] ? (x.kind === 'dep' ? 'In the bank' : 'Cleared') : (x.kind === 'dep' ? 'Deposit in transit' : 'Outstanding check') })),
+    ...list.map((x) => ({ Item: x.kind === 'dep' ? 'Deposit' : 'Check', 'Date (Books)': fmtDate(x.date), Reference: x.ref, From: x.from, Amount: x.amount, 'Date (Bank)': fmtDate(rec.found[x.key] || ''), Result: rec.found[x.key] ? (x.kind === 'dep' ? 'In the bank' : 'Cleared') : x.after ? 'Issued after the cut-off' : (x.kind === 'dep' ? 'Deposit in transit' : 'Outstanding check') })),
     ...c.unmatched.map((l) => ({ Item: l.credit ? 'Bank credit' : 'Bank debit', 'Date (Books)': '', Reference: l.chq || '', From: l.desc, Amount: l.credit || l.debit, 'Date (Bank)': fmtDate(l.date), Result: 'Not in the books' })),
     ...(rec.bankItems || []).map((b) => ({ Item: b.type === 'credit' ? 'Bank credit' : 'Bank debit', 'Date (Books)': '', Reference: '', From: b.particulars || '', Amount: b.amount, 'Date (Bank)': fmtDate(b.date), Result: 'Not in the books' })),
     {}, { Item: 'Balance per bank', Amount: rec.ending ?? '' }, { Item: 'Add: Deposits in transit', Amount: c.dit }, { Item: 'Less: Outstanding checks', Amount: c.oc }, { Item: 'Adjusted bank balance', Amount: c.adjBank ?? '' },

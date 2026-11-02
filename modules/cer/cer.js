@@ -110,13 +110,13 @@ export function bondChecks(st) {
 function navItems() {
   return [
     { key: 'setup', label: 'Audit Setup', icon: 'pen', href: '#/cer/setup' },
+    { key: 'count', label: 'Cash Count (Cut-off)', icon: 'grid', href: '#/cer/count' },
     { section: true, label: 'SOURCE RECORDS' },
     { key: 'forms', label: 'Accountable Forms', icon: 'library', href: '#/cer/forms' },
     { key: 'collections', label: 'Collections & Deposits', icon: 'inbox', href: '#/cer/collections' },
     { key: 'advances', label: 'Cash Advances', icon: 'swap', href: '#/cer/advances' },
     { key: 'banks', label: 'Bank Statements', icon: 'building', href: '#/cer/banks' },
     { section: true, label: 'EXAMINATION' },
-    { key: 'count', label: 'Cash Count', icon: 'grid', href: '#/cer/count' },
     { key: 'verify', label: 'Verification', icon: 'book', href: '#/cer/verify' },
     { key: 'reports', label: 'Reports', icon: 'overview', href: '#/cer/reports' }];
 }
