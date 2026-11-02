@@ -575,3 +575,12 @@ table.cd-sumtbl{min-width:0; width:100%}
 .bc-tbl th:nth-child(1) { width: 150px; } .bc-tbl th:nth-child(2) { width: 140px; } .bc-tbl th:nth-child(4) { width: 150px; } .bc-tbl th:nth-child(5) { width: 44px; }
 .bc-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; }
 .ca-begtag { font-size: 10.5px; padding: 1px 6px; margin-left: 4px; vertical-align: 1px; }
+
+/* Cash Advances: tabs like Collections & Deposits, figures in one line */
+.ca-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}
+.ca-figs{display:flex; flex-wrap:wrap; gap:6px 26px; align-items:baseline; padding:2px 4px 12px; font-size:13px; color:var(--muted,#5b6b84)}
+.ca-figs span{display:inline-flex; align-items:baseline; gap:6px; white-space:nowrap}
+.ca-figs b{font-size:15px; color:var(--ink)}
+.ca-figs b.ok{color:var(--ok)}
+.ca-figs .ca-unliq b{color:#1d4fb8; font-size:16px}
+.ca-figs small{font-size:12px}

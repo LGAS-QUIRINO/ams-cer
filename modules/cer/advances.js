@@ -19,7 +19,8 @@ const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, ...rest } = x; return rest; };
 const bad = (m) => { toast(m, 'bad'); return false; };
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
-const OPEN = { ca: true, lq: true };
+const OPEN = { ca: true, lq: false };   // which tab is shown (one at a time); 1 Cash Advance when the screen is opened
+export const resetTabs = () => { OPEN.ca = true; OPEN.lq = false; };
 const LAST = { caDate: '', lqDate: '', focus: '' };
 // Beginning balance: the officer's cash advance balances in Audit Setup (disbursing, special disbursing, petty cash fund).
 const BEG_KEYS = ['ca', 'sdo', 'pcf'];
@@ -47,14 +48,14 @@ export async function advancesView(ctx) {
   const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
   const exams = exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => ({ ...e, o: officers.find((x) => x.id === e.officerId) })).filter((e) => e.o);
   const exam = exams.find((e) => e.id === q.get('e')) || exams[0] || null;
-  const top = `<div class="panel cd-bar">
+  const top = (open = false) => `<div class="panel ${open ? 'cd-head' : 'cd-bar'}">${open ? '<div class="cd-headrow">' : ''}
       <div class="field"><label for="cd-audit">Cash Examination</label><select class="input" id="cd-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>
       <div class="field"><label for="cd-exam">Accountable Officer</label><select class="input" id="cd-exam">${exams.length ? exams.map((e) => `<option value="${esc(e.id)}" ${exam && e.id === exam.id ? 'selected' : ''}>${esc(e.o.name)}${e.o.designation ? ' · ' + esc(e.o.designation) : ''}</option>`).join('') : '<option value="">No officer in this examination</option>'}</select></div></div>`;
   const wireTop = () => {
     $('#cd-audit').onchange = (e) => go({ a: e.target.value, e: '' });
     $('#cd-exam').onchange = (e) => go({ e: e.target.value });
   };
-  if (!exam) return { crumb, body: hello + top + '<div class="panel"><div class="empty"><b>No accountable officer in this cash examination.</b>Add the officers in Audit Setup.</div></div>', wire: wireTop };
+  if (!exam) return { crumb, body: hello + top() + '<div class="panel"><div class="empty"><b>No accountable officer in this cash examination.</b>Add the officers in Audit Setup.</div></div>', wire: wireTop };
 
   const o = exam.o;
   const allAdv = advs0.map(flat).filter((a) => a.officerId === o.id);
@@ -76,7 +77,10 @@ export async function advancesView(ctx) {
   const enc = canEncode(refs);
   const fns = exam.functions || [];
   const noFn = !['disbursing', 'special', 'pettycash'].some((k) => fns.includes(k));
-  const acc = (key, n, title, sub, inner) => `<details class="panel cd-acc" data-acc="${key}" ${OPEN[key] ? 'open' : ''}><summary><span class="cd-num">${n}</span><b>${title}</b><span class="cd-sub">${sub}</span></summary><div class="cd-body">${inner}</div></details>`;
+  // Parts 1–2 as tabs, like Collections & Deposits: the chosen part shows below.
+  const tabs = (list) => { const on = list.find(([k]) => OPEN[k])?.[0] || 'ca';
+    return `<div class="cd-tabs ca-tabs" role="tablist">${list.map(([k, t, sub], i) => `<button type="button" role="tab" class="cd-tab ${k === on ? 'on' : ''}" data-tab="${k}" aria-selected="${k === on}" aria-controls="cd-pane-${k}"><span class="cd-num">${i + 1}</span><span class="cd-tabt"><b>${t}</b><span class="cd-sub">${sub}</span></span></button>`).join('')}</div></div>
+      ${list.map(([k, , , inner]) => `<section class="panel cd-pane" id="cd-pane-${k}" role="tabpanel" ${k === on ? '' : 'hidden'}><div class="cd-body">${inner}</div></section>`).join('')}`; };
   const advLabel = (a) => (a.rest ? `Beginning balance (not itemized) · ₱${money(a.bal)} left` : `${a.checkNo}${a.beg ? ' (Beginning)' : ''} · ${a.particulars || fmtDate(a.date)} · ₱${money(a.bal)} left`);
   const sorted = list.slice().reverse();   // latest first in the table
 
@@ -108,20 +112,19 @@ export async function advancesView(ctx) {
       : '<div class="empty"><b>No liquidation encoded yet.</b></div>'}
     ${begChecks.length ? '<p class="af-note">Checks tagged Beginning were unliquidated as of the last cash exam; their amount is what was still unliquidated then. They are entered in Audit Setup, Beginning Balances.</p>' : ''}<p class="af-note">For Check No. starts on the oldest open cash advance; pick another when the LR names it. A liquidation larger than what is left on its check is flagged. A refund is entered here with its OR No. as the reference.</p>`;
 
-  const body = `${hello}${top}
-    <div class="stats">
-      <div class="stat"><span>Beginning Balance</span><b>₱ ${money(beg)}</b><small>from Audit Setup, as of ${esc(fmtDate(exam.lastExamDate)) || 'the last cash exam'}${begChecks.length ? ` · ${begChecks.length} check${begChecks.length === 1 ? '' : 's'}${rest > 0.004 ? ` + ₱${money(rest)} not itemized` : ''}` : ''}</small></div>
-      <div class="stat"><span>Cash Advances</span><b>₱ ${money(totCa)}</b><small>${advs.length} check${advs.length === 1 ? '' : 's'}</small></div>
-      <div class="stat"><span>Liquidations</span><b style="color:var(--ok)">₱ ${money(totLq)}</b><small>${liqs.length} entr${liqs.length === 1 ? 'y' : 'ies'}</small></div>
-      <div class="stat"><span>Unliquidated</span><b style="color:#1d4fb8">₱ ${money(unliq)}</b><small>${openChecks} cash advance${openChecks === 1 ? '' : 's'} open${list.some((a) => a.beg && a.bal > 0.004) ? ' + beginning' : ''}</small></div>
-    </div>
-    ${acc('ca', 1, 'Cash Advance', `${advs.length} check${advs.length === 1 ? '' : 's'} · ₱ ${money(totCa)}`, caBody)}
-    ${acc('lq', 2, 'Liquidation', `${liqs.length} entr${liqs.length === 1 ? 'y' : 'ies'} · ₱ ${money(totLq)}`, lqBody)}
+  const openTxt = `${openChecks} open${list.some((a) => a.beg && a.bal > 0.004) ? ' + beginning' : ''}`;
+  const figs = `<div class="ca-figs"><span>Beginning <b>₱ ${money(beg)}</b><small>as of ${esc(fmtDate(exam.lastExamDate)) || 'the last cash exam'}${begChecks.length ? ` · ${begChecks.length} check${begChecks.length === 1 ? '' : 's'}${rest > 0.004 ? ` + ₱${money(rest)} not itemized` : ''}` : ''}</small></span>
+      <span>Cash Advances <b>₱ ${money(totCa)}</b></span><span>Liquidations <b class="ok">₱ ${money(totLq)}</b></span><span class="ca-unliq">Unliquidated <b>₱ ${money(unliq)}</b><small>${openTxt}</small></span></div>`;
+  const body = `${hello}${top(true)}${figs}
+    ${tabs([['ca', 'Cash Advance', `${advs.length} check${advs.length === 1 ? '' : 's'} · ₱ ${money(totCa)}`, caBody], ['lq', 'Liquidation', `${liqs.length} entr${liqs.length === 1 ? 'y' : 'ies'} · ₱ ${money(totLq)}`, lqBody]])}
     <div class="btn-row cd-actions"><button class="btn" type="button" id="ca-xls">Export to Excel</button></div>`;
 
   return { crumb, body, wire: () => {
     wireTop();
-    $$('details.cd-acc').forEach((d) => { d.ontoggle = () => { OPEN[d.dataset.acc] = d.open; }; });
+    $$('.cd-tab').forEach((t) => { t.onclick = () => {
+      Object.keys(OPEN).forEach((k) => { OPEN[k] = k === t.dataset.tab; });
+      $$('.cd-tab').forEach((x) => { const on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', String(on)); $('#cd-pane-' + x.dataset.tab).hidden = !on; });
+    }; });
     $('#ca-xls').onclick = () => exportXlsx(`Cash Advances ${o.name} ${audit.countDate}.xlsx`, 'Cash Advances', [
       ...list.map((a) => ({ Entry: a.rest ? 'Beginning Balance (not itemized)' : a.beg ? 'Beginning Check' : 'Cash Advance', Date: fmtDate(a.date), 'Check No.': a.checkNo, 'LR No. / Reference': '', Particulars: a.particulars || '', 'Cash Advance': a.amount, Liquidation: '', 'Balance of the Check': a.bal, Status: a.st[1] })),
       ...liqs.slice().sort((x, y) => String(x.date).localeCompare(String(y.date))).map((l) => ({ Entry: 'Liquidation', Date: fmtDate(l.date), 'Check No.': (() => { const a = list.find((x) => x.id === l.advanceId); return a ? (a.rest ? 'Beginning balance' : a.checkNo) : ''; })(), 'LR No. / Reference': l.ref || '', Particulars: l.particulars || '', 'Cash Advance': '', Liquidation: l.amount, 'Balance of the Check': '', Status: '' })),
