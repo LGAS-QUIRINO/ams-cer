@@ -584,3 +584,15 @@ table.cd-sumtbl{min-width:0; width:100%}
 .ca-figs b.ok{color:var(--ok)}
 .ca-figs .ca-unliq b{color:#1d4fb8; font-size:16px}
 .ca-figs small{font-size:12px}
+
+/* Bank statement import: opening-to-ending proof, sorting unmatched lines */
+.bk-proof{display:flex; flex-wrap:wrap; gap:6px 20px; align-items:center; margin:12px 0 4px; padding:10px 14px; background:#f6f8fc; border:1px solid var(--line); border-radius:10px; font-size:13px}
+.bk-proof b{color:var(--ink)}
+.bk-note{font-size:12px; color:#9a5b00; margin-top:2px}
+.bk-sortwrap{max-height:420px; overflow:auto}
+.bk-sortwrap{overflow-x:hidden}
+table.af-reg.bk-sort{table-layout:fixed; width:100%; min-width:0}
+.bk-sort th, .bk-sort td{white-space:normal; padding:8px 8px; font-size:12.5px}
+.bk-sort th:nth-child(1){width:92px} .bk-sort th:nth-child(3){width:90px} .bk-sort th:nth-child(4), .bk-sort th:nth-child(5){width:92px} .bk-sort th:nth-child(6){width:206px}
+.bk-sort td.mono{font-size:11.5px; word-break:break-all}
+.bk-sort select.input{width:100% !important; max-width:100%; min-width:0; font-size:12.5px; padding:6px 8px}

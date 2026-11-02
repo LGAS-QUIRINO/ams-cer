@@ -11,7 +11,8 @@
 //   cer_settings 'banks|<lguId>'   { list: [{ id, bank, accountNo, fund }] }
 //   cer_bankrec  id <auditId>|<accountId>
 //                { auditId, accountId, lguId, asOf, ending, source, book, bankItems[{ date, type: 'credit'|'debit', particulars, amount }],
-//                  found{ <item key>: bankDate }, otherChecks[{ id, date, checkNo, payee, amount }], lines[] (imported, for reference) }
+//                  found{ <item key>: bankDate }, otherChecks[{ id, date, checkNo, payee, amount }], lines[] (imported, for reference),
+//                  opening (opening balance read from the soft copy), account (account No. read from it) }
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
@@ -96,6 +97,15 @@ export async function banksView(ctx) {
   const dis = enc ? '' : 'disabled';
   const unmatched = (rec.lines || []).filter((l) => !l.matched && !l.added);
 
+  // Opening + credits − debits = ending, from the imported lines.
+  const lns = rec.lines || [];
+  const proof = lns.length && rec.opening !== null && rec.opening !== undefined ? (() => {
+    const cr = r2(lns.reduce((n, l) => n + (l.credit || 0), 0)), dr = r2(lns.reduce((n, l) => n + (l.debit || 0), 0));
+    const last = lns.filter((l) => l.bal !== null && l.bal !== undefined).pop(), endB = last ? last.bal : rec.ending;
+    const d = endB === null || endB === undefined ? null : r2(+rec.opening + cr - dr - endB);
+    return `<div class="bk-proof"><span>Opening <b>₱ ${money(rec.opening)}</b></span><span>+ Credits <b>₱ ${money(cr)}</b></span><span>− Debits <b>₱ ${money(dr)}</b></span><span>= Ending <b>₱ ${money(r2(+rec.opening + cr - dr))}</b></span>
+      ${d === null ? '' : Math.abs(d) < 0.005 ? '<span class="pill p-done">Adds up to the ending balance</span>' : `<span class="pill p-flag">Differs from the ending balance by ₱${money(d)}</span>`}${rec.account ? `<span class="dim">Account No. ${esc(rec.account)}</span>` : ''}</div>`;
+  })() : '';
   const stBody = `${enc ? `<div class="cd-pick"><button class="btn primary" type="button" id="bk-import">Import Soft Copy (Excel / CSV)</button><span class="af-note">or, for a PDF or printed copy, tick each item in part 2 and type the balance below.</span></div>` : ''}
     <div class="cd-g4">
       <div class="field"><label for="bk-date">Statement Date</label><input class="input" type="date" id="bk-date" value="${esc(rec.asOf || asOf)}" ${dis}></div>
@@ -103,9 +113,10 @@ export async function banksView(ctx) {
       <div class="field"><label for="bk-src">Source</label><select class="input" id="bk-src" ${dis}>${SOURCES.map((s) => `<option ${s === rec.source ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
       ${enc ? '<div class="field"><span class="cd-lbl">&nbsp;</span><button class="btn primary" type="button" id="bk-savest">Save Statement</button></div>' : ''}
     </div>
-    ${unmatched.length ? `<div class="cd-block"><h3 class="cer-h3">Imported lines not matched (${unmatched.length})</h3>
-      <div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col" class="r">Debit (₱)</th><th scope="col" class="r">Credit (₱)</th><th scope="col" class="r"></th></tr></thead>
-      <tbody>${unmatched.map((l) => `<tr><td>${esc(fmtDate(l.date))}</td><td>${esc(l.desc)}</td><td class="r">${l.debit ? money(l.debit) : ''}</td><td class="r">${l.credit ? money(l.credit) : ''}</td>
+    ${proof}
+    ${unmatched.length ? `<div class="cd-block"><div class="cer-headrow"><h3 class="cer-h3">Imported lines not matched (${unmatched.length})</h3>${enc ? '<button class="btn sm" type="button" id="bk-sort">Sort these lines</button>' : ''}</div>
+      <div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Cheque No.</th><th scope="col" class="r">Debit (₱)</th><th scope="col" class="r">Credit (₱)</th><th scope="col" class="r"></th></tr></thead>
+      <tbody>${unmatched.map((l) => `<tr><td>${esc(fmtDate(l.date))}</td><td>${esc(l.desc)}${l.note ? `<div class="bk-note">⚠ ${esc(l.note)}</div>` : ''}</td><td class="mono">${esc(l.chq || '')}</td><td class="r">${l.debit ? money(l.debit) : ''}</td><td class="r">${l.credit ? money(l.credit) : ''}</td>
         <td class="r">${enc ? `<button class="btn sm" type="button" data-addline="${esc(l.i)}">Add as bank ${l.credit ? 'credit' : 'debit'}</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
       <p class="af-note">Lines in the bank with no deposit or check in the books. Add the bank's own items (interest, service charges); the rest are for the auditor to look into.</p></div>` : ''}
     <div class="cd-block"><h3 class="cer-h3">Bank-only items (in the bank, not in the books)</h3>
@@ -219,11 +230,17 @@ function wireBanks(c) {
     if (out) save({ otherChecks: [...(rec.otherChecks || []), out] }, `Check No. ${out.checkNo} added.`);
   };
   $('#bk-import').onclick = () => importStatement(c, save);
+  const so = $('#bk-sort'); if (so) so.onclick = async () => {
+    const patch = { lines: (rec.lines || []).map((l) => ({ ...l })), found: { ...(rec.found || {}) }, bankItems: [...(rec.bankItems || [])], otherChecks: [...(rec.otherChecks || [])] };
+    const n = await sortLines(patch, acct); if (n) save(patch, `${n} line${n > 1 ? 's' : ''} added.`);
+  };
 }
 
 /* ---------- import a soft copy ---------- */
+// Check Nos. compared by digits only, without leading zeros (bank 0001749813 = books 1749813).
+const chqKey = (v) => String(v ?? '').replace(/\D/g, '').replace(/^0+/, '');
 async function importStatement(c, save) {
-  const { rec, list } = c;
+  const { rec, list, acct } = c;
   const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.xlsx,.xls,.csv';
   inp.onchange = async () => {
     const file = inp.files[0]; if (!file) return;
@@ -231,9 +248,17 @@ async function importStatement(c, save) {
       const XLSX = await loadXlsx();
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
-      const lines = readLines(XLSX, rows);
+      const st = readLines(XLSX, rows);
+      const lines = st.lines;
       if (!lines.length) return bad('No bank lines found. The sheet needs a Date column and Debit / Credit (or Amount) columns.');
-      // Match: deposits to credits and checks to debits of the same amount, nearest date (bank on or after the book date: within 15 days for a deposit, a year for a check); a check No. in the description wins.
+      // The statement's account No. against the chosen bank account.
+      if (st.account && acct.accountNo && chqKey(st.account) !== chqKey(acct.accountNo)) {
+        const go = await modal({ title: 'Another bank account?', body: `<p style="margin:0">This statement is for account <b class="mono">${esc(st.account)}</b>, but the bank account chosen is <b>${esc(acctLabel(acct))}</b>. Import it here anyway?</p>`,
+          buttons: [{ label: 'Go back', value: false }, { label: 'Import anyway', cls: 'primary', value: true }] });
+        if (!go) return;
+      }
+      // Match: a check No. in the Cheque Number column (or the description) wins; otherwise deposits to credits and checks to debits
+      // of the same amount, nearest date (bank on or after the book date: within 15 days for a deposit, a year for a check).
       const found = { ...(rec.found || {}) };
       const used = new Set();
       const tryMatch = (x, pick) => {
@@ -242,42 +267,88 @@ async function importStatement(c, save) {
         const l = pick(cands, x); if (!l) return;
         used.add(l.i); found[x.key] = l.date;
       };
-      list.filter((x) => x.kind === 'chk').forEach((x) => tryMatch(x, (cs) => cs.find((l) => x.ref && l.desc.includes(String(x.ref))) || cs.sort((a, b) => Math.abs(days(x.date, a.date)) - Math.abs(days(x.date, b.date)))[0]));
+      list.filter((x) => x.kind === 'chk' && !found[x.key]).forEach((x) => {
+        const k = chqKey(x.ref); if (!k) return;
+        const same = lines.filter((l) => !used.has(l.i) && l.debit && l.chq && chqKey(l.chq) === k);
+        const l = same.find((y) => Math.abs(y.debit - x.amount) < 0.005);
+        if (l) { used.add(l.i); found[x.key] = l.date; }
+        else same.forEach((y) => { y.note = `Check No. ${x.ref} is ₱${money(x.amount)} in the books`; });
+      });
+      list.filter((x) => x.kind === 'chk').forEach((x) => tryMatch(x, (cs) => cs.find((l) => x.ref && !l.chq && chqKey(l.desc).includes(chqKey(x.ref))) || cs.filter((l) => !l.chq || !chqKey(x.ref)).sort((a, b) => Math.abs(days(x.date, a.date)) - Math.abs(days(x.date, b.date)))[0]));
       list.filter((x) => x.kind === 'dep').forEach((x) => tryMatch(x, (cs) => cs.sort((a, b) => Math.abs(days(x.date, a.date)) - Math.abs(days(x.date, b.date)))[0]));
       lines.forEach((l) => { l.matched = used.has(l.i); });
       const last = lines.filter((l) => l.bal !== null).pop();
-      const patch = { found, lines, source: 'Soft copy (imported)' };
+      const patch = { found, lines, source: 'Soft copy (imported)', opening: st.opening, account: st.account || '', bankItems: [...(rec.bankItems || [])], otherChecks: [...(rec.otherChecks || [])] };
       if (last) { patch.ending = last.bal; patch.asOf = last.date || rec.asOf; }
-      await save(patch, `${lines.length} lines imported · ${used.size} matched${last ? ' · ending balance read' : ''}.`);
+      // Lines with nothing in the books: sort them now (bank credit, bank debit, or a check not yet in Cash Advances).
+      const n = await sortLines(patch, acct);
+      await save(patch, `${lines.length} lines imported · ${used.size} matched${last ? ' · ending balance read' : ''}${n ? ` · ${n} added` : ''}.`);
     } catch (e) { bad(e.message || String(e)); }
   };
   inp.click();
 }
+// Pop-up: each unmatched line → leave, bank credit / debit, or (a debit) a check not in Cash Advances. Changes patch; returns how many were added.
+async function sortLines(patch, acct) {
+  const lines = patch.lines.filter((l) => !l.matched && !l.added);
+  if (!lines.length) return 0;
+  const guess = (l) => (l.note ? '' : l.credit ? (/interest/i.test(l.desc) ? 'credit' : '') : l.chq ? 'check' : /charge|fee|tax|penalt|debit memo|\bdm\b/i.test(l.desc) ? 'debit' : '');
+  const opts = (l) => `<option value="">Leave for checking</option>${l.credit ? '<option value="credit">Bank credit</option>' : '<option value="debit">Bank debit</option><option value="check">Check (not a cash advance)</option>'}`;
+  let pick = null;
+  const v = await modal({ title: `Lines with nothing in the books (${lines.length})`, wide: true,
+    body: `<p class="hint" style="margin:0 0 10px">Choose what each line is. Bank credits and debits go to the bank-only items; a check not yet in Cash Advances is added under Other Checks as cleared. Left lines stay listed in part 1 for checking.</p>
+      <div class="af-tbl bk-sortwrap"><table class="af-reg bk-sort"><thead><tr><th scope="col">Date</th><th scope="col">Description</th><th scope="col">Cheque No.</th><th scope="col" class="r">Debit (₱)</th><th scope="col" class="r">Credit (₱)</th><th scope="col">Treat as</th></tr></thead>
+      <tbody>${lines.map((l) => `<tr><td>${esc(fmtDate(l.date))}</td><td>${esc(l.desc)}${l.note ? `<div class="bk-note">⚠ ${esc(l.note)}</div>` : ''}</td><td class="mono">${esc(l.chq || '')}</td><td class="r">${l.debit ? money(l.debit) : ''}</td><td class="r">${l.credit ? money(l.credit) : ''}</td>
+        <td><label class="sr-only" for="bs-${esc(l.i)}">Treat line as</label><select class="input af-sm" id="bs-${esc(l.i)}" data-sl="${esc(l.i)}">${opts(l).replace(`value="${guess(l)}"`, `value="${guess(l)}" selected`)}</select></td></tr>`).join('')}</tbody></table></div>`,
+    buttons: [{ label: 'Skip', value: null }, { label: 'Add', cls: 'primary', value: 'ok', check: (bg) => { pick = Object.fromEntries($$('[data-sl]', bg).map((s) => [s.dataset.sl, s.value])); return true; } }] });
+  if (v !== 'ok' || !pick) return 0;
+  let n = 0;
+  lines.forEach((l) => {
+    const t = pick[String(l.i)]; if (!t) return;
+    const line = patch.lines.find((x) => x.i === l.i); line.added = true; n++;
+    if (t === 'check') { const id = newId('oc'); patch.otherChecks.push({ id, date: l.date, checkNo: l.chq || '', payee: l.desc, amount: l.debit }); patch.found[`oth|${id}`] = l.date; }
+    else patch.bankItems.push({ date: l.date, type: t, particulars: l.desc, amount: l.credit || l.debit });
+  });
+  patch.bankItems.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return n;
+}
 function readLines(XLSX, rows) {
   const find = (h, re) => h.findIndex((x) => re.test(String(x)));
+  const txt = (v) => String(v ?? '').trim();
   let hr = -1, col = {};
-  for (let r = 0; r < Math.min(rows.length, 25); r++) {
-    const h = rows[r].map((x) => String(x).trim());
-    const d = find(h, /date/i);
+  for (let r = 0; r < Math.min(rows.length, 30); r++) {
+    const h = rows[r].map(txt);
+    const d = find(h, /^(transaction |posting |value )?date/i) >= 0 ? find(h, /^(transaction |posting |value )?date/i) : find(h, /date/i);
     if (d < 0) continue;
-    col = { date: d, desc: find(h, /desc|particular|detail|remark|transaction|reference|check/i), debit: find(h, /debit|withdraw|dr\b/i), credit: find(h, /credit|deposit|cr\b/i), amt: find(h, /^amount$/i), bal: find(h, /balance/i) };
+    let desc = find(h, /desc|particular|detail|remark|transaction(?! date)|narration/i); if (desc < 0) desc = find(h, /reference/i);
+    col = { date: d, desc, chq: find(h, /cheque|check\s*(no|num|#)|chk\s*no/i), debit: find(h, /debit|withdraw|\bdr\b/i), credit: find(h, /credit|deposit|\bcr\b/i), amt: find(h, /^amount/i), bal: find(h, /balance/i) };
     if (col.debit >= 0 || col.credit >= 0 || col.amt >= 0) { hr = r; break; }
   }
-  if (hr < 0) return [];
+  if (hr < 0) return { lines: [], opening: null, account: '' };
+  // Account No. above the header (e.g. "Account Number | 0732102574").
+  let account = '';
+  rows.slice(0, hr).forEach((row) => { const k = row.findIndex((x) => /account\s*(no|num|#)/i.test(txt(x))); if (k >= 0 && !account) account = txt(row.slice(k + 1).find((x) => txt(x))); });
+  const pad = (x) => String(x).padStart(2, '0');
   const toDate = (v) => {
-    if (v instanceof Date) return new Date(v.getTime() - v.getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
-    if (typeof v === 'number') { const p = XLSX.SSF.parse_date_code(v); return p ? `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}` : ''; }
-    const m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/.exec(String(v).trim()); if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; }
-    const t = Date.parse(v); return isNaN(t) ? '' : new Date(t).toISOString().slice(0, 10);
+    if (v instanceof Date) { const d = new Date(v.getTime() - v.getTimezoneOffset() * 6e4); return d.toISOString().slice(0, 10); }
+    if (typeof v === 'number') { const p = XLSX.SSF.parse_date_code(v); return p ? `${p.y}-${pad(p.m)}-${pad(p.d)}` : ''; }
+    const t = txt(v);
+    // mm/dd/yyyy, with or without the time (08/01/2024 15:00:09): the date part only, so an early-morning entry stays on its day.
+    let m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})(?:\s|T|$)/.exec(t); if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; return `${y}-${pad(m[1])}-${pad(m[2])}`; }
+    m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(t); if (m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+    const d = new Date(t); return isNaN(d) ? '' : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   };
   const n = (v) => { const x = num(v); return x === null ? 0 : x; };
-  return rows.slice(hr + 1).map((row, i) => {
+  let opening = null;
+  const lines = rows.slice(hr + 1).map((row, i) => {
+    const all = row.map(txt).join(' ');
+    if (/opening balance|beginning balance|balance forward|previous balance/i.test(all)) { if (opening === null && col.bal >= 0) opening = num(row[col.bal]); return null; }
     const date = toDate(row[col.date]); if (!date) return null;
     let debit = col.debit >= 0 ? Math.abs(n(row[col.debit])) : 0, credit = col.credit >= 0 ? Math.abs(n(row[col.credit])) : 0;
     if (col.amt >= 0 && !debit && !credit) { const a = n(row[col.amt]); if (a < 0) debit = -a; else credit = a; }
     if (!debit && !credit) return null;
-    return { i, date, desc: col.desc >= 0 ? String(row[col.desc] ?? '').trim() : '', debit: r2(debit), credit: r2(credit), bal: col.bal >= 0 && String(row[col.bal]).trim() !== '' ? num(row[col.bal]) : null };
+    return { i, date, desc: col.desc >= 0 ? txt(row[col.desc]).replace(/\s+/g, ' ') : '', chq: col.chq >= 0 ? txt(row[col.chq]) : '', debit: r2(debit), credit: r2(credit), bal: col.bal >= 0 && txt(row[col.bal]) !== '' ? num(row[col.bal]) : null };
   }).filter(Boolean);
+  return { lines, opening, account };
 }
 let xlsxReady = null;
 function loadXlsx() {
