@@ -137,11 +137,26 @@ window.addEventListener('sync-status', (e) => {
   if (e.detail.status === 'error' && e.detail.message) toast(e.detail.message, 'bad');
 });
 window.addEventListener('access-revoked', async (e) => { await auth.signOut(); await store.wipe(); showLogin(e.detail); });
-// A sync that brings in changes redraws the screen. What the person is typing must not be lost:
+// A sync that brings in changes (another user's save) redraws the screen. What the person is typing must not be lost:
 //  - while a window (modal) is open, the redraw waits until it is closed;
-//  - fields typed in but not yet saved are put back after the redraw, with the cursor where it was.
+//  - while the person is typing, it waits until they stop for 3 seconds or leave the field (a small note says so);
+//  - fields typed in but not yet saved are put back after the redraw, with the cursor and the scroll positions where they were.
 // The person's own saves ('local') redraw as before (Enter / Save clear their fields on purpose).
-let syncWaiting = false;
+let syncWaiting = false, lastKey = 0;
+const IDLE_MS = 3000;
+document.addEventListener('keydown', () => { lastKey = Date.now(); }, true);
+document.addEventListener('input', () => { lastKey = Date.now(); }, true);
+const isTextField = (el) => !!el && app.contains(el) && (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'file'].includes(el.type)));
+const busyTyping = () => isTextField(document.activeElement) && Date.now() - lastKey < IDLE_MS;
+function waitNote(on) {
+  let n = document.getElementById('sync-wait');
+  if (!on) { if (n) n.remove(); return; }
+  if (n) return;
+  n = document.createElement('div'); n.id = 'sync-wait'; n.setAttribute('role', 'status');
+  n.textContent = 'Updated by another user · refreshes when you stop typing';
+  n.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:60;background:#fff7e0;color:#7a5200;border:1px solid #f0d48a;border-radius:999px;padding:7px 14px;font-size:12.5px;box-shadow:0 4px 14px rgba(0,0,0,.12)';
+  document.body.appendChild(n);
+}
 function typedFields() {
   return [...app.querySelectorAll('input[id], select[id], textarea[id]')].filter((el) => {
     if (el.disabled || el.type === 'file' || el.type === 'hidden') return false;
@@ -150,15 +165,31 @@ function typedFields() {
     return el.value !== el.defaultValue;
   }).map((el) => ({ id: el.id, type: el.type, value: el.value, checked: el.checked }));
 }
+// Scroll positions of the page and of scrolling boxes (e.g. the OR list), keyed by id or class and order.
+function scrollKey(el, i) { return el.id ? '#' + el.id : `${el.tagName}.${[...el.classList].join('.')}|${i}`; }
+function scrolls() {
+  const out = { page: (document.scrollingElement || document.documentElement).scrollTop, boxes: {} };
+  const seen = {};
+  app.querySelectorAll('*').forEach((el) => { if (el.scrollHeight > el.clientHeight + 1 || el.scrollTop) { const k0 = scrollKey(el, 0).split('|')[0]; const i = seen[k0] = (seen[k0] ?? -1) + 1; if (el.scrollTop) out.boxes[scrollKey(el, i)] = el.scrollTop; } });
+  return out;
+}
+function putScrolls(s) {
+  const seen = {};
+  app.querySelectorAll('*').forEach((el) => { if (el.scrollHeight > el.clientHeight + 1 || el.scrollTop) { const k0 = scrollKey(el, 0).split('|')[0]; const i = seen[k0] = (seen[k0] ?? -1) + 1; const k = scrollKey(el, i); if (k in s.boxes) el.scrollTop = s.boxes[k]; } });
+  (document.scrollingElement || document.documentElement).scrollTop = s.page;
+}
 async function syncRedraw() {
-  if (document.querySelector('.modal-bg')) {
+  if (document.querySelector('.modal-bg') || busyTyping()) {
     if (syncWaiting) return; syncWaiting = true;
-    const wait = setInterval(() => { if (!document.querySelector('.modal-bg')) { clearInterval(wait); syncWaiting = false; syncRedraw(); } }, 400);
+    if (!document.querySelector('.modal-bg')) waitNote(true);
+    const wait = setInterval(() => { if (!document.querySelector('.modal-bg') && !busyTyping()) { clearInterval(wait); syncWaiting = false; syncRedraw(); } }, 400);
     return;
   }
+  waitNote(false);
   const kept = typedFields();
   const act = document.activeElement && app.contains(document.activeElement) && document.activeElement.id ? document.activeElement : null;
   const focus = act ? { id: act.id, start: act.selectionStart, end: act.selectionEnd } : null;
+  const sc = scrolls();
   await render();
   kept.forEach((k) => {
     const el = document.getElementById(k.id); if (!el || el.disabled) return;
@@ -166,7 +197,8 @@ async function syncRedraw() {
     else { if (el.value === k.value) return; el.value = k.value; }
     el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  if (focus) { const el = document.getElementById(focus.id); if (el) { el.focus(); try { if (focus.start !== null && focus.start !== undefined) el.setSelectionRange(focus.start, focus.end); } catch (e) { /* not a text field */ } } }
+  putScrolls(sc);
+  if (focus) { const el = document.getElementById(focus.id); if (el) { el.focus({ preventScroll: true }); try { if (focus.start !== null && focus.start !== undefined) el.setSelectionRange(focus.start, focus.end); } catch (e) { /* not a text field */ } } }
 }
 onChange((src) => (src === 'sync' ? syncRedraw() : render()));
 window.addEventListener('signed-in', () => enter());

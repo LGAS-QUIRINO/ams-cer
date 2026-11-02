@@ -30,9 +30,13 @@ async function doSync() {
       const still = await db.get('outbox', [r.table, r.id]);
       const untouched = still && sent && still.queuedAt === sent.queuedAt;
       if (r.status === 'ok') {
-        if (untouched) { await db.del('outbox', [r.table, r.id]); await db.put('records', { table: r.table, ...r.record, pending: false }); }
-        else if (still) { still.baseVersion = r.record.version; await db.put('outbox', still); }
-        changed = true;
+        if (untouched) {
+          // The database only confirms this device's own save: nothing on screen changes, so no redraw.
+          const local = await db.get('records', [r.table, r.id]);
+          const same = local && JSON.stringify(local.data) === JSON.stringify(r.record.data) && !!local.deleted === !!r.record.deleted;
+          await db.del('outbox', [r.table, r.id]); await db.put('records', { table: r.table, ...r.record, pending: false });
+          if (!same) changed = true;
+        } else if (still) { still.baseVersion = r.record.version; await db.put('outbox', still); }
         continue;
       }
       // Not saved: show the database copy again and say why.
