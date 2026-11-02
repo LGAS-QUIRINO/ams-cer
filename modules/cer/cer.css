@@ -601,3 +601,17 @@ details.bk-unm > summary{cursor:pointer; padding:10px 14px; font-size:13px; list
 details.bk-unm .af-tbl{max-height:360px; overflow:auto; border-radius:0}
 details.bk-unm .af-note{padding:10px 14px; margin:0}
 table.af-reg.bk-unmt{min-width:0}
+
+/* Bank Statements: tabs, the statement as it is */
+.bk-bar .cd-headrow{grid-template-columns:minmax(0,1fr) minmax(0,1.2fr)}
+.cd-pick{display:flex; align-items:center; gap:16px; flex-wrap:wrap}
+.bk-tools{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:12px 0 8px; font-size:13px}
+.bk-stmtwrap{max-height:480px; overflow:auto}
+table.af-reg.bk-stmt{min-width:0; font-size:12.5px}
+table.af-reg.bk-stmt th{position:sticky; top:0; z-index:1}
+table.af-reg.bk-stmt td, table.af-reg.bk-stmt th{padding:7px 10px; white-space:nowrap}
+.bk-stmt tr.bk-unrow td{background:#fff8ec}
+.bk-stmt tr.bk-open td{background:#f3f6fc}
+.bk-bookrow{display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap; margin-bottom:14px}
+.bk-bookrow .field{width:260px; margin:0}
+.bk-recres{padding-bottom:8px}
