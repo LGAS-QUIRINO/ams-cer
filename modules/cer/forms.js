@@ -1475,7 +1475,8 @@ export function lastChecksOf(f, examIds) {
 // For Reports (SAAF, Annex B): each booklet of the officer within the scope of audit, as Beginning, Received, Issued,
 // Ending (per the register) and per Count (the cut-off). Forms typed at the cut-off that are not in the register are added
 // with the count only. Ranges are [[from, to], …]; the SAAF prints one line per range.
-export function saafRows(f, officerId, exam, from, to) {
+// advs (optional): the cash advances; until the cut-off is entered, their check Nos. count as checks issued.
+export function saafRows(f, officerId, exam, from, to, advs = []) {
   const out = [];
   const cut = exam ? cutoffOf(f, exam.id) : null, lines = exam ? cutoffLines(f, exam.id) : [];
   f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && b.issuedDate <= to)
@@ -1484,12 +1485,15 @@ export function saafRows(f, officerId, exam, from, to) {
       const rec = !from || b.issuedDate > from ? [[b.from, b.to]] : [];
       const mine = lines.filter((l) => l.bookletId === b.id);
       const count = cut ? mergeRanges(mine.flatMap((l) => l.ranges)) : null;
-      // Checks: no check register yet (Checks Issued comes later), so the balance end follows the cut-off count.
-      const end = b.status === 'lost' ? [] : b.form === 'chk' && count !== null ? count : rawUnused(b, to);
+      // Checks: no check register yet (Checks Issued comes later), so the balance end follows the cut-off count;
+      // before the cut-off is entered, the check Nos. of the cash advances (and beginning checks) count as issued.
+      const caUsed = b.form === 'chk' && count === null ? mergeRanges(advs.filter((a) => a.officerId === officerId && (!a.date || a.date <= to)).map((a) => parseInt(String(a.checkNo || '').replace(/\D/g, ''), 10))
+        .filter((n) => n >= b.from && n <= b.to).map((n) => [n, n])) : [];
+      const end = b.status === 'lost' ? [] : b.form === 'chk' && count !== null ? count : b.form === 'chk' ? subtractRanges([...beg, ...rec], caUsed) : rawUnused(b, to);
       if (!beg.length && !rec.length && !end.length && !(count && count.length)) return;
       const issued = subtractRanges([...beg, ...rec], count || end);
       out.push({ id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, face: faceOf(b), beg, rec, issued, end, count,
-        diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || '' });
+        diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || b.bankAccount || '' });
     });
   lines.filter((l) => !l.bookletId).forEach((l) => out.push({ id: l.id, form: l.form, name: FORM_SHORT[l.form] || l.form, booklet: [l.from, l.to], ns: l.ns, face: faceOf({ form: l.form }), beg: [], rec: [], issued: [], end: [], count: l.ranges, diff: -countRanges(l.ranges), fund: '', other: true }));
   // Within a form: the beginning balance first (starting inventory / AO's beginning), then those received, then forms not in the register.

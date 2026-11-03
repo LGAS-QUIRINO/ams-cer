@@ -186,7 +186,7 @@ function soaTable(A) {
 /* ---------- Annex B · SAAF ---------- */
 function saaf(c) {
   const { f, audit, exam, o, A, agency, station, prep, sign } = c;
-  const rows = saafRows(f, o.id, exam, A.from, A.to);
+  const rows = saafRows(f, o.id, exam, A.from, A.to, c.advs);
   const cells = (rs, ns) => rs.length ? (ns ? ['', '', countRanges(rs)] : [rs.map(([a]) => a).join('<br>'), rs.map(([, z]) => z).join('<br>'), countRanges(rs)]) : ['', '', ''];
   const groups = [];
   rows.forEach((r) => { const g = groups.find((x) => x.form === r.form) || (groups.push({ form: r.form, name: r.name, rows: [] }), groups[groups.length - 1]); g.rows.push(r); });

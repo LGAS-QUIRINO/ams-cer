@@ -248,7 +248,7 @@ export async function downloadReport(c, ver) {
   // Annex B · SAAF: one line per range, a blank line between forms, the beginning first
   ws = wb.getWorksheet('SAAFwo');
   set(ws, 'I3', fmtDate(audit.countDate)); set(ws, 'B5', o.name); set(ws, 'B6', des); set(ws, 'B7', `${agency}, ${station}`);
-  const rows = saafRows(c.f, o.id, exam, A.from, A.to);
+  const rows = saafRows(c.f, o.id, exam, A.from, A.to, c.advs);
   let r = 12; const FIRST = 12, LAST = 131;
   const groups = []; rows.forEach((x) => { const g = groups.find((y) => y.form === x.form) || (groups.push({ form: x.form, name: x.form === 'af51' || x.form === 'af51b' ? 'AF 51' : x.name, rows: [] }), groups[groups.length - 1]); g.rows.push(x); });
   const T = { beg: 0, rec: 0, iss: 0, end: 0, cnt: 0, diff: 0 };
