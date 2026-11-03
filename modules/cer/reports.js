@@ -184,25 +184,30 @@ function soaTable(A) {
 }
 
 /* ---------- Annex B · SAAF ---------- */
+// Checkbooks grouped by fund, funds in the order they first appear.
+export function byFund(rows) { const order = [...new Set(rows.map((r) => r.fund || ''))]; return rows.map((r, i) => [r, i]).sort((a, b) => order.indexOf(a[0].fund || '') - order.indexOf(b[0].fund || '') || a[1] - b[1]).map(([r]) => r); }
 function saaf(c) {
   const { f, audit, exam, o, A, agency, station, prep, sign } = c;
   const rows = saafRows(f, o.id, exam, A.from, A.to, c.advs);
   const cells = (rs, ns) => rs.length ? (ns ? ['', '', countRanges(rs)] : [rs.map(([a]) => a).join('<br>'), rs.map(([, z]) => z).join('<br>'), countRanges(rs)]) : ['', '', ''];
   const groups = [];
   rows.forEach((r) => { const g = groups.find((x) => x.form === r.form) || (groups.push({ form: r.form, name: r.name, rows: [] }), groups[groups.length - 1]); g.rows.push(r); });
+  groups.forEach((g) => { if (g.form === 'chk') g.rows = byFund(g.rows); });
   const tot = (k) => rows.reduce((n, r) => n + countRanges(r[k] || []), 0);
   const html = `<div class="rp-page rp-wide"><div class="rp-top"><span></span><span class="r"><b>ANNEX B</b></span></div>
     <h2 class="rp-title">STATEMENT OF ACCOUNTABILITY FOR ACCOUNTABLE FORMS</h2><p class="c">As of ${esc(fmtDate(audit.countDate))}</p>
     <table class="rp-kv"><tr><td>Name of Accountable Officer</td><td><b>${esc(o.name)}</b></td></tr><tr><td>Designation</td><td>${esc(o.designation || '')}</td></tr><tr><td>Office / Station</td><td>${esc(agency)}, ${esc(station)}</td></tr></table>
     <table class="rp-t rp-saaf"><thead><tr><th rowspan="2">Name of Form</th><th colspan="3">Balance Beg.</th><th colspan="3">Received</th><th colspan="3">Issued</th><th colspan="3">Balance End</th><th colspan="3">Balance per Count</th><th rowspan="2" class="r">Difference</th></tr>
       <tr>${'<th>From</th><th>To</th><th class="r">Qty.</th>'.repeat(5)}</tr></thead>
-      <tbody>${groups.length ? groups.map((g) => g.rows.map((r, i) => {
+      <tbody>${groups.length ? groups.map((g) => `<tr class="rp-form"><td><b>${esc(g.name)}</b>${g.rows[0].face && g.form !== 'chk' ? ` <small>₱${money(g.rows[0].face)} each</small>` : ''}</td>${'<td></td>'.repeat(16)}</tr>` + g.rows.map((r, i) => {
           // One line per range: line k shows the k-th range of each column.
           const cols = [r.beg, r.rec, r.issued, r.end, r.count || []];
           const n = r.ns ? 1 : Math.max(1, ...cols.map((rs) => rs.length));
+          const fund = r.form === 'chk' && r.fund && (i === 0 || g.rows[i - 1].fund !== r.fund) ? r.fund : '';
           return Array.from({ length: n }, (_, k) => {
             const cellK = (rs, isCount) => (isCount && r.count === null ? ['', '', ''] : r.ns ? cells(rs, true) : rs[k] ? [rs[k][0], rs[k][1], countRanges([rs[k]])] : ['', '', '']);
-            return `<tr${k ? ' class="rp-cont"' : ''}><td>${i || k ? '' : `<b>${esc(g.name)}</b>`}${!k && r.other ? '<br><small>not in the register</small>' : ''}${!k && r.form === 'chk' && r.fund ? `<br><small>${esc(r.fund)}</small>` : ''}${!k && r.ns ? '<br><small>no serial</small>' : ''}${!k && !i && r.face ? `<br><small>₱${money(r.face)} each</small>` : ''}</td>${cols.map((rs, ci) => cellK(rs, ci === 4).map((v, j) => `<td class="${j === 2 ? 'r' : ''}">${v}</td>`).join('')).join('')}<td class="r">${k || r.diff === null ? '' : r.diff}</td></tr>`;
+            const notes = k ? [] : [fund ? `<span class="rp-fund">${esc(fund)}</span>` : '', r.other ? '<small>not in the register</small>' : '', r.ns ? '<small>no serial</small>' : ''].filter(Boolean);
+            return `<tr class="rp-cont"><td>${notes.join('<br>')}</td>${cols.map((rs, ci) => cellK(rs, ci === 4).map((v, j) => `<td class="${j === 2 ? 'r' : ''}">${v}</td>`).join('')).join('')}<td class="r">${k || r.diff === null ? '' : r.diff}</td></tr>`;
           }).join('');
         }).join('')).join('')
         : '<tr><td colspan="17" class="c">No accountable forms for this officer within the scope of audit.</td></tr>'}

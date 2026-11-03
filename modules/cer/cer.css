@@ -339,6 +339,8 @@ table.rp-t{width:100%; border-collapse:collapse; margin:6px 0}
 .rp-t th{background:#f0f0f0; font-weight:700; text-align:center}
 .rp-t tr.tot td{font-weight:700; background:#f7f7f7}
 .rp-saaf td{font-size:11.5px; white-space:nowrap}
+.rp-saaf .rp-fund{display:inline-block; padding-left:16px}
+.rp-saaf .rp-form td{background:none}
 .rp-two{display:grid; grid-template-columns:1fr 1.4fr; gap:12px; align-items:start}
 .rp-line{display:flex; justify-content:space-between; border-top:2px solid #333; border-bottom:2px solid #333; padding:4px 0}
 .rp-signs{display:flex; justify-content:space-around; gap:20px; margin:26px 0 8px; flex-wrap:wrap}

@@ -273,15 +273,25 @@ export async function downloadReport(c, ver) {
   const groups = []; rows.forEach((x) => { const g = groups.find((y) => y.form === x.form) || (groups.push({ form: x.form, name: x.form === 'af51' || x.form === 'af51b' ? 'AF 51' : x.name, rows: [] }), groups[groups.length - 1]); g.rows.push(x); });
   const T = { beg: 0, rec: 0, iss: 0, end: 0, cnt: 0, diff: 0 };
   const put = (row, c0, rg, ns) => { if (!rg) return; if (ns) { set(ws, `${c0[2]}${row}`, countRanges([rg])); return; } set(ws, `${c0[0]}${row}`, rg[0]); set(ws, `${c0[1]}${row}`, rg[1]); set(ws, `${c0[2]}${row}`, rg[1] - rg[0] + 1); };
+  const { byFund } = await import('./reports.js');
+  // Column A cells share one style object: give each its own copy.
+  const styA = (row, bold, indent) => { const cl = ws.getCell(`A${row}`); const st = JSON.parse(JSON.stringify(cl.style || {})); st.font = { ...(st.font || {}), bold }; st.alignment = { ...(st.alignment || {}), indent }; cl.style = st; };
+  for (let q = FIRST; q <= LAST; q++) styA(q, false, 0);
+  groups.forEach((g) => { if (g.form === 'chk') g.rows = byFund(g.rows); });
   groups.forEach((g, gi) => {
     if (gi && r <= LAST) r++;   // blank line between forms
     const isChk = g.form === 'chk';
-    if (isChk && r <= LAST) { set(ws, `A${r}`, 'Checks'); ws.getCell(`A${r}`).font = { ...(ws.getCell(`A${r}`).font || {}), bold: true }; r++; }
+    if (r <= LAST) { set(ws, `A${r}`, g.name); styA(r, true, 0); r++; }   // the form on its own line
     g.rows.forEach((x, i) => {
       const cols = [x.beg, x.rec, x.issued, x.end, x.count || []];
       const n = x.ns ? 1 : Math.max(1, ...cols.map((rs) => rs.length));
       for (let k = 0; k < n && r <= LAST; k++, r++) {
-        if (k === 0) { const label = isChk ? (x.fund || '') : i === 0 ? g.name : x.other ? 'Not in the register' : ''; if (label) { set(ws, `A${r}`, label); if (!isChk) ws.getCell(`A${r}`).font = { ...(ws.getCell(`A${r}`).font || {}), bold: true }; } }
+        if (k === 0) {
+          const fund = isChk && x.fund && (i === 0 || g.rows[i - 1].fund !== x.fund) ? x.fund : '';
+          const label = fund || (x.other ? 'Not in the register' : '');
+          if (label) set(ws, `A${r}`, label);
+          styA(r, false, fund ? 2 : 0);
+        }
         const pick = (rs) => (x.ns ? (k === 0 && rs.length ? rs : null) : rs[k] || null);
         [['B', 'C', 'D'], ['E', 'F', 'G'], ['H', 'I', 'J'], ['K', 'L', 'M'], ['N', 'O', 'P']].forEach((c0, ci) => { const p = pick(cols[ci]); if (!p) return; if (x.ns) set(ws, `${c0[2]}${r}`, countRanges(p)); else put(r, c0, p, false); });
         if (k === 0 && x.diff !== null && x.diff !== undefined) set(ws, `S${r}`, x.diff);
