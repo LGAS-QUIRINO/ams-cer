@@ -8,10 +8,10 @@
 const CLIENT_ID = 'PASTE-THE-CLIENT-ID-HERE.apps.googleusercontent.com';   // from Google Cloud → Credentials
 const FIRST_ADMIN_EMAIL = 'paste.the.admin.gmail@gmail.com';               // the Gmail that will be the first Admin
 
-const TABLES = ['users', 'teams', 'lgus', 'cer_officers', 'cer_audits', 'cer_exams', 'cer_booklets', 'cer_formcheck', 'cer_raaf', 'cer_settings', 'cer_ors', 'cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_bankrec', 'cer_cashcount', 'cer_verify'];
+const TABLES = ['users', 'teams', 'lgus', 'cer_officers', 'cer_audits', 'cer_exams', 'cer_booklets', 'cer_formcheck', 'cer_raaf', 'cer_settings', 'cer_ors', 'cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_bankrec', 'cer_cashcount', 'cer_verify', 'cer_cutoff'];
 const ADMIN_TABLES = { users: true, teams: true, lgus: true };            // only the Admin may change these
 // CER Audit Setup: auditors only (Team Member, ATL, SA, Admin). Team Staff (JO) and OSA Staff may view but not change it.
-const AUDITOR_TABLES = { cer_officers: true, cer_audits: true, cer_exams: true, cer_formcheck: true, cer_verify: true };
+const AUDITOR_TABLES = { cer_officers: true, cer_audits: true, cer_exams: true, cer_formcheck: true, cer_verify: true, cer_cutoff: true };
 const AUDITOR_ROLES = ['member', 'atl', 'sa', 'admin'];
 const HEAD = ['id', 'version', 'updatedAt', 'updatedBy', 'deleted', 'data'];
 const SEED = __SEED__;
@@ -80,7 +80,12 @@ function verify_(token) {
 }
 
 /* ---------- read and write ---------- */
-function sheet_(table) { return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(table); }
+function sheet_(table) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(table);
+  if (!sh) { sh = ss.insertSheet(table); sh.appendRow(table === 'log' ? ['at', 'by', 'action', 'table', 'id'] : HEAD); sh.setFrozenRows(1); }   // a new list adds its own sheet
+  return sh;
+}
 
 function readAll_(table) {
   const sh = sheet_(table); const n = sh.getLastRow();
