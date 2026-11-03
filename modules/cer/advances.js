@@ -11,7 +11,8 @@
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
-import { exportXlsx } from './forms.js';
+import { exportXlsx, loadXlsx, excelDate } from './forms.js';
+import { emitChange } from '../../js/store.js';
 
 const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -89,7 +90,8 @@ export async function advancesView(ctx) {
         <div class="field"><label for="ca-check">Check No.</label><input class="input mono" id="ca-check" autocomplete="off"></div>
         <div class="field"><label for="ca-part">Particulars</label><input class="input" id="ca-part" autocomplete="off"></div>
         <div class="field"><label for="ca-amt">Amount (₱)</label><input class="input r" id="ca-amt" inputmode="decimal" autocomplete="off"></div>
-        <button class="btn primary" type="button" id="ca-enter">Enter</button></div>` : ''}
+        <button class="btn primary" type="button" id="ca-enter">Enter</button></div>
+      <div class="ca-tools"><a href="#" class="cd-link" data-tpl="ca">Template</a><button class="btn sm" type="button" data-imp="ca">Import from Excel</button></div>` : ''}
     ${list.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col" class="r">Liquidated (₱)</th><th scope="col" class="r">Balance (₱)</th><th scope="col">Status</th><th scope="col" class="r"></th></tr></thead>
       <tbody>${sorted.map((a) => `<tr${a.beg ? ' class="cd-begrow"' : ''}><td>${esc(fmtDate(a.date))}</td><td class="mono">${a.rest ? '<span class="dim">—</span>' : `<b>${esc(a.checkNo)}</b>${a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : ''}`}</td><td>${esc(a.particulars || '')}</td><td class="r">${money(a.amount)}</td><td class="r">${money(a.liq)}</td><td class="r"><b>${money(a.bal)}</b></td>
         <td><span class="pill ${a.st[0]}">${a.st[1]}</span></td><td class="r">${a.beg && !a.rest ? `<a class="btn sm" href="#/cer/setup?a=${esc(audit.id)}&o=${esc(exam.id)}" title="Beginning checks are edited in Audit Setup, Beginning Balances">Setup</a>` : enc && !a.beg ? `<button class="btn sm" type="button" data-eca="${esc(a.id)}" aria-label="Edit check ${esc(a.checkNo)}">Edit</button>` : ''}</td></tr>`).join('')}</tbody>
@@ -104,7 +106,8 @@ export async function advancesView(ctx) {
         <div class="field"><label for="lq-part">Particulars</label><input class="input" id="lq-part" autocomplete="off"></div>
         <div class="field"><label for="lq-amt">Amount (₱)</label><input class="input r" id="lq-amt" inputmode="decimal" autocomplete="off"></div>
         <div class="field"><label for="lq-for">For Check No.</label><select class="input" id="lq-for">${(open.length ? open : list).map((a) => `<option value="${esc(a.id)}">${esc(advLabel(a))}</option>`).join('')}${open.length && open.length < list.length ? `<optgroup label="Fully liquidated">${list.filter((a) => a.bal <= 0.004).map((a) => `<option value="${esc(a.id)}">${esc(advLabel(a))}</option>`).join('')}</optgroup>` : ''}</select></div>
-        <button class="btn primary" type="button" id="lq-enter">Enter</button></div>` : '<div class="cd-info">Encode the cash advance first, then its liquidations.</div>') : ''}
+        <button class="btn primary" type="button" id="lq-enter">Enter</button></div>
+      <div class="ca-tools"><a href="#" class="cd-link" data-tpl="lq">Template</a><button class="btn sm" type="button" data-imp="lq">Import from Excel</button></div>` : '<div class="cd-info">Encode the cash advance first, then its liquidations.</div>') : ''}
     ${lqRows.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">LR No. / Reference</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">For Check No.</th><th scope="col" class="r"></th></tr></thead>
       <tbody>${lqRows.map((l) => { const a = list.find((x) => x.id === l.advanceId); return `<tr><td>${esc(fmtDate(l.date))}</td><td class="mono">${esc(l.ref || '')}</td><td>${esc(l.particulars || '')}</td><td class="r">${money(l.amount)}</td>
         <td class="mono">${a ? (a.rest ? 'Beginning balance' : esc(a.checkNo) + (a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : '')) : '<span class="dim">—</span>'}</td><td class="r">${enc ? `<button class="btn sm" type="button" data-elq="${esc(l.id)}" aria-label="Edit liquidation ${esc(l.ref || '')}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
@@ -158,6 +161,12 @@ export async function advancesView(ctx) {
         toast('Liquidation saved.', 'ok');
       };
     }
+    $$('[data-tpl]').forEach((a) => { a.onclick = async (e) => { e.preventDefault(); try { const XLSX = await loadXlsx();
+      const head = a.dataset.tpl === 'ca' ? ['Date', 'Check No.', 'Particulars', 'Amount'] : ['Date', 'LR No. / Reference', 'Particulars', 'Amount', 'For Check No.'];
+      const ws = XLSX.utils.aoa_to_sheet([head]); ws['!cols'] = head.map((h) => ({ wch: h === 'Particulars' ? 40 : 16 }));
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, a.dataset.tpl === 'ca' ? 'Cash Advances' : 'Liquidations'); XLSX.writeFile(wb, a.dataset.tpl === 'ca' ? 'Cash Advance Import Template.xlsx' : 'Liquidation Import Template.xlsx');
+    } catch (err) { toast(err.message || String(err), 'bad'); } }; });
+    $$('[data-imp]').forEach((b) => { b.onclick = () => importRows(b.dataset.imp, { refs, base, allAdv, list, o }); });
     $$('[data-eca]').forEach((b) => { b.onclick = () => editAdv(refs, list.find((a) => a.id === b.dataset.eca), allAdv, liqs); });
     $$('[data-elq]').forEach((b) => { b.onclick = () => editLiq(refs, liqs.find((l) => l.id === b.dataset.elq), list); });
     if (LAST.focus) { const el = $(LAST.focus === 'ca' ? '#ca-check' : '#lq-ref'); if (el) el.focus(); LAST.focus = ''; }
@@ -234,4 +243,78 @@ async function editLiq(refs, l, list) {
   const a = list.find((x) => x.id === act.advanceId);
   if (!(await okOver(a, act.amount, act.advanceId === l.advanceId ? +l.amount || 0 : 0))) return;
   await store.save('cer_liquid', l.id, { ...strip(l), ...act }, by(refs)); toast('Liquidation saved.', 'ok');
+}
+
+/* ---------- Import from Excel: cash advance checks, or liquidations ---------- */
+async function importRows(kind, c) {
+  const { refs, base, allAdv, list, o } = c;
+  const isCa = kind === 'ca';
+  let plan = null;
+  const read = async (file) => {
+    const XLSX = await loadXlsx();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const cols = isCa ? [['date', /date/i], ['no', /check|cheque/i], ['part', /particular|payee|description/i], ['amt', /amount|amt/i]]
+      : [['date', /date/i], ['for', /for\s*check|check\s*no|cheque/i], ['ref', /lr|ref|jev|or\s*no/i], ['part', /particular|description/i], ['amt', /amount|amt/i]];
+    let sheet = null;
+    for (const n of wb.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
+      for (let r = 0; r < Math.min(rows.length, 15) && !sheet; r++) {
+        const map = {}; rows[r].forEach((cell, i) => { const t = String(cell || ''); cols.forEach(([k, re]) => { if (map[k] === undefined && Object.values(map).indexOf(i) < 0 && re.test(t)) map[k] = i; }); });
+        if (map.date !== undefined && map.amt !== undefined && (isCa ? map.no !== undefined : map.ref !== undefined)) sheet = { rows, header: r, map };
+      }
+      if (sheet) break;
+    }
+    if (!sheet) return { error: `No sheet with the columns ${isCa ? 'Date, Check No. and Amount' : 'Date, LR No. / Reference and Amount'} was found. Use the template.` };
+    const M = sheet.map, get = (row, k) => (M[k] === undefined ? '' : row[M[k]]);
+    const add = [], problems = [];
+    const key = (v) => String(v ?? '').replace(/\D/g, '').replace(/^0+/, '');
+    const tk = (v) => key(v) || String(v).trim().toUpperCase();   // 0001749805 = 1749805
+    const taken = new Set(allAdv.map((a) => tk(a.checkNo)));
+    sheet.rows.slice(sheet.header + 1).forEach((row, i) => {
+      const line = sheet.header + i + 2;
+      const vals = Object.keys(M).map((k) => String(get(row, k) ?? '').trim());
+      if (vals.every((v) => !v)) return;
+      const date = excelDate(XLSX, get(row, 'date'));
+      if (!date) { problems.push({ line, why: 'Date is missing or not a date.' }); return; }
+      const aTxt = get(row, 'amt'), amount = typeof aTxt === 'number' ? r2(aTxt) : num(aTxt);
+      if (!amount || amount <= 0) { problems.push({ line, why: 'Amount is missing or not a number.' }); return; }
+      const particulars = String(get(row, 'part') ?? '').trim().replace(/\s+/g, ' ');
+      if (isCa) {
+        const checkNo = String(get(row, 'no') ?? '').trim();
+        if (!checkNo) { problems.push({ line, why: 'Check No. is missing.' }); return; }
+        if (taken.has(tk(checkNo))) { problems.push({ line, why: `Check No. ${checkNo} is already encoded.` }); return; }
+        taken.add(tk(checkNo));
+        add.push({ date, checkNo, particulars, amount, show: checkNo });
+      } else {
+        const ref = String(get(row, 'ref') ?? '').trim();
+        if (!ref) { problems.push({ line, why: 'LR No. / Reference is missing.' }); return; }
+        const forTxt = String(get(row, 'for') ?? '').trim();
+        const adv = forTxt ? list.find((a) => !a.rest && key(a.checkNo) && key(a.checkNo) === key(forTxt)) : null;
+        const advanceId = adv ? adv.id : (!forTxt || /begin/i.test(forTxt)) && list.some((a) => a.rest) ? '__beg' : '';
+        if (!advanceId) { problems.push({ line, why: forTxt ? `Check No. ${forTxt} is not encoded for this officer.` : 'For Check No. is missing.' }); return; }
+        add.push({ date, ref, particulars, amount, advanceId, show: `${ref} → ${adv ? adv.checkNo : 'Beginning balance'}` });
+      }
+    });
+    return { add, problems };
+  };
+  const show = (bg, p) => {
+    const box = $('#ci-res', bg);
+    if (p.error) { box.innerHTML = `<div class="msg bad">${esc(p.error)}</div>`; return; }
+    box.innerHTML = `<div class="oi-sum"><b>${p.add.length} ${isCa ? 'check' : 'liquidation'}${p.add.length === 1 ? '' : 's'} to add</b> · ₱ ${money(r2(p.add.reduce((n, x) => n + x.amount, 0)))}</div>
+      ${p.add.length ? `<div class="af-tbl oi-prev"><table class="af-reg"><thead><tr><th>Date</th><th>${isCa ? 'Check No.' : 'Reference → Check No.'}</th><th>Particulars</th><th class="r">Amount</th></tr></thead><tbody>${p.add.slice(0, 200).map((x) => `<tr><td>${esc(fmtDate(x.date))}</td><td class="mono">${esc(x.show)}</td><td>${esc(x.particulars)}</td><td class="r">${money(x.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${p.problems.length ? `<div class="af-probs"><b>Rows not imported (${p.problems.length})</b>${p.problems.slice(0, 60).map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
+  };
+  const v = await modal({ title: `Import ${isCa ? 'Cash Advances' : 'Liquidations'} · ${o.name}`, wide: true,
+    body: `<p class="af-note">Excel columns: <b>${isCa ? 'Date, Check No., Particulars, Amount' : 'Date, LR No. / Reference, Particulars, Amount, For Check No.'}</b>.${isCa ? ' Only the checks issued to this officer as cash advances.' : ' For Check No. must be a cash advance already encoded; blank or "Beginning" goes to the beginning balance (not itemized).'}</p>
+      <div class="field"><label for="ci-file">Excel file</label><input class="input" type="file" id="ci-file" accept=".xlsx,.xls,.csv"></div><div id="ci-res"></div>`,
+    onOpen: (bg) => { $('#ci-file', bg).onchange = async (e) => { const fl = e.target.files[0]; if (!fl) return; $('#ci-res', bg).innerHTML = '<p class="af-note">Reading…</p>';
+      try { plan = await read(fl); show(bg, plan); } catch (err) { plan = null; $('#ci-res', bg).innerHTML = `<div class="msg bad">${esc(err.message || String(err))}</div>`; } }; },
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; } if (!plan.add.length) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
+  if (v !== 'go') return;
+  for (const x of plan.add) {
+    const { show: _s, ...rec } = x;
+    await store.save(isCa ? 'cer_cashadv' : 'cer_liquid', newId(isCa ? 'cerca' : 'cerlq'), { ...base, ...rec }, by(refs), { quiet: true });
+  }
+  OPEN.ca = isCa; OPEN.lq = !isCa;
+  emitChange('local'); toast(`${plan.add.length} ${isCa ? 'cash advance' : 'liquidation'}${plan.add.length === 1 ? '' : 's'} imported.`, 'ok');
 }

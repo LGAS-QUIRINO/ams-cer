@@ -655,3 +655,6 @@ table.af-reg.cc-split{min-width:0; width:100%}
 .cc-split th, .cc-split td{padding:8px 6px}
 .cc-split th{font-size:11px; letter-spacing:.02em}
 .cc-right .af-tbl{overflow-x:auto}
+.ca-tools{display:flex; justify-content:flex-end; align-items:center; gap:12px; margin:8px 0 4px}
+.vf-info{padding:10px 14px; margin-bottom:12px; border:1px solid var(--line); border-radius:10px; background:#f6f8fc; font-size:13px}
+.vf-info ul{margin:6px 0 0 18px}

@@ -134,7 +134,7 @@ export async function banksView(ctx) {
   const numCol = (h) => /debit|credit|balance|amount|withdraw|deposit/i.test(h);
   const inBooks = (l) => { const x = byLine[l.i]; if (x) return `<span class="pill p-done">${x.kind === 'dep' ? 'Deposit' : 'Check'} ${esc(x.ref)}</span>`;
     if (!rec.lineOf && l.matched) return '<span class="pill p-done">Matched</span>';
-    return '<span class="pill p-stock">Not in the books</span>'; };
+    return l.debit && l.chq ? '<span class="pill p-stock">Check, not yet encoded</span>' : '<span class="pill p-stock">Not in the books</span>'; };
   const shown = lns.filter((l) => l.date <= asOf).filter((l) => !UI.only || unmatched.includes(l));
   const stmtTbl = imported ? `<div class="bk-tools"><span class="dim">${lns.length} line${lns.length === 1 ? '' : 's'} from ${esc(fmtDate(rec.covFrom ? nextDay(rec.covFrom) : lns[0].date))} to ${esc(fmtDate(rec.covTo || asOf))} · ${lns.length - unmatched.length} found in the books · ${unmatched.length} not in the books</span>
         <label class="cer-chip"><input type="checkbox" id="bk-only" ${UI.only ? 'checked' : ''}> Not in the books only</label></div>

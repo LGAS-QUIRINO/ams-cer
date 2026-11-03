@@ -1502,6 +1502,24 @@ export function cutoffFindings(f, o, exam, from, to) {
   if (wrong.length) add(`wrong|${wrong.length}`, `${wrong.length} OR${wrong.length > 1 ? 's' : ''} encoded in a booklet not issued to this officer: ${wrong.slice(0, 8).map((x) => x.serial).join(', ')}${wrong.length > 8 ? '…' : ''}.`);
   return out;
 }
+
+// For Verification: the checks used before the cut-off, per checkbook, and how many are encoded as cash advances.
+// Information only (no finding) until Checks Issued is built.
+export function checkUsage(f, o, exam, from, to, advs) {
+  const lines = cutoffLines(f, exam.id), out = [];
+  const key = (v) => +String(v ?? '').replace(/\D/g, '').replace(/^0+/, '') || 0;
+  f.booklets.filter((b) => b.officerId === o.id && b.form === 'chk' && b.issuedDate && b.issuedDate <= to).forEach((b) => {
+    const mine = lines.filter((l) => l.bookletId === b.id);
+    if (!mine.length) return;
+    const count = mergeRanges(mine.flatMap((l) => l.ranges));
+    const avail = from && b.issuedDate <= from ? rawUnused(b, from) : [[b.from, b.to]];
+    const used = subtractRanges(avail, count), n = countRanges(used);
+    if (!n) return;
+    const ca = advs.filter((a) => !a.beg && used.some(([x, y]) => key(a.checkNo) >= x && key(a.checkNo) <= y)).length;
+    out.push(`Checks ${serialText(b)}: used before the cut-off ${rangesText(used)} (${n}). ${ca} ${ca === 1 ? 'is a cash advance' : 'are cash advances'}; the other ${n - ca} wait for Checks Issued.`);
+  });
+  return out;
+}
 export { countRanges };
 
 /* ---------- Audit Setup · Beginning Inventory of Accountable Forms ---------- */

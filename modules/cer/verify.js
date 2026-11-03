@@ -14,7 +14,7 @@ import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
 import { bankFindings } from './banks.js';
-import { loadForms, cutoffFindings, exportXlsx } from './forms.js';
+import { loadForms, cutoffFindings, checkUsage, exportXlsx } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, repName } from './collections.js';
 import { booksOf, compute } from './count.js';
 
@@ -175,6 +175,8 @@ export async function verifyView(ctx) {
     `Collections & Deposits: ${myOrs.length} OR${myOrs.length === 1 ? '' : 's'}${lastOr ? ` up to ${fmtDate(lastOr)}` : ''} · ${nRep} report${nRep === 1 ? '' : 's'}`,
     `Cash Advances: ${myAdv.length} check${myAdv.length === 1 ? '' : 's'} · ${myLiq.length} liquidation${myLiq.length === 1 ? '' : 's'}`];
   const complete = !!ver.complete;
+  const chkInfo = checkUsage(f, o, exam, from, to, advs.filter((a) => a.officerId === o.id));
+  const chkHtml = chkInfo.length ? `<div class="vf-info"><b>Checks used</b> <span class="dim">(information only, until Checks Issued is built)</span><ul>${chkInfo.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></div>` : '';
   const dec = (k) => ver.decisions?.[k] || { decision: 'To decide', remarks: '' };
   const decided = findings.filter((x) => dec(x.key).decision !== 'To decide').length;
   const auditor = isAuditor(refs);
@@ -246,7 +248,7 @@ export async function verifyView(ctx) {
     <section class="panel" aria-labelledby="vf-h3"><div class="cc-head"><span class="cd-num">3</span><h2 id="vf-h3">Findings</h2><span class="cd-sub">found by the app · decided by the auditor</span>
       <label class="vf-complete" style="margin-left:auto"><input type="checkbox" id="vf-complete" ${complete ? 'checked' : ''} ${auditor ? '' : 'disabled'}> Encoding complete</label>
       ${complete ? `<label class="sr-only" for="vf-show">Show</label><select class="input af-sm" id="vf-show" style="width:auto"><option value="" ${!show ? 'selected' : ''}>All findings (${findings.length})</option><option value="todo" ${show === 'todo' ? 'selected' : ''}>To decide (${findings.length - decided})</option><option value="aom" ${show === 'aom' ? 'selected' : ''}>For AOM</option></select>` : ''}</div>
-      <div class="cd-body">${complete ? `${findingsHtml}<p class="af-note">Nothing is concluded by the app; the auditor decides each finding. Click the area to open the screen it comes from. Untick Encoding complete to go back to encoding.</p>`
+      <div class="cd-body">${chkHtml}${complete ? `${findingsHtml}<p class="af-note">Nothing is concluded by the app; the auditor decides each finding. Click the area to open the screen it comes from. Untick Encoding complete to go back to encoding.</p>`
         : `<div class="vf-progress"><b>Encoding in progress</b><ul>${progress.map((t) => `<li>${esc(t)}</li>`).join('')}</ul><p class="af-note">The findings (missing ORs, late deposits, bank items, shortage and the rest) show once every record of this officer is encoded. Tick <b>Encoding complete</b> then.</p></div>`}</div></section>
     <div class="panel vf-status"><div><b>Status of this examination</b><span>${!complete ? 'Encoding in progress. Tick Encoding complete in Findings when every record is encoded.' : ver.ready ? `Ready for Reports since ${esc(fmtDate(String(ver.readyAt || '').slice(0, 10)))}${ver.readyBy ? ' · ' + esc(ver.readyBy) : ''}.` : findings.length - decided ? `${findings.length - decided} finding${findings.length - decided > 1 ? 's' : ''} still to decide. Mark it ready once every finding is decided.` : 'Every finding is decided.'}</span></div>
       <div class="btn-row"><button class="btn" type="button" id="vf-xls">Export to Excel</button>${auditor && complete ? (ver.ready ? '<button class="btn" type="button" id="vf-unready">Reopen</button>' : '<button class="btn primary" type="button" id="vf-ready">Mark Ready for Reports</button>') : ''}</div></div>`;
