@@ -20,3 +20,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+
+
+Note (AMS, Nov 2026): exceljs.min.js is ExcelJS 4.4.0 with one change: font child elements are written in the order Excel expects (b, i, strike, ..., sz, color, name, family, charset, scheme).

@@ -200,6 +200,9 @@ async function save(wb, file) {
   wb.definedNames.model = [];
   wb.worksheets.forEach((ws) => {
     ws.autoFilter = null;
+    // ExcelJS writes <pageSetUpPr> before <outlinePr> in <sheetPr>, which Excel calls corrupt: drop outlinePr (its values are the defaults).
+    if (ws.properties) delete ws.properties.outlineProperties;
+    ['horizontalDpi', 'verticalDpi'].forEach((k) => { if (!(ws.pageSetup[k] >= 1)) delete ws.pageSetup[k]; });
     // Print area written as $A$1:$BA$66 (ExcelJS adds only the column $).
     if (ws.pageSetup.printArea) ws.pageSetup.printArea = ws.pageSetup.printArea.replace(/\$?([A-Z]+)\$?(\d+)/g, '$1$$$2');
   });
