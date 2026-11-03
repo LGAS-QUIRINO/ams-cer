@@ -700,3 +700,8 @@ table.af-reg.cut-tbl td, table.af-reg.cut-tbl th{padding:8px 12px}
 .cc-cpn2{font-size:12.5px; color:var(--ok)}
 .cc-cashpane .cc-tbl td{padding:5px 10px} .cc-cashpane .cc-tbl .input{padding:6px 9px}
 .cc-cashpane .cc-head{padding:12px 18px} 
+.cd-depreg{margin-top:16px}
+.cd-depreg .cd-orhead{display:flex; align-items:center; gap:10px; margin-bottom:8px}
+.cd-depreg .cd-orhead select{margin-left:auto; width:auto}
+.cd-depscroll{max-height:320px; overflow:auto}
+table.af-reg.cd-deptbl{min-width:0} .cd-deptbl tbody tr{cursor:pointer} .cd-deptbl tr.cd-on td{background:#eef3ff}
