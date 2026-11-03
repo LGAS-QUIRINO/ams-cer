@@ -266,29 +266,28 @@ function registerView(ctx, f, lguId) {
   const formsUsed = [...new Set(mine.map((b) => b.form))];
   const longest = withAo.slice().sort((a, b) => dAo(b) - dAo(a))[0];
   const body = `<div class="hello"><div><h1>Accountable Forms</h1><p>Each booklet is encoded once, from receipt by the custodian to its last number used. Status follows Collections &amp; Deposits. Unused forms are counted, never treated as missing.</p></div>
-      <div class="btn-row"><a class="btn" href="#/cer/forms/raaf?lgu=${esc(lguId)}">RAAF Reconciliation</a><a class="btn" href="#/cer/forms/officer?lgu=${esc(lguId)}">By Accountable Officer</a>
-        <button class="btn" type="button" id="af-xls">Export to Excel</button></div></div>
+</div>
 
-    <div class="panel af-bar">
-      <div class="field"><label for="af-lgu">Forms Register of</label><select class="input" id="af-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
-      <div class="field af-span2"><label for="af-find">Find a Serial No.</label><div class="af-pair af-findbox"><input class="input mono" id="af-find" inputmode="numeric" placeholder="e.g. 7311510" autocomplete="off"><button class="btn" type="button" id="af-findgo">Find</button></div></div>
+    <div class="panel af-top">
+      <div class="af-toprow">
+        <div class="field"><label for="af-lgu">Forms Register of</label><select class="input" id="af-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
+        <div class="field"><label for="af-find">Find a Serial No.</label><div class="af-pair af-findbox"><input class="input mono" id="af-find" inputmode="numeric" placeholder="e.g. 7311510" autocomplete="off"><button class="btn" type="button" id="af-findgo">Find</button></div></div>
+        <div class="af-topbtns"><a class="btn sm" href="#/cer/forms/raaf?lgu=${esc(lguId)}">RAAF Reconciliation</a><a class="btn sm" href="#/cer/forms/officer?lgu=${esc(lguId)}">By Accountable Officer</a><button class="btn sm" type="button" id="af-xls">Export to Excel</button></div>
+      </div>
+      <div class="ca-figs af-figs"><span>In stock <b>${stock.length}</b><small>booklets · ${stock.reduce((n, b) => n + b.qty, 0)} pcs</small></span>
+        <span>With AOs <b style="color:#1d4fb8">${withAo.length}</b><small>${withAo.reduce((n, b) => n + unusedOf(b), 0)} unused pcs</small></span>
+        <span>Exhausted <b class="ok">${done.length}</b></span>
+        <span>Longest with an AO <b>${longest ? `${longest.issuedAsOf ? '≥ ' : ''}${dAo(longest)} days` : '—'}</b><small>${longest ? `${esc(f.officers.find((o) => o.id === longest.officerId)?.name || '')}, ${FORM_SHORT[longest.form]}` : ''}</small></span></div>
     </div>
     <div id="af-found" aria-live="polite"></div>
     ${strayChk.length ? `<div class="msg warn af-stray"><b>${strayChk.length} checkbook${strayChk.length > 1 ? 's are' : ' is'} in the custodian's stock from earlier entries.</b>
       Checks are not controlled by the custodian, so they are kept out of this register. Open each one to Issue it to its officer, or Delete it and enter it with Add Checkbook in By Accountable Officer.
       <div class="af-straylist">${strayChk.sort((a, b) => a.from - b.from).map((b) => `<button class="btn sm" type="button" data-open="${esc(b.id)}">Checks ${serialText(b)}</button>`).join('')}</div></div>` : ''}
 
-    <div class="stats">
-      <div class="stat"><span>In Stock · Custodian</span><b>${stock.length}</b><small>booklets · ${stock.reduce((n, b) => n + b.qty, 0)} pcs</small></div>
-      <div class="stat"><span>With Accountable Officers</span><b style="color:#1d4fb8">${withAo.length}</b><small>booklets · ${withAo.reduce((n, b) => n + unusedOf(b), 0)} unused pcs</small></div>
-      <div class="stat"><span>Exhausted</span><b style="color:var(--ok)">${done.length}</b><small>every number used or cancelled</small></div>
-      <div class="stat"><span>Longest with an AO</span><b>${longest ? `${longest.issuedAsOf ? '≥ ' : ''}${dAo(longest)} days` : '—'}</b><small>${longest ? `${esc(f.officers.find((o) => o.id === longest.officerId)?.name || '')}, ${FORM_SHORT[longest.form]}` : 'no booklet with an AO'}</small></div>
-    </div>
-
     ${enc ? encodeHtml(refs, Object.assign(offs, { lguId, f }), q) : ''}
 
     <section class="panel" aria-labelledby="reg-h">
-      <div class="panel-head"><h2 id="reg-h">Forms Register</h2><span class="pill">${rows.length}</span>
+      <div class="panel-head"><h2 id="reg-h">Forms Register</h2><span class="pill">${rows.length}</span><span class="crumb-i" title="Click a booklet to see its history and to Issue, Transfer, Return or report it Lost.">ⓘ</span>
         <div class="af-filters">
           ${pick('form', [['', 'All form types'], ...formsFor(f, lguId).filter(([k]) => formsUsed.includes(k)).map(([k]) => [k, FORM_SHORT[k]])], fForm)}
           ${pick('cust', [['', 'All custody'], ['stock', 'In stock (custodian)'], ['direct', 'Received directly by an AO'], ...offs.map((o) => [o.id, o.name])], fCust)}
@@ -308,8 +307,7 @@ function registerView(ctx, f, lguId) {
             <td class="r">${usedOf(b)}</td>
             <td class="mono">${unusedCell(b)}</td>
             <td><span class="pill ${st.cls}">${st.label}</span></td></tr>`;
-        }).join('')}</tbody></table></div>
-        <p class="af-note">Click a booklet to see its history and to Issue, Transfer, Return or report it Lost.</p>`
+        }).join('')}</tbody></table></div>`
       : `<div class="empty"><b>${mine.length ? 'No booklet matches these filters.' : 'No booklets in this register yet.'}</b>${mine.length ? '' : 'Encode the custodian\'s booklets with <b>Receive</b>, or the forms already out with <b>Starting Inventory</b>.'}</div>`}
     </section>`;
   const exportRows = () => rows.map((b) => { const o = f.officers.find((x) => x.id === b.officerId); const d = dAo(b);
@@ -332,6 +330,7 @@ const result = (kind, title, text) => `<div class="af-r ${kind}"><b>${esc(title)
 /* ---------- Encode ---------- */
 const MOVES = [['receive', 'Receive'], ['issue', 'Issue'], ['starting', 'Starting Inventory']];
 // The last form, date and choices stay filled in for the next entry (the screen refreshes after each save).
+const ENC = { open: false };   // the Encode panel: folded to one line until a movement is chosen
 const LAST = { form: 'af51', date: '', src: RECEIVED_FROM[0], off: '', per: PER_BOOKLET, rby: 'custodian', held: 'custodian' };
 // The "Partly used" box: one tick, Unused or Used numbers, one text box (used in Starting Inventory and Edit).
 const partBox = (pre, { on = false, mode = 'unused', text = '', note = '' } = {}) => `
@@ -356,6 +355,7 @@ function wirePart(pre, root, onChange) {
 const sel = (a, b) => (a === b ? 'selected' : '');
 function encodeHtml(refs, offs, q) {
   const mv = MOVES.some(([k]) => k === q.get('mv')) ? q.get('mv') : 'receive';
+  const openEnc = ENC.open;
   const ctl = chkByCustodian(offs.f, offs.lguId);
   const formSel = `<div class="field"><label for="e-form">Form Type</label><select class="input" id="e-form">${formsFor(offs.f, offs.lguId).map(([k, l]) => `<option value="${k}" ${sel(k, LAST.form)}>${esc(l)}</option>`).join('')}</select></div>`;
   const range = `<div class="field"><label for="e-from">Serial From</label><input class="input r" id="e-from" inputmode="numeric" autocomplete="off"></div>
@@ -388,15 +388,19 @@ function encodeHtml(refs, offs, q) {
   const help = mv === 'receive' ? 'The range is split into booklets. Received by the custodian: the booklets go into stock. Received directly by an accountable officer (e.g. a barangay treasurer supplied by the Provincial Treasurer): they go straight into that officer\'s custody and are left out of the custodian\'s RAAF. A serial already in the register is refused, except a booklet first encoded from a logbook: it is matched by serial and gets its receipt details.'
     : mv === 'issue' ? 'Every booklet in stock within the range is issued to the officer. Barangay treasurers are listed with the municipality\'s officers.'
     : 'Booklets on hand on the start date, entered as complete series. Held By the custodian: unissued stock. Held By an accountable officer: booklets already in the officer\'s hands; tick Partly used for the booklets already in use and type their unused (or used) numbers.';
-  return `<section class="panel" aria-labelledby="enc-h"><div class="af-encbox">
-    <div class="af-headrow"><h2 id="enc-h" class="cer-h2">Encode</h2>
-      <div class="af-headr">${mv !== 'starting' ? `<a href="#" class="af-tpl" id="af-tpl">Download ${mv === 'receive' ? 'Receive' : 'Issue'} Template</a><button class="btn" type="button" id="af-import">Import ${mv === 'receive' ? 'Receipts' : 'Issuances'} from Excel</button>` : ''}
-      <div class="seg" role="group" aria-label="Movement">${MOVES.map(([k, l]) => `<a href="#" data-mv="${k}" class="${k === mv ? 'on' : ''}" aria-pressed="${k === mv}">${l}</a>`).join('')}</div></div></div>
-    ${fields}
-    ${mv !== 'issue' ? `<label class="af-chkctl af-nsbox" id="e-nsbox" hidden><input type="checkbox" id="e-ns"> Cash tickets without serial numbers <span class="dim">· counted by quantity: one lot is entered, Serial To becomes the quantity</span></label>` : ''}
-    <label class="af-chkctl"><input type="checkbox" id="af-chkctl" ${ctl ? 'checked' : ''} ${isAuditor(refs) ? '' : 'disabled'}> Checks are controlled by the custodian (${custName})
-      <span class="dim">${ctl ? '· checkbooks are received and issued here' : '· unticked: checkbooks are entered per officer (By Accountable Officer → Add Checkbook) and kept out of this register'}</span></label>
-    <div class="af-note" id="e-help">${esc(help)}</div></div></section>`;
+  const ctlHtml = `<label class="af-chkctl"><input type="checkbox" id="af-chkctl" ${ctl ? 'checked' : ''} ${isAuditor(refs) ? '' : 'disabled'}> Checks are controlled by the custodian (${custName})
+      <span class="dim">${ctl ? '· checkbooks are received and issued here' : '· unticked: checkbooks are entered per officer (By Accountable Officer → Add Checkbook) and kept out of this register'}</span></label>`;
+  return `<section class="panel" aria-labelledby="enc-h"><div class="af-encbox ${openEnc ? '' : 'af-folded'}">
+    <div class="af-headrow"><div class="af-headl"><h2 id="enc-h" class="cer-h2">Encode</h2>
+      <div class="seg" role="group" aria-label="Movement">${MOVES.map(([k, l]) => `<a href="#" data-mv="${k}" class="${openEnc && k === mv ? 'on' : ''}" aria-pressed="${openEnc && k === mv}">${l}</a>`).join('')}</div>
+      ${openEnc ? `<span class="crumb-i" title="${esc(help)}">ⓘ</span>` : ''}</div>
+      <div class="af-headr">${openEnc && mv !== 'starting' ? `<a href="#" class="af-tpl" id="af-tpl">Template</a><button type="button" class="af-tpl af-linkbtn" id="af-import">Import from Excel</button>` : ''}
+        <details class="af-set"><summary>⚙ Settings</summary><div class="af-setbox">${ctlHtml}</div></details>
+        ${openEnc ? '<button class="btn sm" type="button" id="af-encclose" aria-label="Close the encoding">✕</button>' : ''}</div></div>
+    ${openEnc ? fields : ''}
+    ${openEnc && mv !== 'issue' ? `<label class="af-chkctl af-nsbox" id="e-nsbox" hidden><input type="checkbox" id="e-ns"> Cash tickets without serial numbers <span class="dim">· counted by quantity: one lot is entered, Serial To becomes the quantity</span></label>` : ''}
+    ${openEnc ? '<div class="af-note af-prev" id="e-help"></div>' : ''}
+    </div></section>`;
 }
 
 function wireRegister(ctx, f, lguId, offs) {
@@ -407,7 +411,8 @@ function wireRegister(ctx, f, lguId, offs) {
   $('#af-findgo').onclick = doFind;
   findIn.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doFind(); } };
   $$('[data-filter]').forEach((s) => { s.onchange = () => go({ [s.dataset.filter]: s.value }); });
-  $$('[data-mv]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); go({ mv: a.dataset.mv }); }; });
+  $$('[data-mv]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); ENC.open = true; if (new URLSearchParams(location.hash.split('?')[1] || '').get('mv') === a.dataset.mv || (!location.hash.includes('mv=') && a.dataset.mv === 'receive')) window.dispatchEvent(new HashChangeEvent('hashchange')); else go({ mv: a.dataset.mv }); }; });
+  const ec = $('#af-encclose'); if (ec) ec.onclick = () => { ENC.open = false; window.dispatchEvent(new HashChangeEvent('hashchange')); };
   const kind = $('.seg a.on')?.dataset.mv === 'receive' ? 'receive' : 'issue';
   const imp = $('#af-import'); if (imp) imp.onclick = () => importModal(refs, f, lguId, kind);
   const tpl = $('#af-tpl'); if (tpl) tpl.onclick = async (e) => { e.preventDefault(); try { await downloadTemplate(kind); } catch (err) { toast(err.message || String(err), 'bad'); } };

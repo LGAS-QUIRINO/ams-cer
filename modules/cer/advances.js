@@ -7,7 +7,7 @@
 //
 // Records:
 //   cer_cashadv   one cash advance  { lguId, officerId, date, checkNo, particulars, amount }
-//   cer_liquid    one liquidation   { lguId, officerId, date, ref, particulars, amount, advanceId }
+//   cer_liquid    one liquidation   { lguId, officerId, date, ref, particulars, amount, advanceId, type: 'liq' | 'refund' (refund: ref = OR No.) }
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
@@ -22,7 +22,7 @@ const bad = (m) => { toast(m, 'bad'); return false; };
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
 const OPEN = { ca: true, lq: false };   // which tab is shown (one at a time); 1 Cash Advance when the screen is opened
 export const resetTabs = () => { OPEN.ca = true; OPEN.lq = false; };
-const LAST = { caDate: '', lqDate: '', focus: '' };
+const LAST = { caDate: '', lqDate: '', lqType: 'liq', focus: '' };
 // Beginning balance: the officer's cash advance balances in Audit Setup (disbursing, special disbursing, petty cash fund).
 const BEG_KEYS = ['ca', 'sdo', 'pcf'];
 
@@ -101,19 +101,20 @@ export async function advancesView(ctx) {
 
   const lqRows = liqs.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const lqBody = `${enc ? (list.length ? `<div class="cd-entry lq-entry">
+        <div class="field"><label for="lq-type">Type</label><select class="input" id="lq-type"><option value="liq" ${LAST.lqType !== 'refund' ? 'selected' : ''}>Liquidation</option><option value="refund" ${LAST.lqType === 'refund' ? 'selected' : ''}>Refund</option></select></div>
         <div class="field"><label for="lq-date">Date</label><input class="input" type="date" id="lq-date" value="${esc(LAST.lqDate)}"></div>
-        <div class="field"><label for="lq-ref">LR No. / Reference</label><input class="input mono" id="lq-ref" placeholder="LR, JEV or other" autocomplete="off"></div>
+        <div class="field"><label for="lq-ref" id="lq-refl">${LAST.lqType === 'refund' ? 'OR No.' : 'LR No. / Reference'}</label><input class="input mono" id="lq-ref" placeholder="${LAST.lqType === 'refund' ? 'OR No. of the refund' : 'LR, JEV or other'}" autocomplete="off"></div>
         <div class="field"><label for="lq-part">Particulars</label><input class="input" id="lq-part" autocomplete="off"></div>
         <div class="field"><label for="lq-amt">Amount (₱)</label><input class="input r" id="lq-amt" inputmode="decimal" autocomplete="off"></div>
         <div class="field"><label for="lq-for">For Check No.</label><select class="input" id="lq-for">${(open.length ? open : list).map((a) => `<option value="${esc(a.id)}">${esc(advLabel(a))}</option>`).join('')}${open.length && open.length < list.length ? `<optgroup label="Fully liquidated">${list.filter((a) => a.bal <= 0.004).map((a) => `<option value="${esc(a.id)}">${esc(advLabel(a))}</option>`).join('')}</optgroup>` : ''}</select></div>
         <button class="btn primary" type="button" id="lq-enter">Enter</button></div>
       <div class="ca-tools"><a href="#" class="cd-link" data-tpl="lq">Template</a><button class="btn sm" type="button" data-imp="lq">Import from Excel</button></div>` : '<div class="cd-info">Encode the cash advance first, then its liquidations.</div>') : ''}
-    ${lqRows.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">LR No. / Reference</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">For Check No.</th><th scope="col" class="r"></th></tr></thead>
-      <tbody>${lqRows.map((l) => { const a = list.find((x) => x.id === l.advanceId); return `<tr><td>${esc(fmtDate(l.date))}</td><td class="mono">${esc(l.ref || '')}</td><td>${esc(l.particulars || '')}</td><td class="r">${money(l.amount)}</td>
+    ${lqRows.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">Type</th><th scope="col">LR No. / OR No.</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">For Check No.</th><th scope="col" class="r"></th></tr></thead>
+      <tbody>${lqRows.map((l) => { const a = list.find((x) => x.id === l.advanceId); return `<tr><td>${esc(fmtDate(l.date))}</td><td>${l.type === 'refund' ? '<span class="pill p-done">Refund</span>' : 'Liquidation'}</td><td class="mono">${esc(l.ref || '')}</td><td>${esc(l.particulars || '')}</td><td class="r">${money(l.amount)}</td>
         <td class="mono">${a ? (a.rest ? 'Beginning balance' : esc(a.checkNo) + (a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : '')) : '<span class="dim">—</span>'}</td><td class="r">${enc ? `<button class="btn sm" type="button" data-elq="${esc(l.id)}" aria-label="Edit liquidation ${esc(l.ref || '')}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
-      <tfoot><tr class="cd-foot"><td colspan="3">Total</td><td class="r">${money(totLq)}</td><td></td><td></td></tr></tfoot></table></div>`
+      <tfoot><tr class="cd-foot"><td colspan="4">Total${liqs.some((l) => l.type === 'refund') ? ` <span class="dim">(refunds ₱${money(r2(liqs.filter((l) => l.type === 'refund').reduce((n, l) => n + (+l.amount || 0), 0)))})</span>` : ''}</td><td class="r">${money(totLq)}</td><td></td><td></td></tr></tfoot></table></div>`
       : '<div class="empty"><b>No liquidation encoded yet.</b></div>'}
-    ${begChecks.length ? '<p class="af-note">Checks tagged Beginning were unliquidated as of the last cash exam; their amount is what was still unliquidated then. They are entered in Audit Setup, Beginning Balances.</p>' : ''}<p class="af-note">For Check No. starts on the oldest open cash advance; pick another when the LR names it. A liquidation larger than what is left on its check is flagged. A refund is entered here with its OR No. as the reference.</p>`;
+    ${begChecks.length ? '<p class="af-note">Checks tagged Beginning were unliquidated as of the last cash exam; their amount is what was still unliquidated then. They are entered in Audit Setup, Beginning Balances.</p>' : ''}<p class="af-note">For Check No. starts on the oldest open cash advance; pick another when the LR names it. A liquidation larger than what is left on its check is flagged. A refund of an excess cash advance: choose Refund and type its OR No.</p>`;
 
   const openTxt = `${openChecks} open${list.some((a) => a.beg && a.bal > 0.004) ? ' + beginning' : ''}`;
   const figs = `<div class="ca-figs"><span>Beginning <b>₱ ${money(beg)}</b><small>as of ${esc(fmtDate(exam.lastExamDate)) || 'the last cash exam'}${begChecks.length ? ` · ${begChecks.length} check${begChecks.length === 1 ? '' : 's'}${rest > 0.004 ? ` + ₱${money(rest)} not itemized` : ''}` : ''}</small></span>
@@ -130,7 +131,7 @@ export async function advancesView(ctx) {
     }; });
     $('#ca-xls').onclick = () => exportXlsx(`Cash Advances ${o.name} ${audit.countDate}.xlsx`, 'Cash Advances', [
       ...list.map((a) => ({ Entry: a.rest ? 'Beginning Balance (not itemized)' : a.beg ? 'Beginning Check' : 'Cash Advance', Date: fmtDate(a.date), 'Check No.': a.checkNo, 'LR No. / Reference': '', Particulars: a.particulars || '', 'Cash Advance': a.amount, Liquidation: '', 'Balance of the Check': a.bal, Status: a.st[1] })),
-      ...liqs.slice().sort((x, y) => String(x.date).localeCompare(String(y.date))).map((l) => ({ Entry: 'Liquidation', Date: fmtDate(l.date), 'Check No.': (() => { const a = list.find((x) => x.id === l.advanceId); return a ? (a.rest ? 'Beginning balance' : a.checkNo) : ''; })(), 'LR No. / Reference': l.ref || '', Particulars: l.particulars || '', 'Cash Advance': '', Liquidation: l.amount, 'Balance of the Check': '', Status: '' })),
+      ...liqs.slice().sort((x, y) => String(x.date).localeCompare(String(y.date))).map((l) => ({ Entry: 'Liquidation', Date: fmtDate(l.date), 'Check No.': (() => { const a = list.find((x) => x.id === l.advanceId); return a ? (a.rest ? 'Beginning balance' : a.checkNo) : ''; })(), 'LR No. / Reference': l.ref || '', Particulars: (l.type === 'refund' ? 'Refund · ' : '') + (l.particulars || ''), 'Cash Advance': '', Liquidation: l.amount, 'Balance of the Check': '', Status: '' })),
       { Entry: 'Unliquidated', Date: fmtDate(audit.countDate), 'Check No.': '', 'LR No. / Reference': '', Particulars: `Beginning ${money(beg)} + cash advances ${money(totCa)} − liquidations ${money(totLq)}`, 'Cash Advance': '', Liquidation: '', 'Balance of the Check': unliq, Status: '' }]);
     if (!enc) return;
     const base = { lguId: audit.lguId, officerId: o.id };
@@ -152,17 +153,18 @@ export async function advancesView(ctx) {
     const le = $('#lq-enter');
     if (le) {
       amtBlur('#lq-amt'); enterOn(['#lq-ref', '#lq-part', '#lq-amt'], '#lq-enter');
+      $('#lq-type').onchange = (e) => { const rf = e.target.value === 'refund'; LAST.lqType = e.target.value; $('#lq-refl').textContent = rf ? 'OR No.' : 'LR No. / Reference'; $('#lq-ref').placeholder = rf ? 'OR No. of the refund' : 'LR, JEV or other'; };
       le.onclick = async () => {
-        const v = { date: $('#lq-date').value, ref: $('#lq-ref').value.trim(), particulars: $('#lq-part').value.trim(), amount: num($('#lq-amt').value), advanceId: $('#lq-for').value };
+        const v = { type: $('#lq-type').value, date: $('#lq-date').value, ref: $('#lq-ref').value.trim(), particulars: $('#lq-part').value.trim(), amount: num($('#lq-amt').value), advanceId: $('#lq-for').value };
         const err = checkLiq(v); if (err) return bad(err);
         if (!(await okOver(list.find((a) => a.id === v.advanceId), v.amount, 0))) return;
-        LAST.lqDate = v.date; LAST.focus = 'lq';
+        LAST.lqDate = v.date; LAST.lqType = v.type; LAST.focus = 'lq';
         await store.save('cer_liquid', newId('cerlq'), { ...base, ...v }, by(refs));
         toast('Liquidation saved.', 'ok');
       };
     }
     $$('[data-tpl]').forEach((a) => { a.onclick = async (e) => { e.preventDefault(); try { const XLSX = await loadXlsx();
-      const head = a.dataset.tpl === 'ca' ? ['Date', 'Check No.', 'Particulars', 'Amount'] : ['Date', 'LR No. / Reference', 'Particulars', 'Amount', 'For Check No.'];
+      const head = a.dataset.tpl === 'ca' ? ['Date', 'Check No.', 'Particulars', 'Amount'] : ['Type', 'Date', 'LR No. / Reference', 'Particulars', 'Amount', 'For Check No.'];
       const ws = XLSX.utils.aoa_to_sheet([head]); ws['!cols'] = head.map((h) => ({ wch: h === 'Particulars' ? 40 : 16 }));
       const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, a.dataset.tpl === 'ca' ? 'Cash Advances' : 'Liquidations'); XLSX.writeFile(wb, a.dataset.tpl === 'ca' ? 'Cash Advance Import Template.xlsx' : 'Liquidation Import Template.xlsx');
     } catch (err) { toast(err.message || String(err), 'bad'); } }; });
@@ -182,7 +184,7 @@ function checkAdv(v, advs, id) {
 }
 function checkLiq(v) {
   if (!v.date) return 'Enter the date.';
-  if (!v.ref) return 'Enter the LR No. or another reference (JEV, OR No. for a refund).';
+  if (!v.ref) return v.type === 'refund' ? 'Enter the OR No. of the refund.' : 'Enter the LR No. or another reference (e.g. JEV).';
   if (!v.amount || v.amount <= 0) return 'Enter the amount.';
   if (!v.advanceId) return 'Choose the check this liquidation is for.';
   return '';
@@ -224,13 +226,14 @@ async function editLiq(refs, l, list) {
   if (!l) return;
   let act = null;
   const v = await modal({ title: `Edit liquidation ${l.ref || ''}`,
-    body: `<div class="cd-g2"><div class="field"><label for="el-date">Date</label><input class="input" type="date" id="el-date" value="${esc(l.date)}"></div>
+    body: `<div class="cd-g2"><div class="field"><label for="el-type">Type</label><select class="input" id="el-type"><option value="liq" ${l.type !== 'refund' ? 'selected' : ''}>Liquidation</option><option value="refund" ${l.type === 'refund' ? 'selected' : ''}>Refund (ref = OR No.)</option></select></div>
+      <div class="field"><label for="el-date">Date</label><input class="input" type="date" id="el-date" value="${esc(l.date)}"></div>
       <div class="field"><label for="el-ref">LR No. / Reference</label><input class="input mono" id="el-ref" value="${esc(l.ref || '')}"></div>
       <div class="field"><label for="el-part">Particulars</label><input class="input" id="el-part" value="${esc(l.particulars || '')}"></div>
       <div class="field"><label for="el-amt">Amount (₱)</label><input class="input r" id="el-amt" inputmode="decimal" value="${esc(money(l.amount))}"></div>
       <div class="field"><label for="el-for">For Check No.</label><select class="input" id="el-for">${list.map((a) => `<option value="${esc(a.id)}" ${a.id === l.advanceId ? 'selected' : ''}>${esc(a.rest ? `Beginning balance (not itemized) · ₱${money(a.bal)} left` : `${a.checkNo}${a.beg ? ' (Beginning)' : ''} · ${a.particulars || fmtDate(a.date)} · ₱${money(a.bal)} left`)}</option>`).join('')}</select></div></div>`,
     buttons: [{ label: 'Delete', value: 'del' }, { label: 'Cancel', value: null }, { label: 'Save', cls: 'primary', value: 'save', check: (bg) => {
-      const x = { date: $('#el-date', bg).value, ref: $('#el-ref', bg).value.trim(), particulars: $('#el-part', bg).value.trim(), amount: num($('#el-amt', bg).value), advanceId: $('#el-for', bg).value };
+      const x = { type: $('#el-type', bg).value, date: $('#el-date', bg).value, ref: $('#el-ref', bg).value.trim(), particulars: $('#el-part', bg).value.trim(), amount: num($('#el-amt', bg).value), advanceId: $('#el-for', bg).value };
       const err = checkLiq(x); if (err) return bad(err);
       act = x; return true;
     } }] });
@@ -254,7 +257,7 @@ async function importRows(kind, c) {
     const XLSX = await loadXlsx();
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
     const cols = isCa ? [['date', /date/i], ['no', /check|cheque/i], ['part', /particular|payee|description/i], ['amt', /amount|amt/i]]
-      : [['date', /date/i], ['for', /for\s*check|check\s*no|cheque/i], ['ref', /lr|ref|jev|or\s*no/i], ['part', /particular|description/i], ['amt', /amount|amt/i]];
+      : [['date', /date/i], ['type', /^\s*type\s*$/i], ['for', /for\s*check|check\s*no|cheque/i], ['ref', /lr|ref|jev|or\s*no/i], ['part', /particular|description/i], ['amt', /amount|amt/i]];
     let sheet = null;
     for (const n of wb.SheetNames) {
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
@@ -292,7 +295,8 @@ async function importRows(kind, c) {
         const adv = forTxt ? list.find((a) => !a.rest && key(a.checkNo) && key(a.checkNo) === key(forTxt)) : null;
         const advanceId = adv ? adv.id : (!forTxt || /begin/i.test(forTxt)) && list.some((a) => a.rest) ? '__beg' : '';
         if (!advanceId) { problems.push({ line, why: forTxt ? `Check No. ${forTxt} is not encoded for this officer.` : 'For Check No. is missing.' }); return; }
-        add.push({ date, ref, particulars, amount, advanceId, show: `${ref} → ${adv ? adv.checkNo : 'Beginning balance'}` });
+        const type = /refund/i.test(String(get(row, 'type') ?? '')) ? 'refund' : 'liq';
+        add.push({ type, date, ref, particulars, amount, advanceId, show: `${type === 'refund' ? 'Refund OR ' : ''}${ref} → ${adv ? adv.checkNo : 'Beginning balance'}` });
       }
     });
     return { add, problems };
@@ -305,7 +309,7 @@ async function importRows(kind, c) {
       ${p.problems.length ? `<div class="af-probs"><b>Rows not imported (${p.problems.length})</b>${p.problems.slice(0, 60).map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
   };
   const v = await modal({ title: `Import ${isCa ? 'Cash Advances' : 'Liquidations'} · ${o.name}`, wide: true,
-    body: `<p class="af-note">Excel columns: <b>${isCa ? 'Date, Check No., Particulars, Amount' : 'Date, LR No. / Reference, Particulars, Amount, For Check No.'}</b>.${isCa ? ' Only the checks issued to this officer as cash advances.' : ' For Check No. must be a cash advance already encoded; blank or "Beginning" goes to the beginning balance (not itemized).'}</p>
+    body: `<p class="af-note">Excel columns: <b>${isCa ? 'Date, Check No., Particulars, Amount' : 'Type, Date, LR No. / Reference, Particulars, Amount, For Check No.'}</b>.${isCa ? ' Only the checks issued to this officer as cash advances.' : ' Type: Liquidation (or blank) or Refund (the reference is then the OR No.). For Check No. must be a cash advance already encoded; blank or "Beginning" goes to the beginning balance (not itemized).'}</p>
       <div class="field"><label for="ci-file">Excel file</label><input class="input" type="file" id="ci-file" accept=".xlsx,.xls,.csv"></div><div id="ci-res"></div>`,
     onOpen: (bg) => { $('#ci-file', bg).onchange = async (e) => { const fl = e.target.files[0]; if (!fl) return; $('#ci-res', bg).innerHTML = '<p class="af-note">Reading…</p>';
       try { plan = await read(fl); show(bg, plan); } catch (err) { plan = null; $('#ci-res', bg).innerHTML = `<div class="msg bad">${esc(err.message || String(err))}</div>`; } }; },

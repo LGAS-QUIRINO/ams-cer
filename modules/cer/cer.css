@@ -658,3 +658,23 @@ table.af-reg.cc-split{min-width:0; width:100%}
 .ca-tools{display:flex; justify-content:flex-end; align-items:center; gap:12px; margin:8px 0 4px}
 .vf-info{padding:10px 14px; margin-bottom:12px; border:1px solid var(--line); border-radius:10px; background:#f6f8fc; font-size:13px}
 .vf-info ul{margin:6px 0 0 18px}
+
+/* Forms Register: compact top, folded Encode panel */
+.af-top{padding:12px 16px}
+.af-toprow{display:grid; grid-template-columns:minmax(200px,1fr) minmax(240px,1.4fr) auto; gap:14px; align-items:end}
+.af-toprow .field{margin:0}
+.af-topbtns{display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end}
+.af-figs{padding:10px 2px 0}
+.af-encbox.af-folded{padding:10px 22px}
+.af-headl{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
+.af-linkbtn{border:0; background:none; padding:0; font:inherit; cursor:pointer}
+.af-set{position:relative}
+.af-set > summary{list-style:none; cursor:pointer; font-size:13px; color:var(--muted,#5b6b84); padding:6px 8px; border-radius:8px}
+.af-set > summary::-webkit-details-marker{display:none}
+.af-set[open] > summary{background:#eef3ff}
+.af-setbox{position:absolute; right:0; top:calc(100% + 6px); z-index:20; width:420px; padding:12px 14px; background:#fff; border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.12); font-size:13px}
+.af-prev:empty{display:none}
+@media (max-width:1100px){ .af-toprow{grid-template-columns:1fr 1fr} .af-topbtns{grid-column:1 / -1; justify-content:flex-start} }
+.cd-entry.lq-entry{grid-template-columns:.9fr 1fr 1.1fr 1.8fr 1fr 2fr auto}
+@media (max-width:1100px){ .cd-entry.lq-entry{grid-template-columns:repeat(2,minmax(0,1fr))} }
+.af-headr .af-linkbtn{font-size:13px; font-weight:600; color:#1d4fb8}

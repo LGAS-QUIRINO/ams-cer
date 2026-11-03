@@ -161,6 +161,13 @@ export async function verifyView(ctx) {
   // Beginning checks of a cash advance balance more than the lump sum typed in Audit Setup.
   ['ca', 'sdo', 'pcf'].forEach((k) => { const b = exam.balances?.[k]; if (!b) return; const lump = +b.lump || 0; const s = r2(advs.filter((a) => a.beg && a.begExamId === exam.id && (a.begKey || 'ca') === k).reduce((n, a) => n + (+a.amount || 0), 0));
     if (lump && s > lump + 0.004) add(`beglump|${k}`, 'Audit Setup', `Beginning checks of the cash advance total ₱${money(s)}, more than the ₱${money(lump)} typed as the balance at the last cash exam.`, '#/cer/setup?a=' + audit.id); });
+  // Refunds of cash advances: the OR No. should be an OR in Collections & Deposits with the same amount.
+  liqs.filter((l) => l.officerId === o.id && l.type === 'refund' && inScope(l.date)).forEach((l) => {
+    const n = parseInt(String(l.ref || '').replace(/[^\d]/g, ''), 10);
+    const hit = n ? f.ors.find((x) => x.lguId === audit.lguId && +x.serial === n && x.status !== 'cancelled') : null;
+    if (!hit) add(`refund|${l.id}`, 'Cash Advances', `Refund OR No. ${l.ref} of ${fmtDate(l.date)} (₱${money(l.amount)}) is not found in Collections & Deposits.`, '#/cer/collections');
+    else if (Math.abs((+hit.amount || 0) - (+l.amount || 0)) > 0.004) add(`refundamt|${l.id}`, 'Cash Advances', `Refund OR No. ${l.ref}: ₱${money(l.amount)} in Cash Advances, ₱${money(hit.amount)} in Collections & Deposits.`, '#/cer/collections');
+  });
   (await bankFindings(audit)).forEach((x) => add(`bank|${x.key}`, 'Bank Statements', x.text, '#/cer/banks?a=' + audit.id));
   // Late deposits per the bank (deposit slip date vs the date the bank credited it) stay under Bank Statements.
 
