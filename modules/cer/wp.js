@@ -180,10 +180,19 @@ const D = (s) => { if (!s) return null; const [y, m, d] = String(s).slice(0, 10)
 // Amounts get #,##0.00 where the template cell has no format of its own; quantities and serial numbers stay whole numbers.
 const QTY = { 'GF-74A Front': /^(G(2[89]|3[0-3])|F4[1-7]|AN4[1-8]|AQ57)$/, SAAFwo: /./, 'WP-AF51': /^D\d+$/, 'WP-CTC': /^D\d+$/, 'WP-CA': /^D\d+$/ };
 const set = (ws, addr, v) => {
-  const cl = ws.getCell(addr); cl.value = v === undefined ? null : v;
+  v = clean(v);
+  const cl = ws.getCell(addr); cl.value = v;
   if (typeof v === 'number' && (!cl.numFmt || cl.numFmt === 'General')) cl.numFmt = QTY[ws.name]?.test(addr) ? '0' : '#,##0.00';
   if (v instanceof Date && (!cl.numFmt || cl.numFmt === 'General')) cl.numFmt = 'mm/dd/yyyy';
 };
+// Excel refuses a file with NaN / Infinity, an invalid date, or control characters in a cell (LibreOffice lets them pass).
+function clean(v) {
+  if (v === undefined || v === null) return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if (typeof v === 'string') return v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '');
+  return String(v);
+}
 const hideRows = (ws, from, to) => { for (let r = from; r <= to; r++) ws.getRow(r).hidden = true; };
 async function save(wb, file) {
   // Excel refuses a file whose first tab (from the original workbook) is past the last sheet, or whose filters point to a removed sheet.
@@ -365,16 +374,17 @@ export async function downloadWp(c, ver, bank) {
       if (i) { r += 2; set(ws, `A${r}`, 'Account Number'); set(ws, `A${r + 1}`, 'Currency'); set(ws, `A${r + 2}`, 'Account Type'); }
       set(ws, `B${r}`, bk.account || ''); set(ws, `B${r + 1}`, 'PHP'); set(ws, `B${r + 2}`, bk.label || '');
       const heads = bk.heads && bk.heads.length ? bk.heads : ['Date', 'Description', 'Debit', 'Credit', 'Balance', 'Cheque Number'];
-      heads.forEach((h, k) => { const cl = ws.getCell(r + 4, k + 1); cl.value = h; cl.font = { bold: true }; });
+      heads.forEach((h, k) => { const cl = ws.getCell(r + 4, k + 1); cl.value = clean(h); cl.font = { bold: true }; });
       r += 5;
-      if (bk.opening !== null && bk.opening !== undefined) { set(ws, `B${r}`, 'Beginning balance'); const k = heads.findIndex((h) => /balance/i.test(h)); ws.getCell(r, (k >= 0 ? k : 4) + 1).value = bk.opening; r++; }
+      if (bk.opening !== null && bk.opening !== undefined) { set(ws, `B${r}`, 'Beginning balance'); const k = heads.findIndex((h) => /balance/i.test(h)); ws.getCell(r, (k >= 0 ? k : 4) + 1).value = clean(bk.opening); r++; }
       bk.lines.forEach((l) => {
         const cells = l.cells && l.cells.length ? l.cells : [fmtDate(l.date), l.desc, l.debit || '', l.credit || '', l.bal ?? '', l.chq];
-        cells.forEach((v, k) => { const cl = ws.getCell(r, k + 1); const h = heads[k] || ''; const n2 = isAmt(h) && v !== '' ? num(v) : null; cl.value = n2 !== null ? n2 : v; if (n2 !== null) cl.numFmt = '#,##0.00'; });
+        cells.forEach((v, k) => { const cl = ws.getCell(r, k + 1); const h = heads[k] || ''; const n2 = isAmt(h) && v !== '' ? num(v) : null; cl.value = n2 !== null ? n2 : clean(v); if (n2 !== null) cl.numFmt = '#,##0.00'; });
         r++;
       });
     });
   }
+  if (!wb.worksheets.length) { const ws = wb.addWorksheet('Working Papers'); ws.getCell('A1').value = `No working paper for ${c.o.name}: no collections, cash advances or imported bank statement within ${scope}.`; }
   await save(wb, `WP - ${fileBase(c)}.xlsx`);
 }
 export { amt as wpAmt, r2 as wpR2 };
