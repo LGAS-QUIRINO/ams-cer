@@ -186,6 +186,14 @@ const set = (ws, addr, v) => {
 };
 const hideRows = (ws, from, to) => { for (let r = from; r <= to; r++) ws.getRow(r).hidden = true; };
 async function save(wb, file) {
+  // Excel refuses a file whose first tab (from the original workbook) is past the last sheet, or whose filters point to a removed sheet.
+  wb.views = [{ x: 0, y: 0, width: 23256, height: 12456, firstSheet: 0, activeTab: 0, visibility: 'visible' }];
+  wb.definedNames.model = [];
+  wb.worksheets.forEach((ws) => {
+    ws.autoFilter = null;
+    // Print area written as $A$1:$BA$66 (ExcelJS adds only the column $).
+    if (ws.pageSetup.printArea) ws.pageSetup.printArea = ws.pageSetup.printArea.replace(/\$?([A-Z]+)\$?(\d+)/g, '$1$$$2');
+  });
   const buf = await wb.xlsx.writeBuffer();
   const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   const a = document.createElement('a'); a.href = url; a.download = file; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
