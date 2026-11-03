@@ -6,17 +6,20 @@
 //   Annex D  Statement of Accountability – cash advances, by month
 // Other reports follow.
 import { store } from '../../js/store.js';
-import { esc, $, $$ } from '../../js/ui.js';
-import { mayView, agencyName, fmtDate, money, num } from './cer.js';
-import { loadForms, saafRows, unusedFormsOf, exportXlsx, countRanges, FORM_SHORT } from './forms.js';
+import { esc, toast, $, $$ } from '../../js/ui.js';
+import { mayView, agencyName, fmtDate, money, num, autoPreparer, autoReviewer } from './cer.js';
+import { loadForms, saafRows, unusedFormsOf, countRanges, FORM_SHORT } from './forms.js';
 import { accountability } from './verify.js';
+import { WP, wpLines, wpHtml, rsaHtml, wireWp, downloadReport, downloadWp } from './wp.js';
 
 const flat = (r) => ({ id: r.id, ...r.data });
 const r2 = (n) => Math.round(n * 100) / 100;
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
 const BILLS = [1000, 500, 200, 100, 50, 20];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const REPORTS = [['74a', 'GF 74-A · Report of Cash Examination'], ['saaf', 'Annex B · SAAF'], ['soac', 'Annex C · Statement of Accountability (Collections)'], ['soad', 'Annex D · Statement of Accountability (Cash Advances)']];
+const REPORTS = [['74a', 'GF 74-A · Report of Cash Examination'], ['saaf', 'Annex B · SAAF'], ['soac', 'Annex C · Statement of Accountability (Collections)'], ['soad', 'Annex D · Statement of Accountability (Cash Advances)'],
+  ['rsa', 'Annex E–G · Reconciliation Statements of Accountability'], ['a1a', 'Annex A.1a · Working paper: ORs, collections and deposits'],
+  ['a1b', 'Annex A.1b · Working paper: CTC, collections and remittances'], ['a2a', 'Annex A.2a · Working paper: cash advances and liquidations']];
 const amt = (n) => (n === null || n === undefined ? '' : n < -0.004 ? `(${money(-n)})` : money(n));
 
 // Amount in words, e.g. 35,000 → "Thirty Five Thousand Pesos Only".
@@ -37,7 +40,7 @@ export function inWords(x) {
 export async function reportsView(ctx) {
   const { refs, q } = ctx;
   const f = await loadForms();
-  const [reports, advs0, liqs0, counts0, ver0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount', 'cer_verify'].map((t) => store.list(t)));
+  const [reports, advs0, liqs0, counts0, ver0, bank0, bset0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount', 'cer_verify', 'cer_bankrec', 'cer_settings'].map((t) => store.list(t)));
   f.reports = reports.map(flat);
   const advs = advs0.map(flat), liqs = liqs0.map(flat), counts = counts0.map(flat);
   const crumb = 'Reports';
@@ -65,20 +68,38 @@ export async function reportsView(ctx) {
   const agency = agencyName(refs, lgu);
   const station = lgu.data.kind === 'barangay' ? `${refs.lgu[lgu.data.parentId]?.data.name || ''}, Quirino` : lgu.data.kind === 'municipality' ? `${lgu.data.name}, Quirino` : 'Cabarroguis, Quirino';
   const person = (id) => { const u = refs.user[id]; return u ? { name: u.data.name || '', pos: u.data.position || '', des: u.data.designation || '' } : { name: '', pos: '', des: '' }; };
-  const prep = person(audit.preparedBy), rev = person(audit.reviewedBy);
+  // Prepared by: the ATM chosen in Audit Setup (else the ATM assigned to the municipality); Reviewed by: the ATL (else the team's ATL).
+  const prepId = audit.preparedBy || autoPreparer(refs, lgu), revId = audit.reviewedBy || autoReviewer(refs, lgu);
+  const prep = person(prepId), rev = person(revId);
   const sign = (label, p, extra = '') => `<div class="rp-sign"><span>${label}</span><b>${esc(p.name || ' ')}</b><small>${esc([p.pos, p.des].filter(Boolean).join(' · ') || extra)}</small></div>`;
-  const ctx2 = { refs, f, audit, exam, o, A, agency, station, prep, rev, sign, ver };
-  const doc = rep === '74a' ? gf74a(ctx2) : rep === 'saaf' ? saaf(ctx2) : rep === 'soac' ? soa(ctx2, 'col') : soa(ctx2, 'ca');
-  const note = !A.count && rep === '74a' ? '<div class="cd-info">No cash count saved yet for this officer: part B is blank. Save it in Cash Count.</div>' : '';
+  const ctx2 = { refs, f, audit, exam, o, A, agency, station, prep, rev, sign, ver, advs, liqs };
+  const isWp = WP[rep];
+  const w = isWp ? wpLines(ctx2, rep, ver) : null;
+  const doc = rep === '74a' ? gf74a(ctx2) : rep === 'saaf' ? saaf(ctx2) : rep === 'soac' ? soa(ctx2, 'col') : rep === 'soad' ? soa(ctx2, 'ca')
+    : rep === 'rsa' ? { html: rsaHtml(ctx2, ver) } : { html: wpHtml(ctx2, rep, ver, true) };
+  const miss = [!prepId && 'the ATM in Prepared by', !revId && 'the ATL in Reviewed by'].filter(Boolean);
+  const who = miss.length ? `<div class="cd-info">Choose ${miss.join(' and ')} in Audit Setup; the reports show blank names until then.</div>` : '';
+  const note = who + (!A.count && rep === '74a' ? '<div class="cd-info">No cash count saved yet for this officer: part B is blank. Save it in Cash Count.</div>' : '');
   const status = ver?.ready ? '<span class="pill p-done">Verification: Ready for Reports</span>' : '<span class="pill p-flag">Verification not yet marked ready</span>';
+  const same = w ? `<div class="wp-same"><label class="cd-chk"><input type="checkbox" id="wp-same" ${w.edited ? '' : 'checked'}> Per CashBook same as Per Audit</label>
+      ${w.edited ? `<span class="pill p-flag">${w.edited} line${w.edited > 1 ? 's' : ''} differ${w.edited > 1 ? '' : 's'}</span>` : ''}<small class="muted">To change a line, click its Per CashBook amount and type what the cashbook shows.</small></div>` : '';
+  // Bank statements of the auditee's accounts (Working Papers): imported lines within the coverage.
+  const bset = bset0.map(flat).find((x) => x.id === `banks|${audit.lguId}`);
+  const bank = bank0.map(flat).filter((b) => b.auditId === audit.id && (b.lines || []).length).map((b) => {
+    const acc = (bset?.list || []).find((x) => x.id === b.accountId) || {};
+    return { account: b.account || acc.accountNo || '', label: [acc.bank, acc.fund].filter(Boolean).join(' · '), opening: b.opening ?? null, heads: b.heads || [], lines: b.lines };
+  });
+  const run = async (btn, fn) => { btn.disabled = true; const t = btn.textContent; btn.textContent = 'Preparing…'; try { await fn(); } catch (e) { toast(e.message || 'The Excel file could not be made.', 'bad'); console.error(e); } btn.disabled = false; btn.textContent = t; };
   const body = `${hello}${top}
-    <div class="rp-tools">${status}<div class="btn-row"><button class="btn" type="button" id="rp-xls">Export to Excel</button><button class="btn primary" type="button" id="rp-print">Print</button></div></div>
-    ${note}
+    <div class="rp-tools">${status}<div class="btn-row"><button class="btn" type="button" id="rp-xr">Download Report (Excel)</button><button class="btn" type="button" id="rp-xw">Download Working Papers (Excel)</button><button class="btn primary" type="button" id="rp-print">Print</button></div></div>
+    ${note}${same}
     <div id="cer-print" class="rp-doc">${doc.html}</div>`;
   return { crumb, body, wire: () => {
     wireTop();
     $('#rp-print').onclick = () => { document.body.classList.add('af-printing', 'rp-printing'); window.print(); document.body.classList.remove('af-printing', 'rp-printing'); };
-    $('#rp-xls').onclick = () => exportXlsx(`${REPORTS.find(([k]) => k === rep)[1].split(' · ')[0]} ${o.name} ${audit.countDate}.xlsx`, 'Report', doc.rows);
+    $('#rp-xr').onclick = (e) => run(e.currentTarget, () => downloadReport(ctx2, ver));
+    $('#rp-xw').onclick = (e) => run(e.currentTarget, () => downloadWp(ctx2, ver, bank));
+    if (isWp) wireWp(ctx2, rep, ver, refs);
   } };
 }
 

@@ -705,3 +705,22 @@ table.af-reg.cut-tbl td, table.af-reg.cut-tbl th{padding:8px 12px}
 .cd-depreg .cd-orhead select{margin-left:auto; width:auto}
 .cd-depscroll{max-height:320px; overflow:auto}
 table.af-reg.cd-deptbl{min-width:0} .cd-deptbl tbody tr{cursor:pointer} .cd-deptbl tr.cd-on td{background:#eef3ff}
+/* Reports: working papers (Annex A.1a, A.1b, A.2a) with Per CashBook edits; Annex E–G (Nov 2026) */
+.wp-same{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:0 0 10px}
+.wp-same small{flex-basis:100%}
+.wp-t td, .wp-t th{font-size:11.5px}
+.wp-t td:nth-child(1), .wp-t td:nth-child(3){white-space:nowrap}
+.wp-cb{all:unset; cursor:text; display:inline-block; min-width:70px; text-align:right; padding:1px 4px; border-bottom:1px dashed #9aa}
+.wp-cb:hover, .wp-cb:focus-visible{background:#eef5ff; outline:1px solid #8ab}
+.wp-cb.wp-ed{font-weight:700; color:#8a4b00; border-bottom-color:#c77}
+tr.wp-diff td{background:#fff7e8}
+.wp-in{width:110px; padding:2px 4px; height:auto}
+table.rp-rsa{max-width:640px; margin:14px auto}
+.rp-rsa td.rp-ind{padding-left:28px}
+.rp-rsa td:nth-child(odd){white-space:normal; width:auto}
+.rp-rsa td.r{width:150px}
+@media print{
+  body.rp-printing .wp-cb{border:0; font-weight:inherit; color:inherit}
+  body.rp-printing tr.wp-diff td{background:none}
+  body.rp-printing #cer-print .wp-t td, body.rp-printing #cer-print .wp-t th{font-size:8pt; padding:2px 3px}
+}

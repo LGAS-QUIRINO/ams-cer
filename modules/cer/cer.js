@@ -295,7 +295,7 @@ function stateFrom(refs, cer, q) {
   const lgu = audit ? refs.lgu[audit.lguId] : null;
   const st = {
     auditId: audit ? audit.id : '', lguId: audit ? audit.lguId : '', countDate: audit ? audit.countDate : '',
-    preparedBy: audit ? audit.preparedBy : (refs.me ? refs.me.id : ''), reviewedBy: audit ? (audit.reviewedBy || '') : '',
+    preparedBy: (audit && audit.preparedBy) || autoPreparer(refs, lgu), reviewedBy: (audit && audit.reviewedBy) || autoReviewer(refs, lgu),
     ...blankExam(lgu)
   };
   if (exam) {
@@ -318,7 +318,6 @@ function setupHtml(refs, cer, q) {
   if (audit && !mayView(refs, lgu)) return `<div class="msg bad">This cash examination belongs to another team.</div><a class="btn" href="#/cer/setup">← All Cash Examinations</a>`;
   const edit = audit ? mayEdit(refs, lgu) : isAuditor(refs);
   const dis = edit ? '' : 'disabled';
-  const prep = refs.user[st.preparedBy];
   const tabs = base.exams.map((e) => ({ id: e.id, o: cer.officers.find((x) => x.id === e.officerId) }));
   const newTab = !base.exam;   // a new officer exam is being set up
   const h = heads(refs, cer, st), opens = openState(key, h);
@@ -336,8 +335,8 @@ function setupHtml(refs, cer, q) {
           <div class="field"><label for="cer-date">Cash Count Date</label><input class="input" type="date" id="cer-date" value="${esc(st.countDate)}" ${dis}></div>
         </div>
         <div class="cer-g2">
-          <div class="field"><label for="cer-prep">Prepared by (logged-in auditor)</label><input class="input" id="cer-prep" value="${esc(userLine(prep) || (refs.me ? '' : 'Signed-in user'))}" readonly disabled></div>
-          <div class="field"><label for="cer-rev">Reviewed by</label><select class="input" id="cer-rev" ${dis}>${reviewerOptions(refs, lgu, st.reviewedBy)}</select></div>
+          <div class="field"><label for="cer-prep">Prepared by (ATM)</label><select class="input" id="cer-prep" ${dis}>${preparerOptions(refs, lgu, st.preparedBy)}</select><span class="hint">The Team Member assigned to the municipality, filled in automatically.</span></div>
+          <div class="field"><label for="cer-rev">Reviewed by (ATL)</label><select class="input" id="cer-rev" ${dis}>${reviewerOptions(refs, lgu, st.reviewedBy)}</select><span class="hint">The ATL of the team (Admin → Teams), filled in automatically.</span></div>
         </div>`, opens.has('exam'))}
     </section>
 
@@ -367,6 +366,23 @@ function lguOptions(refs, sel) {
     if (inside.length) html += `<optgroup label="${esc(m.data.name)}">${inside.map((l) => opt(l, agencyName(refs, l))).join('')}</optgroup>`;
   });
   return html;
+}
+// Prepared by: the Team Member (ATM) assigned to the auditee's municipality in Users & Roles (only when exactly one is ticked for it).
+// Reviewed by: the Audit Team Leader of the team in Admin → Teams. Both can still be chosen in Audit Setup.
+export function autoPreparer(refs, lgu) {
+  if (!lgu) return '';
+  const mun = lgu.data.kind === 'barangay' ? lgu.data.parentId : lgu.data.kind === 'municipality' ? lgu.id : '';
+  const list = refs.users.filter((u) => u.data.status !== 'disabled' && (u.data.roles || []).includes('member') && (u.data.teamIds || []).includes(lgu.data.teamId) && mun && (u.data.munIds || []).includes(mun));
+  return list.length === 1 ? list[0].id : '';
+}
+export const autoReviewer = (refs, lgu) => (lgu ? refs.team[lgu.data.teamId]?.data.atlUserId || '' : '');
+function preparerOptions(refs, lgu, sel) {
+  const team = lgu ? lgu.data.teamId : '';
+  const list = refs.users.filter((u) => u.data.status !== 'disabled' && (u.data.roles || []).includes('member') && (!team || (u.data.teamIds || []).includes(team)))
+    .sort((a, b) => String(a.data.name).localeCompare(String(b.data.name)));
+  const keep = sel && !list.some((u) => u.id === sel) && refs.user[sel] ? [refs.user[sel]] : [];
+  return `<option value="">${list.length || keep.length ? '— Choose the ATM —' : 'No Team Member in Users & Roles yet'}</option>` +
+    [...keep, ...list].map((u) => `<option value="${esc(u.id)}" ${u.id === sel ? 'selected' : ''}>${esc(userLine(u))}</option>`).join('');
 }
 function reviewerOptions(refs, lgu, sel) {
   const team = lgu ? lgu.data.teamId : '';
@@ -543,11 +559,14 @@ function wireSetup(refs, cer, q, rerender) {
     st.lguId = lguSel.value; const lgu = refs.lgu[st.lguId];
     Object.assign(st, blankExam(lgu), { examId: st.examId });
     $('#cer-addr').value = addressOf(refs, lgu);
+    st.preparedBy = autoPreparer(refs, lgu) || st.preparedBy; st.reviewedBy = autoReviewer(refs, lgu) || st.reviewedBy;
     revSel.innerHTML = reviewerOptions(refs, lgu, st.reviewedBy);
+    const ps = $('#cer-prep'); if (ps) ps.innerHTML = preparerOptions(refs, lgu, st.preparedBy);
     touch(); drawOfficer();
   };
   if (dateIn) dateIn.oninput = () => { st.countDate = dateIn.value; touch(); drawOfficer(); };
   if (revSel) revSel.onchange = () => { st.reviewedBy = revSel.value; touch(); };
+  { const ps = $('#cer-prep'); if (ps && !ps.disabled) ps.onchange = () => { st.preparedBy = ps.value; touch(); }; }
   if ($('#cer-off') && !$('#cer-officer')?.disabled) wireOfficer();
   flag();
 
@@ -673,6 +692,8 @@ async function saveSetup(refs, cer, st) {
   const bad = (m) => { toast(m, 'bad'); return null; };
   if (!lgu) return bad('Choose the auditee.');
   if (!st.countDate) return bad('Enter the cash count date.');
+  if (!st.preparedBy) return bad('Choose the ATM in Prepared by.');
+  if (!st.reviewedBy) return bad('Choose the ATL in Reviewed by.');
   if (!st.officerId) return bad('Choose the accountable officer.');
   if (!(st.functions || []).length) return bad('Tick at least one accountability function.');
   if (st.functions.includes('collecting') && !(st.forms || []).length) return bad('Tick the accountable forms used in collecting.');
@@ -694,7 +715,7 @@ async function saveSetup(refs, cer, st) {
       balances[r.key] = { ...balances[r.key], lump, amount: Math.max(lump || 0, s) }; }
   });
   const oldAudit = cer.audits.find((a) => a.id === auditId);
-  await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: oldAudit ? oldAudit.preparedBy : (refs.me ? refs.me.id : ''), reviewedBy: st.reviewedBy || '' }, by(refs));
+  await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy }, by(refs));
   const examId = st.examId || newId('cere');
   const oldExam = cer.exams.find((e) => e.id === examId);
   await store.save('cer_exams', examId, { auditId, officerId: st.officerId, functions: st.functions, forms: st.functions.includes('collecting') ? st.forms : [],
