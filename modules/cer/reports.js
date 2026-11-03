@@ -181,7 +181,7 @@ function saaf(c) {
           const n = r.ns ? 1 : Math.max(1, ...cols.map((rs) => rs.length));
           return Array.from({ length: n }, (_, k) => {
             const cellK = (rs, isCount) => (isCount && r.count === null ? ['', '', ''] : r.ns ? cells(rs, true) : rs[k] ? [rs[k][0], rs[k][1], countRanges([rs[k]])] : ['', '', '']);
-            return `<tr${k ? ' class="rp-cont"' : ''}><td>${i || k ? '' : `<b>${esc(g.name)}</b>`}${!k && r.other ? '<br><small>not in the register</small>' : ''}${!k && r.ns ? '<br><small>no serial</small>' : ''}${!k && !i && r.face ? `<br><small>₱${money(r.face)} each</small>` : ''}</td>${cols.map((rs, ci) => cellK(rs, ci === 4).map((v, j) => `<td class="${j === 2 ? 'r' : ''}">${v}</td>`).join('')).join('')}<td class="r">${k || r.diff === null ? '' : r.diff}</td></tr>`;
+            return `<tr${k ? ' class="rp-cont"' : ''}><td>${i || k ? '' : `<b>${esc(g.name)}</b>`}${!k && r.other ? '<br><small>not in the register</small>' : ''}${!k && r.form === 'chk' && r.fund ? `<br><small>${esc(r.fund)}</small>` : ''}${!k && r.ns ? '<br><small>no serial</small>' : ''}${!k && !i && r.face ? `<br><small>₱${money(r.face)} each</small>` : ''}</td>${cols.map((rs, ci) => cellK(rs, ci === 4).map((v, j) => `<td class="${j === 2 ? 'r' : ''}">${v}</td>`).join('')).join('')}<td class="r">${k || r.diff === null ? '' : r.diff}</td></tr>`;
           }).join('');
         }).join('')).join('')
         : '<tr><td colspan="17" class="c">No accountable forms for this officer within the scope of audit.</td></tr>'}

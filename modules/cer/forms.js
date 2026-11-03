@@ -75,7 +75,10 @@ const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || [...new Set(
 // custodian's register (entered per officer with Add Checkbook). Ticked: the custodian controls the checks like other forms.
 const chkByCustodian = (f, lguId) => !!f.settings['chkctl|' + lguId]?.on;
 const formsFor = (f, lguId) => (chkByCustodian(f, lguId) ? AF_FORMS : AF_FORMS.filter(([k]) => k !== 'chk'));
-const chkLabel = (b) => `${esc(FORM_SHORT[b.form] || b.form)}${b.form === 'chk' && b.bankAccount ? `<small>${esc(b.bankAccount)}</small>` : ''}`;
+const chkLabel = (b) => `${esc(FORM_SHORT[b.form] || b.form)}${b.form === 'chk' && (b.fund || b.bankAccount) ? `<small>${esc([b.fund, b.bankAccount].filter(Boolean).join(' · '))}</small>` : ''}`;
+// Funds a checkbook can belong to (optional): General Fund and 5% BDRRMF, plus the auditee's own Funds list.
+const checkFunds = (f, lguId) => [...new Set(['General Fund', '5% BDRRMF', ...((f.settings || {})['funds|' + lguId]?.list || [])])];
+const fundSel = (id, funds, cur) => `<select class="input" id="${id}"><option value="">— None —</option>${funds.map((x) => `<option ${x === cur ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>`;
 const fundOpts = (f, lguId, sel = '') => `<option value="">No fund indicated</option>${fundsOf(f, lguId).map((x) => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join('')}`;
 const PER_BOOKLET = 50;
 const MAX_PCS = 50000;   // one entry covers at most this many pieces; a longer range is likely a typing mistake
@@ -769,7 +772,8 @@ async function editBooklet(ctx, f, b, offs) {
       <div class="field"><label for="x-rdate">Date Received</label><input class="input" type="date" id="x-rdate" value="${esc(b.receivedDate || '')}"></div>
       <div class="field"><label for="x-src">Received From</label><select class="input" id="x-src">${srcOptions(f, b.lguId, { extra: [['', '—']], cur: b.receivedFrom || '', bank: b.form === 'chk' || chkByCustodian(f, b.lguId) })}</select></div>
       <div class="field"><label for="x-ref">Reference</label><input class="input" id="x-ref" value="${esc(b.reference || '')}"></div>
-      ${b.form === 'chk' ? `<div class="field af-span"><label for="x-acct">Bank / Account (optional)</label><input class="input" id="x-acct" value="${esc(b.bankAccount || '')}" placeholder="e.g. LBP – General Fund"></div>` : ''}
+      ${b.form === 'chk' ? `<div class="field"><label for="x-fund">Fund (optional)</label>${fundSel('x-fund', checkFunds(f, b.officerId ? (f.officers.find((o) => o.id === b.officerId)?.lguId || b.lguId) : b.lguId), b.fund || '')}</div>
+        <div class="field af-span2"><label for="x-acct">Bank / Account (optional)</label><input class="input" id="x-acct" value="${esc(b.bankAccount || '')}" placeholder="e.g. LBP – Maddela"></div>` : ''}
       ${withOff ? `<div class="field af-span2"><label for="x-off">Accountable Officer</label><select class="input" id="x-off"><option value="">— Choose the officer —</option>${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, b.officerId)}>${esc(officerLabel(refs, o))}</option>`).join('')}</select></div>
       <div class="field"><label for="x-idate">Date Issued</label><input class="input" type="date" id="x-idate" value="${esc(b.issuedAsOf ? '' : b.issuedDate || '')}">${b.issuedAsOf ? `<span class="hint">Not yet known · on hand as of ${esc(fmtDate(b.issuedDate))}. Enter the real date if known.</span>` : ''}</div>
       <div class="af-span">${partBox('x', { on: partly, text: partly ? (b.noSerial ? String(countRanges(b.unusedAtStart)) : rangesText(b.unusedAtStart)) : '', note: b.noSerial ? 'Partly used (type the number of pieces)' : 'Partly used (unused on hand as of the start / last cash exam)' })}
@@ -791,6 +795,7 @@ async function editBooklet(ctx, f, b, offs) {
     }
     const next = { form, from: a, to: z, qty: z - a + 1, receivedDate: $('#x-rdate', bg).value, receivedFrom: $('#x-src', bg).value, reference: $('#x-ref', bg).value.trim() };
     if ($('#x-acct', bg)) next.bankAccount = $('#x-acct', bg).value.trim();
+    if ($('#x-fund', bg)) next.fund = $('#x-fund', bg).value;
     if ($('#x-face', bg)) { const v = parseFloat(String($('#x-face', bg).value).replace(/[,₱\s]/g, '')); if (isNaN(v) || v <= 0) return { error: 'Enter the face value per piece.' }; next.faceValue = v; }
     if (withOff) {
       next.officerId = $('#x-off', bg).value; next.issuedDate = $('#x-idate', bg).value;
@@ -828,6 +833,7 @@ async function editBooklet(ctx, f, b, offs) {
   if ((n.receivedDate || '') !== (b.receivedDate || '')) changes.push(`date received ${fmtDate(b.receivedDate) || '—'} → ${fmtDate(n.receivedDate) || '—'}`);
   if ((n.receivedFrom || '') !== (b.receivedFrom || '')) changes.push(`received from ${b.receivedFrom || '—'} → ${n.receivedFrom || '—'}`);
   if ((n.reference || '') !== (b.reference || '')) changes.push(`reference ${b.reference || '—'} → ${n.reference || '—'}`);
+  if ('fund' in n && (n.fund || '') !== (b.fund || '')) changes.push(`fund ${b.fund || '—'} → ${n.fund || '—'}`);
   if ('bankAccount' in n && (n.bankAccount || '') !== (b.bankAccount || '')) changes.push(`bank / account ${b.bankAccount || '—'} → ${n.bankAccount || '—'}`);
   if (withOff && n.officerId !== b.officerId) changes.push(`officer ${offName(b.officerId)} → ${offName(n.officerId)}`);
   if (withOff && ((n.issuedDate || '') !== (b.issuedDate || '') || (b.issuedAsOf && n.issuedAsOf === false))) changes.push(`date issued ${b.issuedAsOf ? 'not yet known' : fmtDate(b.issuedDate) || '—'} → ${fmtDate(n.issuedDate) || '—'}`);
@@ -911,7 +917,7 @@ function officerView(ctx, f, lguId) {
 }
 // Add Checkbook: checks received by the officer straight from the bank (kept out of the custodian's register).
 const CHK_PER = 100;   // checks per checkbook, by default
-const LASTCHK = { per: CHK_PER, acct: '' };
+const LASTCHK = { per: CHK_PER, acct: '', fund: '' };
 async function addCheckbook(refs, f, lguId, o) {
   const accts = [...new Set(f.booklets.filter((b) => b.form === 'chk' && b.bankAccount).map((b) => b.bankAccount))].sort();
   let plan = null;
@@ -940,7 +946,8 @@ async function addCheckbook(refs, f, lguId, o) {
         <div class="field"><label for="k-from">Check No. From</label><input class="input r mono" id="k-from" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="k-to">Check No. To</label><input class="input r mono" id="k-to" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="k-per">Checks per Book</label><input class="input r" id="k-per" inputmode="numeric" value="${LASTCHK.per}"></div>
-        <div class="field af-span2"><label for="k-acct">Bank / Account (optional)</label><input class="input" id="k-acct" list="k-accts" value="${esc(LASTCHK.acct)}" placeholder="e.g. LBP – General Fund"><datalist id="k-accts">${accts.map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
+        <div class="field"><label for="k-fund">Fund (optional)</label>${fundSel('k-fund', checkFunds(f, o.lguId), LASTCHK.fund || '')}</div>
+        <div class="field af-span2"><label for="k-acct">Bank / Account (optional)</label><input class="input" id="k-acct" list="k-accts" value="${esc(LASTCHK.acct)}" placeholder="e.g. LBP – Maddela"><datalist id="k-accts">${accts.map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
         <div class="field"><label for="k-date">Date Received from the Bank</label><input class="input" type="date" id="k-date"></div>
         <div class="af-span">${partBox('k', { note: 'Partly used checkbooks (already in use at the start)' })}</div>
       </div>
@@ -952,13 +959,13 @@ async function addCheckbook(refs, f, lguId, o) {
     buttons: [{ label: 'Cancel', value: null }, { label: 'Save Checkbooks', cls: 'primary', value: 'save', check: (bg) => {
       const r = read(bg); if (r.error) { toast(r.error, 'bad'); return false; }
       const date = $('#k-date', bg).value; if (!date) { toast('Enter the date received from the bank.', 'bad'); return false; }
-      plan = { ...r, date, acct: $('#k-acct', bg).value.trim() }; return true; } }] });
+      plan = { ...r, date, acct: $('#k-acct', bg).value.trim(), fund: $('#k-fund', bg).value }; return true; } }] });
   if (v !== 'save' || !plan) return;
   if (!(await confirmBig('chk', plan.parts[0].x, plan.parts[plan.parts.length - 1].y, plan.parts.length))) return;
-  Object.assign(LASTCHK, { per: plan.per, acct: plan.acct });
+  Object.assign(LASTCHK, { per: plan.per, acct: plan.acct, fund: plan.fund });
   for (const s of plan.parts) {
     await store.save('cer_booklets', newId('cerb'), { lguId, form: 'chk', from: s.x, to: s.y, qty: s.y - s.x + 1, receivedDate: plan.date, receivedFrom: 'Bank', reference: '',
-      receivedDirect: true, bankAccount: plan.acct, source: 'officer', status: 'issued', officerId: o.id, issuedDate: plan.date, usedBefore: null, unusedAtStart: s.unused,
+      receivedDirect: true, bankAccount: plan.acct, fund: plan.fund || '', source: 'officer', status: 'issued', officerId: o.id, issuedDate: plan.date, usedBefore: null, unusedAtStart: s.unused,
       history: [hist(refs, 'direct', plan.date, { officerId: o.id, note: 'From the bank' + (plan.acct ? ' · ' + plan.acct : '') + (s.unused ? ` · partly used: ${countRanges(s.unused)} unused` : '') })] }, by(refs), { quiet: true });
   }
   emitChange('local');
@@ -1441,7 +1448,7 @@ export function cutoffChoices(f, officerId, countDate) {
   return f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.status !== 'lost' && b.issuedDate && b.issuedDate <= countDate)
     .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
 }
-export const bookletName = (b) => `${FORM_SHORT[b.form] || b.form} · ${b.noSerial ? `${b.qty} pcs (no serial)` : `${b.from}–${b.to}`}`;
+export const bookletName = (b) => `${FORM_SHORT[b.form] || b.form} · ${b.noSerial ? `${b.qty} pcs (no serial)` : `${b.from}–${b.to}`}${b.form === 'chk' && b.fund ? ` · ${b.fund}` : ''}`;
 export function parseCutRanges(text, from, to) { return parseRanges(text, from, to); }
 
 // For Cash Count and Reports: the remaining forms at the cut-off, one row per line entered.
@@ -1484,7 +1491,9 @@ export function saafRows(f, officerId, exam, from, to) {
         diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || '' });
     });
   lines.filter((l) => !l.bookletId).forEach((l) => out.push({ id: l.id, form: l.form, name: FORM_SHORT[l.form] || l.form, booklet: [l.from, l.to], ns: l.ns, face: faceOf({ form: l.form }), beg: [], rec: [], issued: [], end: [], count: l.ranges, diff: -countRanges(l.ranges), fund: '', other: true }));
-  return out.sort((a, b) => a.form.localeCompare(b.form) || a.booklet[0] - b.booklet[0]);
+  // Within a form: the beginning balance first (starting inventory / AO's beginning), then those received, then forms not in the register.
+  const rank = (r) => (r.other ? 2 : r.beg.length ? 0 : 1);
+  return out.sort((a, b) => a.form.localeCompare(b.form) || rank(a) - rank(b) || a.booklet[0] - b.booklet[0]);
 }
 
 // For Verification (once encoding is complete): the cut-off against the register and the ORs encoded.
@@ -1602,7 +1611,7 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
   let lastSrc = 'custodian';
   const show = (bg) => {
     const src = srcNow(bg);
-    $('#g-formbox', bg).hidden = src === 'bank'; $('#g-acctbox', bg).hidden = src !== 'bank'; $('#g-srcbox', bg).hidden = src === 'bank';
+    $('#g-formbox', bg).hidden = src === 'bank'; $('#g-acctbox', bg).hidden = src !== 'bank'; $('#g-fundbox', bg).hidden = src !== 'bank'; $('#g-srcbox', bg).hidden = src === 'bank';
     // Checkbooks come in books of 100; the other forms keep the last per-booklet used.
     if (src !== lastSrc) { const per = $('#g-per', bg); if (src === 'bank') per.value = LASTCHK.per; else if (lastSrc === 'bank') per.value = LAST.per; lastSrc = src; }
     $('#g-srcnote', bg).textContent = src === 'bank' ? 'Checkbooks from the bank: shown only on this officer\'s records, never in the custodian\'s register.'
@@ -1625,7 +1634,8 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
       <div class="af-edit">
         <div class="field" id="g-formbox"><label for="g-form">Form Type</label><select class="input" id="g-form">${forms.map(([k, l]) => `<option value="${k}" ${sel(k, LAST.form)}>${esc(l)}</option>`).join('')}</select></div>
         <div class="field" id="g-srcbox"><label for="g-srcsel">Received From</label><select class="input" id="g-srcsel">${srcOptions(f, regId, { extra: [[CUST, `Custodian (${cust})`]], cur: CUST, direct: true })}</select></div>
-        <div class="field" id="g-acctbox" hidden><label for="g-acct">Bank / Account (optional)</label><input class="input" id="g-acct" value="${esc(LASTCHK.acct)}" placeholder="e.g. LBP – General Fund"></div>
+        <div class="field" id="g-acctbox" hidden><label for="g-acct">Bank / Account (optional)</label><input class="input" id="g-acct" value="${esc(LASTCHK.acct)}" placeholder="e.g. LBP – Maddela"></div>
+        <div class="field" id="g-fundbox" hidden><label for="g-fund">Fund (optional)</label>${fundSel('g-fund', checkFunds(f, o.lguId), LASTCHK.fund || '')}</div>
         <div class="field"><label for="g-from">Serial From</label><input class="input r mono" id="g-from" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="g-to">Serial To</label><input class="input r mono" id="g-to" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="g-per">Per Booklet</label><input class="input r" id="g-per" inputmode="numeric" value="${LAST.per}"></div>
@@ -1642,11 +1652,11 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
       wirePart('g', bg, () => show(bg)); show(bg); },
     buttons: [{ label: 'Cancel', value: null }, { label: cut ? 'Add Booklet' : 'Save Beginning Forms', cls: 'primary', value: 'save', check: (bg) => {
       const r = read(bg); if (r.error) { toast(r.error, 'bad'); return false; }
-      plan = { ...r, acct: $('#g-acct', bg).value.trim(), other: $('#g-srcsel', bg).value }; return true; } }] });
+      plan = { ...r, acct: $('#g-acct', bg).value.trim(), fund: $('#g-fund', bg).value, other: $('#g-srcsel', bg).value }; return true; } }] });
   if (v !== 'save' || !plan) return false;
   if (!plan.ns && !(await confirmBig(plan.form, plan.parts[0].x, plan.parts[plan.parts.length - 1].y, plan.parts.length))) return false;
   if (plan.ns) { const shift = nsBase() - 1; plan.parts = plan.parts.map((s) => ({ x: s.x + shift, y: s.y + shift, unused: s.unused ? s.unused.map(([a, z]) => [a + shift, z + shift]) : null })); }
-  if (plan.src === 'bank') Object.assign(LASTCHK, { acct: plan.acct, per: plan.per }); else Object.assign(LAST, { form: plan.form, per: plan.per });
+  if (plan.src === 'bank') Object.assign(LASTCHK, { acct: plan.acct, per: plan.per, fund: plan.fund }); else Object.assign(LAST, { form: plan.form, per: plan.per });
   const from = { custodian: '', bank: 'Bank', direct: plan.other }[plan.src];
   const direct = plan.src !== 'custodian';
   for (const s of plan.parts) {
@@ -1654,7 +1664,7 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
     const rec = { lguId: regId, form: plan.form, from: s.x, to: s.y, qty: s.y - s.x + 1, reference: '', status: 'issued', officerId: o.id, ...(plan.ns ? { noSerial: true } : {}),
       issuedDate: asOf, issuedAsOf: true, ...(cut ? { foundAtCount: true } : { beginAs: 'ao', beginDate: asOf }), usedBefore: null, unusedAtStart: s.unused,
       receivedDate: '', receivedFrom: from, receivedDirect: direct, source: plan.src === 'bank' ? 'officer' : 'starting',
-      ...(plan.src === 'bank' ? { bankAccount: plan.acct } : {}),
+      ...(plan.src === 'bank' ? { bankAccount: plan.acct, fund: plan.fund || '' } : {}),
       history: [hist(refs, 'starting', asOf, { officerId: o.id, note: `${cut ? 'Presented at the cash count (cut-off), not in the register before' : "In the officer's hands at the last cash exam"}${from ? ' · from ' + from : ' · from the custodian'}${s.unused ? `, partly used: ${countRanges(s.unused)} unused` : ''} · ${cut ? 'Cash Count' : 'Audit Setup'}` })] };
     await store.save('cer_booklets', newId('cerb'), rec, by(refs), { quiet: true });
   }
