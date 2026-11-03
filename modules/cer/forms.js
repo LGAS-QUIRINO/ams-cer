@@ -192,7 +192,7 @@ function beginOf(b) {
   const h = (b.history || []).find((x) => x.action === 'starting');
   return h ? { as: h.officerId ? 'ao' : 'custodian', date: h.date } : null;
 }
-const begTag = (b) => { const g = beginOf(b); return g ? `<span class="af-tag ${g.as}">${g.as === 'ao' ? 'AO\'s beginning' : 'Starting inventory (custodian)'}${g.date ? ' · as of ' + esc(fmtDate(g.date)) : ''}</span>` : ''; };
+const begTag = (b) => { const g = beginOf(b); return g ? `<span class="af-tag ${g.as}" title="${g.date ? 'As of ' + esc(fmtDate(g.date)) : ''}">${g.as === 'ao' ? 'AO\'s Beginning' : 'Starting Inventory (custodian)'}</span>` : ''; };
 // The real date issued is not known for a beginning booklet until it is edited in: the days are "at least" since the cut-off.
 const daysText = (b, d) => (d === null || d === undefined ? '<span class="dim">—</span>' : b.issuedAsOf ? `≥ ${d}` : `${d}`);
 // short: the register, where the beginning tag already shows the as-of date.
@@ -299,9 +299,9 @@ function registerView(ctx, f, lguId) {
         <tbody>${rows.map((b) => {
           const o = f.officers.find((x) => x.id === b.officerId); const st = statusOf(b); const d = dAo(b); const sk = skippedOf(b);
           return `<tr data-bk="${esc(b.id)}" tabindex="0">
-            <td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td class="r">${b.qty}</td>
-            <td>${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${b.receivedDirect ? `<b class="af-direct">Received directly</b> · ` : ''}${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'import' ? 'Imported from Excel' : ''))}</small>${begTag(b)}</td>
-            <td>${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock<small>Custodian (${custOf(lgu)})</small>`}</td>
+            <td class="af-frm">${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td class="r">${b.qty}</td>
+            <td class="af-rcv">${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${b.receivedDirect ? `<b class="af-direct">Received directly</b> · ` : ''}${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'import' ? 'Imported from Excel' : ''))}</small>${begTag(b)}</td>
+            <td class="af-cust">${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small title="${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}">${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock · ${custOf(lgu)}`}</td>
             <td>${b.status !== 'stock' && b.issuedDate ? issuedText(b, true) : '<span class="dim">—</span>'}</td>
             <td class="r">${d === null ? '<span class="dim">—</span>' : `<b>${daysText(b, d)}</b><small class="dim af-nw">${aoCutoff(f, b.officerId) ? 'to ' + esc(fmtDate(cutOf(b))) : 'as of today'}</small>`}</td>
             <td class="r">${usedOf(b)}</td>
