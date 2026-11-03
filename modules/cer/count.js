@@ -22,7 +22,7 @@ const flat = (r) => ({ id: r.id, ...r.data });
 const bad = (m) => { toast(m, 'bad'); return false; };
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
 const BEG_CA = ['ca', 'sdo', 'pcf'];
-const DRAFT = { key: '', data: null };   // unsaved count survives a screen refresh
+const DRAFT = { key: '', data: null, editSplit: false };   // unsaved count survives a screen refresh; split boxes shown
 
 // Balance per books of each accountability, as of the cash count.
 export function booksOf(refs, f, o, exam, audit, advs, liqs) {
@@ -76,7 +76,7 @@ export async function countView(ctx) {
 
   const o = exam.o;
   const saved = counts0.map(flat).find((c) => c.id === exam.id) || null;
-  if (DRAFT.key !== exam.id) DRAFT.key = exam.id, DRAFT.data = JSON.parse(JSON.stringify({ bills: {}, coins: '', items: [], split: {}, ...(saved || {}) }));
+  if (DRAFT.key !== exam.id) DRAFT.key = exam.id, DRAFT.editSplit = false, DRAFT.data = JSON.parse(JSON.stringify({ bills: {}, coins: '', items: [], split: {}, ...(saved || {}) }));
   const d = DRAFT.data;
   const books = booksOf(refs, f, o, exam, audit, advs, liqs);
   const forms = unusedFormsOf(f, o.id, exam);
@@ -84,6 +84,7 @@ export async function countView(ctx) {
   const dis = enc ? '' : 'disabled';
   const caChecks = advs.filter((a) => a.officerId === o.id).map((a) => a.checkNo);
   const auditor = isAuditor(refs);
+  const editSplit = DRAFT.editSplit || Object.values(d.split || {}).some((v) => v !== '' && v !== null && v !== undefined);
   const choices = cutoffChoices(f, o.id, audit.countDate);
   const lgu = refs.lgu[audit.lguId];
   const otherForms = [...formsForLgu(lgu), ['chk', 'Checks']];
@@ -139,17 +140,17 @@ export async function countView(ctx) {
         </div>
       </section>
     </div>
-    <section class="panel cc-right" aria-labelledby="cc-h4"><div class="cc-head"><span class="cd-num">4</span><h2 id="cc-h4">Split of the Count by Accountability</h2><span class="cd-sub">counted together, then split</span><span id="cc-pill" style="margin-left:auto"></span></div>
+    <section class="panel cc-right" aria-labelledby="cc-h4"><div class="cc-head"><span class="cd-num">4</span><h2 id="cc-h4">Split of the Count by Accountability</h2><span class="crumb-i" title="Cash on hand is split automatically: collections first, up to their balance per books, the rest to the cash advance. Use Edit split when the officer kept them apart. Balances per books use what is encoded up to now in Collections &amp; Deposits and Cash Advances.">ⓘ</span><span id="cc-pill" style="margin-left:auto"></span></div>
       <div class="cd-body">
         ${books.length ? `<div class="af-tbl"><table class="af-reg cc-split"><thead><tr><th scope="col">Nature of Funds</th>${books.map((b) => `<th scope="col" class="r">${esc(b.label)}</th>`).join('')}<th scope="col" class="r">Totals</th></tr></thead>
           <tbody>
-            <tr><td>Balance per books<small>${books.map((b) => esc(b.note)).join(' · ')}</small></td>${books.map((b) => `<td class="r">${money(b.books)}</td>`).join('')}<td class="r">${money(r2(books.reduce((n, b) => n + b.books, 0)))}</td></tr>
-            <tr><td>Cash on hand, split<small>automatic unless typed</small></td>${books.map((b) => `<td class="r"><label class="sr-only" for="sp-${b.key}">Cash on hand for ${esc(b.label)}</label><input class="input af-sm r cc-sp" id="sp-${b.key}" data-sp="${b.key}" inputmode="decimal" value="${d.split[b.key] !== undefined && d.split[b.key] !== null && d.split[b.key] !== '' ? esc(money(d.split[b.key])) : ''}" ${dis}></td>`).join('')}<td class="r" id="sp-tot"></td></tr>
+            <tr><td>Balance per books</td>${books.map((b) => `<td class="r">${money(b.books)}</td>`).join('')}<td class="r">${money(r2(books.reduce((n, b) => n + b.books, 0)))}</td></tr>
+            <tr><td>Cash on hand${enc ? `<button class="cc-splitlnk" type="button" id="cc-editsplit">${editSplit ? 'Automatic split' : 'Edit split'}</button>` : ''}</td>${books.map((b) => editSplit ? `<td class="r"><label class="sr-only" for="sp-${b.key}">Cash on hand for ${esc(b.label)}</label><input class="input af-sm r cc-sp" id="sp-${b.key}" data-sp="${b.key}" inputmode="decimal" value="${d.split[b.key] !== undefined && d.split[b.key] !== null && d.split[b.key] !== '' ? esc(money(d.split[b.key])) : ''}" ${dis}></td>` : `<td class="r" data-spv="${b.key}"></td>`).join('')}<td class="r" id="sp-tot"></td></tr>
             <tr><td>Allowed cash items</td>${books.map((b) => `<td class="r" data-ai="${b.key}"></td>`).join('')}<td class="r" id="ai-tot"></td></tr>
-            <tr class="cc-tot"><td>Inventory of cash and allowed cash items</td>${books.map((b) => `<td class="r" data-inv="${b.key}"></td>`).join('')}<td class="r" id="inv-tot"></td></tr>
+            <tr class="cc-tot"><td>Inventory</td>${books.map((b) => `<td class="r" data-inv="${b.key}"></td>`).join('')}<td class="r" id="inv-tot"></td></tr>
             <tr><td><b>Shortage / (Overage)</b></td>${books.map((b) => `<td class="r" data-sh="${b.key}"></td>`).join('')}<td class="r" id="sh-tot"></td></tr>
           </tbody></table></div>
-          <p class="af-note">Cash on hand is split automatically: collections first, up to what they should have, the rest to the cash advance. Type an amount when the officer kept them apart. Balances per books use what is encoded up to now in Collections &amp; Deposits and Cash Advances.</p>`
+`
           : '<div class="cd-info">This officer has no collecting or cash advance accountability in Audit Setup.</div>'}
         <div class="cd-actions"><button class="btn" type="button" id="cc-xls">Export to Excel</button><button class="btn" type="button" id="cc-print">Print Cash Count Sheet</button>${enc ? '<button class="btn primary" type="button" id="cc-save">Save Cash Count</button>' : ''}</div>
       </div>
@@ -192,6 +193,7 @@ function wireCount(c) {
     $$('tr[data-it]').forEach((tr) => { const it = d.items[+tr.dataset.it]; $('.cc-dis', tr).textContent = money(r2((+it.presented || 0) - (num(it.allowed ?? it.presented) || 0))); });
     if ($('#cc-alt')) { $('#cc-alt').textContent = money(k.itemsAllowed); $('#cc-dist').textContent = money(r2(k.itemsPresented - k.itemsAllowed)); }
     books.forEach((b) => {
+      const spv = $(`[data-spv="${b.key}"]`); if (spv) spv.textContent = money(k.sp[b.key]);
       const sp = $(`#sp-${b.key}`); if (sp && document.activeElement !== sp && (d.split[b.key] === undefined || d.split[b.key] === '' || d.split[b.key] === null)) sp.placeholder = money(k.sp[b.key]);
       $(`[data-ai="${b.key}"]`).textContent = money(k.ai[b.key]);
       $(`[data-inv="${b.key}"]`).textContent = money(k.inv[b.key]);
@@ -212,6 +214,8 @@ function wireCount(c) {
   const coins = $('#cc-coins');
   if (coins) { coins.oninput = () => { d.coins = coins.value; paint(); }; coins.onblur = () => { const v = num(coins.value); if (v !== null) coins.value = money(v); }; }
   $$('.cc-al').forEach((i) => { i.oninput = () => { d.items[+i.closest('tr').dataset.it].allowed = i.value; paint(); }; i.onblur = () => { const v = num(i.value); if (v !== null) i.value = money(v); }; });
+  const es = $('#cc-editsplit');
+  if (es) es.onclick = () => { if (es.textContent === 'Edit split') DRAFT.editSplit = true; else { DRAFT.editSplit = false; d.split = {}; } refresh(); };
   $$('.cc-sp').forEach((i) => { i.oninput = () => { d.split[i.dataset.sp] = i.value.trim(); paint(); }; i.onblur = () => { const v = num(i.value); if (v !== null) i.value = money(v); }; });
   $$('[data-rmit]').forEach((b) => { b.onclick = () => { d.items.splice(+b.dataset.rmit, 1); refresh(); }; });
   const ce = $('#ci-enter');

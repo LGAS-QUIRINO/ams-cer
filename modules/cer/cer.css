@@ -645,3 +645,13 @@ table.af-reg.cut-tbl{min-width:0}
 .cut-entry{padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:#f8fafd; margin-bottom:14px}
 .cut-entry .field[hidden]{display:none}
 .cut-entry .cut-ur .input{width:100%}
+
+/* Split: compact, fits without scrolling */
+table.af-reg.cc-split{min-width:0; width:100%}
+.cc-split th, .cc-split td{padding:8px 8px; white-space:nowrap}
+.cc-split td:first-child{white-space:normal}
+.cc-split .input.cc-sp{width:100%; max-width:110px; min-width:70px}
+.cc-splitlnk{display:block; margin-top:2px; padding:0; border:0; background:none; color:var(--blue,#1d4fb8); font:inherit; font-size:12px; cursor:pointer; text-decoration:underline}
+.cc-split th, .cc-split td{padding:8px 6px}
+.cc-split th{font-size:11px; letter-spacing:.02em}
+.cc-right .af-tbl{overflow-x:auto}
