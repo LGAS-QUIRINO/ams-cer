@@ -26,20 +26,19 @@ const r2 = (n) => Math.round(n * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, ...rest } = x; return rest; };
 const bad = (m) => { toast(m, 'bad'); return false; };
-// Coverage of the cash exam: the day after the last cash exam (earliest among its officers) up to the cash count date.
+// Coverage of the cash exam: the last cash exam date (after its cut-off) (earliest among its officers) up to the cash count date.
 export const covOf = (audit, exams) => { const ds = exams.filter((e) => e.auditId === audit.id && e.lastExamDate).map((e) => e.lastExamDate).sort(); return { from: ds[0] || '', to: audit.countDate }; };
 // The imported lines within the coverage as it is now (it may have changed since the import); the beginning balance follows.
 export function inCov(rec, cov) {
   const all = rec.lines || [];
   if (!all.length) return rec;
-  const lines = all.filter((l) => (!cov.from || l.date > cov.from) && l.date <= cov.to);
-  if (lines.length === all.length && (rec.covFrom || '') === cov.from) return rec;
-  const before = all.filter((l) => cov.from && l.date <= cov.from && l.bal !== null && l.bal !== undefined).pop();
+  const lines = all.filter((l) => (!cov.from || l.date >= cov.from) && l.date <= cov.to);
+  if (lines.length === all.length && rec.covStart === 'on' && (rec.covFrom || '') === cov.from) return rec;
+  const before = all.filter((l) => cov.from && l.date < cov.from && l.bal !== null && l.bal !== undefined).pop();
   const first = lines[0];
-  const opening = before ? before.bal : rec.covFrom === cov.from ? rec.opening : first && first.bal !== null && first.bal !== undefined ? r2(first.bal - (first.credit || 0) + (first.debit || 0)) : rec.opening;
+  const opening = before ? before.bal : first && first.bal !== null && first.bal !== undefined ? r2(first.bal - (first.credit || 0) + (first.debit || 0)) : rec.opening;
   return { ...rec, lines, opening, covFrom: cov.from, covTo: cov.to };
 }
-const nextDay = (d) => { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + 1); return t.toISOString().slice(0, 10); };
 const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
 const OPEN = { st: true, dc: false, rc: false };   // which tab is shown; 1 Bank Statement when the screen is opened
@@ -147,12 +146,12 @@ export async function banksView(ctx) {
     if (!rec.lineOf && l.matched) return '<span class="pill p-done">Matched</span>';
     return l.debit && l.chq ? '<span class="pill p-stock">Check, not yet encoded</span>' : '<span class="pill p-stock">Not in the books</span>'; };
   const shown = lns.filter((l) => l.date <= asOf).filter((l) => !UI.only || unmatched.includes(l));
-  const stmtTbl = imported ? `<div class="bk-tools"><span class="dim">${cov.from ? `Coverage ${esc(fmtDate(nextDay(cov.from)))} – ${esc(fmtDate(cov.to))}` : '<span class="pill p-flag">No last cash exam date</span>'} · ${lns.length} line${lns.length === 1 ? '' : 's'} · ${lns.length - unmatched.length} found in the books · ${unmatched.length} not in the books</span>
+  const stmtTbl = imported ? `<div class="bk-tools"><span class="dim">${cov.from ? `Coverage ${esc(fmtDate(cov.from))} – ${esc(fmtDate(cov.to))}` : '<span class="pill p-flag">No last cash exam date</span>'} · ${lns.length} line${lns.length === 1 ? '' : 's'} · ${lns.length - unmatched.length} found in the books · ${unmatched.length} not in the books</span>
         <label class="cer-chip"><input type="checkbox" id="bk-only" ${UI.only ? 'checked' : ''}> Not in the books only</label></div>
       <div class="af-tbl bk-stmtwrap"><table class="af-reg bk-stmt"><thead><tr>${heads.map((h) => `<th scope="col"${numCol(h) ? ' class="r"' : ''}>${esc(h)}</th>`).join('')}<th scope="col">In the books</th></tr></thead>
       <tbody>${!UI.only && rec.opening !== null && rec.opening !== undefined ? `<tr class="bk-open">${heads.map((h, k) => `<td${numCol(h) ? ' class="r"' : ''}>${/balance/i.test(h) ? `<b>${money(rec.opening)}</b>` : k === 1 ? '<b>Beginning balance</b>' : ''}</td>`).join('')}<td class="dim">as of the last cash exam</td></tr>` : ''}
         ${shown.map((l) => `<tr${unmatched.includes(l) ? ' class="bk-unrow"' : ''}>${cellsOf(l).map((v, k) => `<td${numCol(heads[k] || '') ? ' class="r"' : /cheque|check/i.test(heads[k] || '') ? ' class="mono"' : ''}>${esc(v)}</td>`).join('')}<td>${inBooks(l)}</td></tr>`).join('')}</tbody></table></div>
-      <p class="af-note">The statement as the bank gives it, from the day after the last cash exam to the cash count. Lines not in the books count in the reconciliation as they are: credits as bank credits, debits as bank debits. Interest and service charges are expected; anything else is for the auditor to look into (a deposit or check not yet encoded matches on the next import).</p>` : '';
+      <p class="af-note">The statement as the bank gives it, from the last cash exam date to the cash count. Lines not in the books count in the reconciliation as they are: credits as bank credits, debits as bank debits. Interest and service charges are expected; anything else is for the auditor to look into (a deposit or check not yet encoded matches on the next import).</p>` : '';
   const manualBox = `<div class="cd-g4">
       <div class="field"><label for="bk-date">Statement Date</label><input class="input" type="date" id="bk-date" value="${esc(rec.asOf || asOf)}" ${dis}></div>
       <div class="field"><label for="bk-end">Ending Balance per Bank (₱)</label><input class="input r" id="bk-end" inputmode="decimal" value="${hasEnd ? esc(money(rec.ending)) : ''}" ${dis}></div>
@@ -305,9 +304,9 @@ async function importStatement(c, save) {
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
       const st = readLines(XLSX, rows);
       if (!st.lines.length) return bad('No bank lines found. The sheet needs a Date column and Debit / Credit (or Amount) columns.');
-      // Only the coverage of the cash exam: after the last cash exam, up to the cash count date.
+      // Only the coverage of the cash exam: from the last cash exam date up to the cash count date.
       const { from, to } = c.cov;
-      const lines = st.lines.filter((l) => (!from || l.date > from) && l.date <= to);
+      const lines = st.lines.filter((l) => (!from || l.date >= from) && l.date <= to);
       const skipped = st.lines.length - lines.length;
       if (!lines.length) return bad(`No bank lines ${from ? `after ${fmtDate(from)} ` : ''}up to ${fmtDate(to)} (the coverage of this cash exam). Check that it is the right statement.`);
       // The statement's account No. against the chosen bank account.
@@ -338,12 +337,12 @@ async function importStatement(c, save) {
       lines.forEach((l) => { l.matched = used.has(l.i); });
       // Beginning = the bank balance at the last cash exam (the line before the coverage, or worked back from the first line in it);
       // ending = the bank balance at the cash count (the last line in the coverage).
-      const before = st.lines.filter((l) => from && l.date <= from && l.bal !== null).pop();
+      const before = st.lines.filter((l) => from && l.date < from && l.bal !== null).pop();
       const first = lines[0];
       const opening = before ? before.bal : first.bal !== null ? r2(first.bal - first.credit + first.debit) : st.opening;
       const last = lines.filter((l) => l.bal !== null).pop();
       UI.manual = false; UI.edit = false; UI.only = false;
-      const patch = { found, lineOf, lines, heads: st.heads, source: 'Soft copy (imported)', opening, account: st.account || '', covFrom: from, covTo: to, asOf: to, bankItems: [] };
+      const patch = { found, lineOf, lines, heads: st.heads, source: 'Soft copy (imported)', opening, account: st.account || '', covFrom: from, covTo: to, covStart: 'on', asOf: to, bankItems: [] };
       if (last) patch.ending = last.bal;
       await save(patch, `${lines.length} lines in the coverage imported · ${used.size} matched${skipped ? ` · ${skipped} outside the coverage skipped` : ''}${last ? ' · ending balance read' : ''}.`);
     } catch (e) { bad(e.message || String(e)); }

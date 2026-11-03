@@ -14,7 +14,7 @@ import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
 import { bankFindings } from './banks.js';
-import { loadForms, cutoffFindings, checkUsage, exportXlsx } from './forms.js';
+import { loadForms, orIn, cutoffFindings, checkUsage, exportXlsx } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, repName } from './collections.js';
 import { booksOf, compute } from './count.js';
 
@@ -34,7 +34,8 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
   const lgu = refs.lgu[audit.lguId];
   const from = exam.lastExamDate || '', to = audit.countDate;
   const o = exam.o;
-  const inScope = (d) => !!d && (!from || d > from) && d <= to;
+  const inScope = (d) => !!d && (!from || d >= from) && d <= to;   // from the last cash exam date (after its cut-off)
+  const orOk = (x) => orIn(f, x, from, to);
   // A liquidation counts when dated within the scope, or when the auditor ticked "Count even if outside the scope".
   const liqIn = (l) => inScope(l.date) || !!l.countAnyway;
   const bal = exam.balances || {};
@@ -57,7 +58,7 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
       // Beginning: the collection balances in Audit Setup of the forms that go to this report type.
       beg = Object.entries(bal).filter(([k]) => k.startsWith('col-') && kindOfForm(lgu, k.slice(4)) === kind).reduce((n, [, v]) => n + (+v?.amount || 0), 0)
         + (kind === 'RCD' || (exam.functions || []).includes('liquidating') ? (+(bal.liq?.amount) || 0) : 0);
-      f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && kindOfForm(lgu, x.form) === kind && inScope(x.date)).forEach((x) => m.push({ date: x.date, debit: +x.amount || 0, credit: 0 }));
+      f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && kindOfForm(lgu, x.form) === kind && orOk(x)).forEach((x) => m.push({ date: x.date, debit: +x.amount || 0, credit: 0 }));
       Object.values(fig.chains).filter((c) => c.kind === kind).forEach((c) => [...c.figs, c.pend].forEach((g) => {
         (g.rec?.deposits || []).filter((d) => inScope(d.date)).forEach((d) => m.push({ date: d.date, debit: 0, credit: +d.amount || 0 }));
         (g.rec?.remittances || []).filter((d) => inScope(d.date)).forEach((d) => m.push({ date: d.date, debit: +d.amount || 0, credit: 0 }));
@@ -75,7 +76,7 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
   const T = (k) => r2(st.reduce((n, x) => n + (x[k] || 0), 0));
   const totSh = inv ? T('sh') : null;
 
-  return { o, lgu, from, to, inScope, liqIn, bal, fig, books, count, inv, moves, st, T, totSh };
+  return { o, lgu, from, to, inScope, orOk, liqIn, bal, fig, books, count, inv, moves, st, T, totSh };
 }
 
 export async function verifyView(ctx) {
@@ -103,7 +104,7 @@ export async function verifyView(ctx) {
   };
   if (!exam) return { crumb, body: hello + top + '<div class="panel"><div class="empty"><b>No accountable officer in this cash examination.</b>Add the officers in Audit Setup.</div></div>', wire: wireTop };
 
-  const { o, inScope, liqIn, bal, fig, books, count, inv, moves, st, T, totSh } = accountability(refs, f, audit, exam, advs, liqs, counts0.map(flat));
+  const { o, inScope, orOk, liqIn, bal, fig, books, count, inv, moves, st, T, totSh } = accountability(refs, f, audit, exam, advs, liqs, counts0.map(flat));
   // Findings, each with a stable key so the auditor's decision stays with it.
   const findings = [];
   const add = (key, area, text, href) => findings.push({ key, area, text, href });
@@ -124,7 +125,7 @@ export async function verifyView(ctx) {
   Object.values(fig.chains).filter((c) => c.kind !== 'SCR').forEach((c) => {
     const gs = [...c.figs, c.pend];
     const coll = {}; const put = (d, a) => { if (inScope(d) && a) coll[d] = r2((coll[d] || 0) + a); };
-    gs.forEach((g) => { (g.ors || []).filter((x) => x.status !== 'cancelled').forEach((x) => put(x.date, +x.amount || 0)); (g.rec?.remittances || []).forEach((m) => put(m.date, +m.amount || 0)); });
+    gs.forEach((g) => { (g.ors || []).filter((x) => x.status !== 'cancelled' && orOk(x)).forEach((x) => put(x.date, +x.amount || 0)); (g.rec?.remittances || []).forEach((m) => put(m.date, +m.amount || 0)); });
     const deps = {}; gs.forEach((g) => (g.rec?.deposits || []).filter((d) => inScope(d.date)).forEach((d) => { deps[d.date] = r2((deps[d.date] || 0) + (+d.amount || 0)); }));
     const queue = []; const begAmt = r2(+(gs[0]?.beg) || 0);
     if (begAmt > 0.004 && from) queue.push({ date: from, amt: begAmt, due: from, beg: true });
@@ -166,7 +167,7 @@ export async function verifyView(ctx) {
   // Refunds of cash advances: the OR No. should be an OR in Collections & Deposits with the same amount.
   // Liquidations / refunds outside the scope: counted when ticked; before the last cash exam and not ticked, not counted.
   liqs.filter((l) => l.officerId === o.id && l.date && !inScope(l.date)).forEach((l) => {
-    const before = from && l.date <= from;
+    const before = from && l.date < from;
     if (!l.countAnyway && !before) return;   // after the count: a later liquidation, nothing to say
     const what = `${l.type === 'refund' ? 'Refund OR' : 'Liquidation'} ${l.ref || ''}, ${fmtDate(l.date)}, ₱${money(l.amount)}`;
     add(`liqout|${l.id}|${l.countAnyway ? 1 : 0}`, 'Cash Advances', `${what}: ${before ? 'before the last cash exam' : 'after the cash count'}, ${l.countAnyway ? 'counted' : 'not counted'}.`, '#/cer/advances');
@@ -182,7 +183,7 @@ export async function verifyView(ctx) {
 
   const ver = ver0.map(flat).find((v) => v.id === exam.id) || { recon: {}, decisions: {} };
   // Progress of the encoding, shown until the auditor ticks "Encoding complete".
-  const myOrs = f.ors.filter((x) => x.officerId === o.id && inScope(x.date));
+  const myOrs = f.ors.filter((x) => x.officerId === o.id && orOk(x));
   const lastOr = myOrs.map((x) => x.date).sort().pop();
   const nRep = f.reports.filter((r) => r.officerId === o.id && !r.pending).length;
   const myAdv = advs.filter((a) => a.officerId === o.id && !a.beg && inScope(a.date)), myLiq = liqs.filter((l) => l.officerId === o.id && liqIn(l));

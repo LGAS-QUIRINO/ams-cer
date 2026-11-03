@@ -65,9 +65,9 @@ export async function advancesView(ctx) {
   // Beginning checks: entered in Audit Setup, unliquidated as of the last cash exam (amount = what was still unliquidated).
   const begChecks = allAdv.filter((a) => a.beg && a.begExamId === exam.id);
   const liqs = liqs0.map(flat).filter((l) => l.officerId === o.id);
-  // Scope of this cash exam: after the last cash exam, up to the count date.
+  // Scope of this cash exam: from the last cash exam date (after its cut-off) up to the count date.
   const scope = { from: exam.lastExamDate || '', to: audit.countDate };
-  const outOf = (d) => !!d && ((scope.from && d <= scope.from) || d > scope.to);
+  const outOf = (d) => !!d && ((scope.from && d < scope.from) || d > scope.to);
   const beg = r2(BEG_KEYS.reduce((n, k) => n + (+(exam.balances?.[k]?.amount) || 0), 0));
   const begSum = r2(begChecks.reduce((n, a) => n + (+a.amount || 0), 0));
   const rest = r2(beg - begSum);

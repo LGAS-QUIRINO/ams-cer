@@ -136,13 +136,13 @@ const officerLabel = (refs, o) => o ? `${o.name}${o.designation ? ' · ' + o.des
 const countRanges = (rs) => rs.reduce((n, [a, z]) => n + z - a + 1, 0);
 export const rangesText = (rs) => rs.map(([a, z]) => (a === z ? `${a}` : `${a} – ${z}`)).join(', ');
 // date (optional): only the receipts encoded on or before that date are taken out.
-function rawUnused(b, date) {
+function rawUnused(b, date, strict = false) {
   if (b.exhaustedDate) return [];   // marked exhausted from the logbook ("Exh" date)
   let base;
   if (Array.isArray(b.unusedAtStart)) base = b.unusedAtStart.map((r) => [r[0], r[1]]);
   else if (b.usedBefore) base = b.usedBefore <= b.to ? [[Math.max(b.from, b.usedBefore), b.to]] : [];   // older entries: first unused number
   else base = [[b.from, b.to]];
-  const cut = (b.orNos || []).filter((x) => !date || x.d <= date).map((x) => [x.n, x.n]);
+  const cut = (b.orNos || []).filter((x) => !date || (strict ? x.d < date : x.d <= date)).map((x) => [x.n, x.n]);
   return cut.length ? subtractRanges(base, cut) : base;
 }
 const unusedRanges = (b) => (b.status === 'lost' ? [] : rawUnused(b));
@@ -1472,6 +1472,31 @@ export function lastChecksOf(f, examIds) {
   return out;
 }
 
+// The scope of audit starts ON the last cash exam date: transactions after that cut-off, the same day, are part of it.
+// A booklet is part of the beginning when issued before the last cash exam, or on it as the starting balance.
+const isBeg = (b, from) => !!from && !!b.issuedDate && (b.issuedDate < from || (b.issuedDate === from && !!(b.issuedAsOf || b.beginAs)));
+// The beginning of a booklet: the count at the last cash exam's cut-off when it is in the system; otherwise the starting
+// balance (ORs on the last cash exam date with numbers in it were issued after the cut-off); otherwise the numbers unused by then.
+export function begRanges(f, b, from) {
+  if (!isBeg(b, from)) return [];
+  if (b.status === 'lost' && b.history?.some((h) => h.action === 'lost' && h.date < from)) return [];
+  const prev = (f.exams || []).filter((e) => e.officerId === b.officerId && (f.audits || []).find((a) => a.id === e.auditId)?.countDate === from);
+  for (const e of prev) { const ls = cutoffLines(f, e.id).filter((l) => l.bookletId === b.id); if (ls.length) return mergeRanges(ls.flatMap((l) => l.ranges)); }
+  const start = b.beginDate === from && (Array.isArray(b.unusedAtStart) || !!b.usedBefore);
+  return rawUnused(b, from, start);
+}
+// An OR within the scope: dated after the last cash exam up to the cash count; on the last cash exam date itself only when
+// its number is in the beginning (issued after that cut-off) or in a booklet received that day.
+export function orIn(f, x, from, to) {
+  if (!x.date || x.date > to) return false;
+  if (!from || x.date > from) return true;
+  if (x.date < from) return false;
+  const b = x.bookletId && f.booklets.find((y) => y.id === x.bookletId);
+  if (!b || !isBeg(b, from)) return true;
+  const n = +x.serial;
+  return begRanges(f, b, from).some(([a, z]) => a <= n && n <= z);
+}
+
 // For Reports (SAAF, Annex B): each booklet of the officer within the scope of audit, as Beginning, Received, Issued,
 // Ending (per the register) and per Count (the cut-off). Forms typed at the cut-off that are not in the register are added
 // with the count only. Ranges are [[from, to], …]; the SAAF prints one line per range.
@@ -1481,8 +1506,8 @@ export function saafRows(f, officerId, exam, from, to, advs = []) {
   const cut = exam ? cutoffOf(f, exam.id) : null, lines = exam ? cutoffLines(f, exam.id) : [];
   f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && b.issuedDate <= to)
     .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from).forEach((b) => {
-      const beg = from && b.issuedDate <= from ? (b.status === 'lost' && b.history?.some((h) => h.action === 'lost' && h.date <= from) ? [] : rawUnused(b, from)) : [];
-      const rec = !from || b.issuedDate > from ? [[b.from, b.to]] : [];
+      const beg = begRanges(f, b, from);
+      const rec = !isBeg(b, from) ? [[b.from, b.to]] : [];
       const mine = lines.filter((l) => l.bookletId === b.id);
       const count = cut ? mergeRanges(mine.flatMap((l) => l.ranges)) : null;
       // Checks: no check register yet (Checks Issued comes later), so the balance end follows the cut-off count;
@@ -1516,7 +1541,7 @@ export function cutoffFindings(f, o, exam, from, to) {
     }
     if (b.form === 'chk' || b.noSerial) return;
     const count = mergeRanges(mine.flatMap((l) => l.ranges));
-    const avail = from && b.issuedDate <= from ? rawUnused(b, from) : [[b.from, b.to]];
+    const avail = isBeg(b, from) ? begRanges(f, b, from) : [[b.from, b.to]];
     const used = subtractRanges(avail, count);
     const ors = new Set((b.orNos || []).map((x) => x.n));
     const miss = []; used.forEach(([a, z]) => { for (let n = a; n <= z && miss.length < 5000; n++) if (!ors.has(n)) miss.push(n); });
@@ -1541,7 +1566,7 @@ export function checkUsage(f, o, exam, from, to, advs) {
     const mine = lines.filter((l) => l.bookletId === b.id);
     if (!mine.length) return;
     const count = mergeRanges(mine.flatMap((l) => l.ranges));
-    const avail = from && b.issuedDate <= from ? rawUnused(b, from) : [[b.from, b.to]];
+    const avail = isBeg(b, from) ? begRanges(f, b, from) : [[b.from, b.to]];
     const used = subtractRanges(avail, count), n = countRanges(used);
     if (!n) return;
     const ca = advs.filter((a) => !a.beg && used.some(([x, y]) => key(a.checkNo) >= x && key(a.checkNo) <= y)).length;
@@ -1565,7 +1590,7 @@ export function beginningFormsOf(f, officerId, asOf) {
 }
 // Booklets the officer received after the last cash exam, up to the count date (shown for information).
 export const receivedDuringOf = (f, officerId, asOf, countDate) =>
-  f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && (!asOf || b.issuedDate > asOf) && (!countDate || b.issuedDate <= countDate));
+  f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && (!asOf || !isBeg(b, asOf)) && (!countDate || b.issuedDate <= countDate));
 export function beginningTableHtml(f, rows, canEdit) {
   if (!rows.length) return '';
   const srcText = { custodian: 'From the custodian · in the Forms Register', bank: 'From the bank · this officer only', direct: 'Received directly · in the Forms Register' };

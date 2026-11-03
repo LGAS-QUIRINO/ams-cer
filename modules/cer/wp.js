@@ -23,7 +23,7 @@ export function wpBook(A, paper) {
 }
 export function wpLines(c, paper, ver) {
   const { f, A, exam, advs, liqs } = c;
-  const o = exam.o, lgu = A.lgu, inScope = A.inScope;
+  const o = exam.o, lgu = A.lgu, inScope = A.inScope, orOk = A.orOk;
   const book = wpBook(A, paper); if (!book) return null;
   const lines = [];
   if (paper === 'a2a') {
@@ -36,7 +36,7 @@ export function wpLines(c, paper, ver) {
     });
   } else {
     const kind = book.kind;
-    f.ors.filter((x) => x.officerId === o.id && kindOfForm(lgu, x.form) === kind && inScope(x.date)).forEach((x) => {
+    f.ors.filter((x) => x.officerId === o.id && kindOfForm(lgu, x.form) === kind && orOk(x)).forEach((x) => {
       const cx = x.status === 'cancelled';
       lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : (x.items || []).map((i) => i.p).filter(Boolean).join('; '), no: String(x.serial), d: cx ? 0 : +x.amount || 0, c: 0, ord: 0, sn: +x.serial || 0 });
     });
