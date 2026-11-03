@@ -687,3 +687,16 @@ table.af-reg.cc-split{min-width:0; width:100%}
 .af-reg td.af-rcv .af-tag{display:table; margin:4px 0 0 0; padding:2px 8px; border-radius:999px}
 .af-reg td.af-cust{min-width:170px}
 .af-reg td.af-cust small{display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:230px}
+
+/* Cash Count (Cut-off): tabs, flat entry line */
+.cc-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}
+.cc-cashpane[hidden]{display:none}
+.cc-cashpane .cc-grid2{margin-top:0}
+.cut-entry{background:none; border:0; border-bottom:1px solid var(--line); border-radius:0; padding:0 0 12px; margin-bottom:12px}
+.cut-entry .cut-q{flex:0 0 auto; align-self:center; padding-top:18px; font-size:12.5px; color:var(--muted,#5b6b84)} .cut-entry .cut-q b{display:inline; font-size:14px; color:var(--ink); padding:0 0 0 4px}
+.cut-entry .crumb-i{align-self:center; padding-top:18px}
+table.af-reg.cut-tbl td, table.af-reg.cut-tbl th{padding:8px 12px}
+.cc-head h2{font-size:15px}
+.cc-cpn2{font-size:12.5px; color:var(--ok)}
+.cc-cashpane .cc-tbl td{padding:5px 10px} .cc-cashpane .cc-tbl .input{padding:6px 9px}
+.cc-cashpane .cc-head{padding:12px 18px} 

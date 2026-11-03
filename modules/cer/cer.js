@@ -212,6 +212,7 @@ export async function render(ctx) {
     if (parts[0] === 'collections' && LASTPART !== 'collections') (await import('./collections.js')).resetTabs();
     if (parts[0] === 'advances' && LASTPART !== 'advances') (await import('./advances.js')).resetTabs();
     if (parts[0] === 'banks' && LASTPART !== 'banks') (await import('./banks.js')).resetTabs();
+    if (parts[0] === 'count' && LASTPART !== 'count') (await import('./count.js')).resetTabs();
     LASTPART = parts[0];
     const { body, crumb, wire } = parts[0] === 'forms' ? await (await import('./forms.js')).formsView(ctx)
       : parts[0] === 'collections' ? await (await import('./collections.js')).collectionsView(ctx) : parts[0] === 'advances' ? await (await import('./advances.js')).advancesView(ctx) : parts[0] === 'banks' ? await (await import('./banks.js')).banksView(ctx) : parts[0] === 'count' ? await (await import('./count.js')).countView(ctx) : parts[0] === 'verify' ? await (await import('./verify.js')).verifyView(ctx) : await (await import('./reports.js')).reportsView(ctx);

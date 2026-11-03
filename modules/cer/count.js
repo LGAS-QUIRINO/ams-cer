@@ -22,7 +22,9 @@ const flat = (r) => ({ id: r.id, ...r.data });
 const bad = (m) => { toast(m, 'bad'); return false; };
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
 const BEG_CA = ['ca', 'sdo', 'pcf'];
-const DRAFT = { key: '', data: null, editSplit: false };   // unsaved count survives a screen refresh; split boxes shown
+const DRAFT = { key: '', data: null, editSplit: false };
+const OPEN = { cut: true, cash: false };   // which tab is shown; 1 Remaining Forms when the screen is opened
+export const resetTabs = () => { OPEN.cut = true; OPEN.cash = false; };   // unsaved count survives a screen refresh; split boxes shown
 
 // Balance per books of each accountability, as of the cash count.
 export function booksOf(refs, f, o, exam, audit, advs, liqs) {
@@ -64,15 +66,15 @@ export async function countView(ctx) {
   const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
   const exams = f.exams.filter((e) => e.auditId === audit.id).map((e) => ({ ...e, o: f.officers.find((x) => x.id === e.officerId) })).filter((e) => e.o);
   const exam = exams.find((e) => e.id === q.get('e')) || exams[0] || null;
-  const top = `<div class="panel cd-bar cc-bar">
+  const top = (open = false) => `<div class="panel ${open ? 'cd-head' : 'cd-bar'} cc-bar">${open ? '<div class="cd-headrow">' : ''}
       <div class="field"><label for="cc-audit">Cash Examination</label><select class="input" id="cc-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>
       <div class="field"><label for="cc-exam">Accountable Officer</label><select class="input" id="cc-exam">${exams.length ? exams.map((e) => `<option value="${esc(e.id)}" ${exam && e.id === exam.id ? 'selected' : ''}>${esc(e.o.name)}${e.o.designation ? ' · ' + esc(e.o.designation) : ''}</option>`).join('') : '<option value="">No officer in this examination</option>'}</select></div>
-      <div class="field"><span class="cd-lbl">Cash Production Notice</span><div class="cc-cpn"><span class="pill p-done">Served ${esc(fmtDate(audit.countDate))}</span><span class="dim">count date</span></div></div></div>`;
+</div>`;
   const wireTop = () => {
     $('#cc-audit').onchange = (e) => { DRAFT.key = ''; go({ a: e.target.value, e: '' }); };
     $('#cc-exam').onchange = (e) => { DRAFT.key = ''; go({ e: e.target.value }); };
   };
-  if (!exam) return { crumb, body: hello + top + '<div class="panel"><div class="empty"><b>No accountable officer in this cash examination.</b>Add the officers in Audit Setup.</div></div>', wire: wireTop };
+  if (!exam) return { crumb, body: hello + top() + '<div class="panel"><div class="empty"><b>No accountable officer in this cash examination.</b>Add the officers in Audit Setup.</div></div>', wire: wireTop };
 
   const o = exam.o;
   const saved = counts0.map(flat).find((c) => c.id === exam.id) || null;
@@ -94,14 +96,15 @@ export async function countView(ctx) {
   const itemRow = (it, i) => `<tr data-it="${i}"><td>${esc(it.particulars)}</td><td>${esc(books.find((b) => b.key === it.appliesTo)?.label || (it.appliesTo === 'ca' ? 'Cash advance' : 'Collections'))}</td><td class="r">${money(it.presented)}</td>
       <td class="r"><label class="sr-only" for="al${i}">Allowed: ${esc(it.particulars)}</label><input class="input af-sm r cc-al" id="al${i}" inputmode="decimal" value="${esc(money(it.allowed ?? it.presented))}" ${dis}></td><td class="r cc-dis"></td>
       <td class="r">${enc ? `<button class="btn sm" type="button" data-rmit="${i}" aria-label="Remove ${esc(it.particulars)}">Remove</button>` : ''}</td></tr>`;
-  const body = `${hello}${top}
-    <div class="stats">
-      <div class="stat"><span>Cash on Hand</span><b id="cc-s-cash">₱ 0.00</b><small>bills and coins counted</small></div>
-      <div class="stat"><span>Cash Items Allowed</span><b id="cc-s-items" style="color:#1d4fb8">₱ 0.00</b><small id="cc-s-items2"></small></div>
-      <div class="stat"><span>Total Inventory</span><b id="cc-s-inv">₱ 0.00</b><small>cash + allowed cash items</small></div>
-      <div class="stat"><span>Unused Forms</span><b>${forms.reduce((n, x) => n + x.qty, 0)} pcs</b><small>${forms.length} line${forms.length === 1 ? '' : 's'} at the cut-off</small></div>
-    </div>
-    <section class="panel" aria-labelledby="cc-h0"><div class="cc-head"><span class="cd-num">1</span><h2 id="cc-h0">Remaining Accountable Forms</h2><span class="cd-sub">as presented at the cut-off</span></div>
+  const nFormsQty = forms.reduce((n, x) => n + x.qty, 0);
+  const body = `${hello}${top(true)}
+    <div class="ca-figs"><span>Cash on Hand <b id="cc-s-cash">₱ 0.00</b></span><span>Cash Items Allowed <b id="cc-s-items">₱ 0.00</b><small id="cc-s-items2" hidden></small></span>
+      <span>Inventory <b id="cc-s-inv">₱ 0.00</b></span><span>Unused Forms <b>${nFormsQty} pcs</b><small>${forms.length} line${forms.length === 1 ? '' : 's'}</small></span>
+      <span class="cc-cpn2">CPN served ${esc(fmtDate(audit.countDate))}</span></div>
+    <div class="cd-tabs cc-tabs" role="tablist">
+      <button type="button" role="tab" class="cd-tab ${OPEN.cut ? 'on' : ''}" data-tab="cut" aria-selected="${OPEN.cut}" aria-controls="cd-pane-cut"><span class="cd-num">1</span><span class="cd-tabt"><b>Remaining Forms</b><span class="cd-sub">${nFormsQty} pcs · ${forms.length} line${forms.length === 1 ? '' : 's'}</span></span></button>
+      <button type="button" role="tab" class="cd-tab ${OPEN.cash ? 'on' : ''}" data-tab="cash" aria-selected="${OPEN.cash}" aria-controls="cd-pane-cash"><span class="cd-num">2</span><span class="cd-tabt"><b>Cash Count</b><span class="cd-sub" id="cc-tabsub">₱ 0.00</span></span></button></div></div>
+    <section class="panel cd-pane" id="cd-pane-cut" role="tabpanel" ${OPEN.cut ? '' : 'hidden'}>
       <div class="cd-body">
         ${auditor ? `<div class="cut-entry">
           <div class="field cut-bk"><label for="cut-bk">Booklet</label><select class="input" id="cut-bk"><option value="">— Choose the booklet —</option>${choices.map((b) => `<option value="${esc(b.id)}">${esc(bookletName(b))}</option>`).join('')}<option value="__other">Other (not in the list)…</option></select></div>
@@ -109,24 +112,25 @@ export async function countView(ctx) {
           <div class="field cut-oth" hidden><label for="cut-from">Series From</label><input class="input mono r" id="cut-from" inputmode="numeric" autocomplete="off"></div>
           <div class="field cut-oth" hidden><label for="cut-to">Series To</label><input class="input mono r" id="cut-to" inputmode="numeric" autocomplete="off"></div>
           <div class="field cut-ur"><label for="cut-ur" id="cut-url">Unused numbers</label><input class="input mono" id="cut-ur" placeholder="e.g. 3764072, 3764075-3764100" autocomplete="off"></div>
-          <div class="field cut-q"><span class="cd-lbl">Qty</span><b id="cut-qty">0</b></div>
-          <button class="btn primary" type="button" id="cut-enter">Enter</button></div>` : ''}
-        ${forms.length ? `<div class="af-tbl"><table class="af-reg cut-tbl"><thead><tr><th scope="col">Form</th><th scope="col">Booklet / Series</th><th scope="col">Unused Numbers</th><th scope="col" class="r">Qty</th><th scope="col" class="r">Face Value (₱)</th><th scope="col"></th></tr></thead>
+          <span class="cut-q">Qty <b id="cut-qty">0</b></span>
+          <button class="btn primary" type="button" id="cut-enter">Enter</button>
+          <span class="crumb-i" title="The remaining forms as presented at the cut-off. Several ranges can go on one line (a skipped number is then counted as used). Checks: the unused checks; the last check issued is the one before them. A form not in the list: Other. The comparison with the beginning and the ORs encoded is in Verification.">ⓘ</span></div>` : ''}
+        ${forms.length ? `<div class="af-tbl"><table class="af-reg cut-tbl"><thead><tr><th scope="col">Form</th><th scope="col">Booklet / Series</th><th scope="col">Unused Numbers</th><th scope="col" class="r">Qty</th>${mv.length ? '<th scope="col" class="r">Face Value (₱)</th>' : ''}<th scope="col"></th></tr></thead>
           <tbody>${forms.map((x) => `<tr><td><b>${esc(x.name)}</b>${x.other ? ' <span class="pill p-stock">Not in the list</span>' : ''}</td><td class="mono">${x.ns ? 'No serial' : `${x.from} – ${x.to}`}</td><td class="mono">${x.ns ? '' : esc(x.text) || '<span class="dim">None (all used)</span>'}</td>
-            <td class="r">${x.qty}</td><td class="r">${x.face ? money(x.amount) : ''}</td><td class="r">${auditor ? `<button class="btn sm" type="button" data-rmcut="${esc(x.id)}" aria-label="Remove ${esc(x.name)} ${esc(x.text)}">Remove</button>` : ''}</td></tr>`).join('')}
-            <tr class="cc-tot"><td colspan="3">Total</td><td class="r">${forms.reduce((n, x) => n + x.qty, 0)}</td><td class="r">${mv.length ? money(mv.reduce((n, x) => n + x.amount, 0)) : ''}</td><td></td></tr></tbody></table></div>`
+            <td class="r">${x.qty}</td>${mv.length ? `<td class="r">${x.face ? money(x.amount) : ''}</td>` : ''}<td class="r">${auditor ? `<button class="btn sm" type="button" data-rmcut="${esc(x.id)}" aria-label="Remove ${esc(x.name)} ${esc(x.text)}">Remove</button>` : ''}</td></tr>`).join('')}
+            <tr class="cc-tot"><td colspan="3">Total</td><td class="r">${nFormsQty}</td>${mv.length ? `<td class="r">${money(mv.reduce((n, x) => n + x.amount, 0))}</td>` : ''}<td></td></tr></tbody></table></div>`
           : '<div class="empty"><b>No remaining forms entered yet.</b>Choose each booklet the officer presents and type its unused numbers.</div>'}
-        <p class="af-note">Several ranges can go on one line (a skipped number is then counted as used). Checks: the unused checks; the last check issued is the one before them. A form not in the list is typed under Other. The comparison with the beginning and the ORs encoded is in Verification.</p>
       </div></section>
+    <section class="cd-pane cc-cashpane" id="cd-pane-cash" role="tabpanel" ${OPEN.cash ? '' : 'hidden'}>
     <div class="cc-grid2"><div class="cc-left">
-      <section class="panel" aria-labelledby="cc-h1"><div class="cc-head"><span class="cd-num">2</span><h2 id="cc-h1">Cash on Hand</h2></div>
+      <section class="panel" aria-labelledby="cc-h1"><div class="cc-head"><h2 id="cc-h1">Cash on Hand</h2></div>
         <table class="af-reg cc-tbl"><thead><tr><th scope="col">Denomination</th><th scope="col" class="r">No. of Pcs.</th><th scope="col" class="r">Amount (₱)</th></tr></thead>
         <tbody><tr class="cc-sec"><td colspan="3">Bills</td></tr>${billRows}
           <tr class="cc-sec"><td colspan="3">Coins</td></tr>
           <tr><td>Coins (total amount)</td><td class="r dim">type the amount</td><td class="r"><label class="sr-only" for="cc-coins">Coins amount</label><input class="input af-sm r" id="cc-coins" inputmode="decimal" value="${esc(d.coins === '' || d.coins === undefined || d.coins === null ? '' : money(d.coins))}" placeholder="0.00" ${dis}></td></tr>
           <tr class="cc-tot"><td colspan="2">Total cash on hand</td><td class="r" id="cc-cash"></td></tr></tbody></table>
       </section>
-      <section class="panel" aria-labelledby="cc-h2"><div class="cc-head"><span class="cd-num">3</span><h2 id="cc-h2">Cash Items</h2><span class="cd-sub">checks, paid vouchers / payrolls not yet liquidated, etc.</span></div>
+      <section class="panel" aria-labelledby="cc-h2"><div class="cc-head"><h2 id="cc-h2">Cash Items</h2><span class="crumb-i" title="Checks, paid vouchers or payrolls not yet liquidated, and the like, presented in place of cash. The auditor decides what is allowed; disallowed = presented − allowed. Only allowed items count as inventory.">ⓘ</span></div>
         <div class="cd-body">
           ${enc ? `<div class="cd-entry cc-entry">
             <div class="field"><label for="ci-part">Particulars</label><input class="input" id="ci-part" list="ci-list" autocomplete="off"><datalist id="ci-list">${caChecks.map((c) => `<option value="Paid vouchers / payroll, Check No. ${esc(c)}">`).join('')}</datalist></div>
@@ -136,11 +140,10 @@ export async function countView(ctx) {
           ${d.items.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Particulars</th><th scope="col">Applies to</th><th scope="col" class="r">Presented (₱)</th><th scope="col" class="r">Allowed (₱)</th><th scope="col" class="r">Disallowed (₱)</th><th scope="col"></th></tr></thead>
             <tbody>${d.items.map(itemRow).join('')}<tr class="cc-tot"><td colspan="2">Total cash items</td><td class="r">${money(d.items.reduce((n, x) => n + (+x.presented || 0), 0))}</td><td class="r" id="cc-alt"></td><td class="r" id="cc-dist"></td><td></td></tr></tbody></table></div>`
             : '<p class="af-note">No cash item yet.</p>'}
-          <p class="af-note">The auditor decides what is allowed; disallowed = presented − allowed. Only allowed items count as inventory.</p>
         </div>
       </section>
     </div>
-    <section class="panel cc-right" aria-labelledby="cc-h4"><div class="cc-head"><span class="cd-num">4</span><h2 id="cc-h4">Split of the Count by Accountability</h2><span class="crumb-i" title="Cash on hand is split automatically: collections first, up to their balance per books, the rest to the cash advance. Use Edit split when the officer kept them apart. Balances per books use what is encoded up to now in Collections &amp; Deposits and Cash Advances.">ⓘ</span><span id="cc-pill" style="margin-left:auto"></span></div>
+    <section class="panel cc-right" aria-labelledby="cc-h4"><div class="cc-head"><h2 id="cc-h4">Split by Accountability</h2><span class="crumb-i" title="Cash on hand is split automatically: collections first, up to their balance per books, the rest to the cash advance. Use Edit split when the officer kept them apart. Balances per books use what is encoded up to now in Collections &amp; Deposits and Cash Advances.">ⓘ</span><span id="cc-pill" style="margin-left:auto"></span></div>
       <div class="cd-body">
         ${books.length ? `<div class="af-tbl"><table class="af-reg cc-split"><thead><tr><th scope="col">Nature of Funds</th>${books.map((b) => `<th scope="col" class="r">${esc(b.label)}</th>`).join('')}<th scope="col" class="r">Totals</th></tr></thead>
           <tbody>
@@ -155,7 +158,7 @@ export async function countView(ctx) {
         <div class="cd-actions"><button class="btn" type="button" id="cc-xls">Export to Excel</button><button class="btn" type="button" id="cc-print">Print Cash Count Sheet</button>${enc ? '<button class="btn primary" type="button" id="cc-save">Save Cash Count</button>' : ''}</div>
       </div>
     </section>
-    </div>
+    </div></section>
     <div id="cer-print" class="af-print" hidden></div>`;
 
   return { crumb, body, wire: () => { wireTop(); wireCount({ rerender: ctx.rerender, refs, audit, exam, o, d, books, forms, saved, enc, lgu: refs.lgu[audit.lguId], f, choices, auditor }); } };
@@ -190,6 +193,7 @@ function wireCount(c) {
     $('#cc-s-items').textContent = '₱ ' + money(k.itemsAllowed);
     $('#cc-s-items2').textContent = `${d.items.length} item${d.items.length === 1 ? '' : 's'} · ₱${money(r2(k.itemsPresented - k.itemsAllowed))} disallowed`;
     $('#cc-s-inv').textContent = '₱ ' + money(r2(k.cash + k.itemsAllowed));
+    { const tsh = books.length ? r2(books.reduce((n, b) => n + k.sh[b.key], 0)) : 0; const ts = $('#cc-tabsub'); if (ts) ts.textContent = `₱ ${money(r2(k.cash + k.itemsAllowed))}${books.length && Math.abs(tsh) > 0.004 ? (tsh > 0 ? ` · shortage ₱${money(tsh)}` : ` · overage ₱${money(-tsh)}`) : ''}`; }
     $$('tr[data-it]').forEach((tr) => { const it = d.items[+tr.dataset.it]; $('.cc-dis', tr).textContent = money(r2((+it.presented || 0) - (num(it.allowed ?? it.presented) || 0))); });
     if ($('#cc-alt')) { $('#cc-alt').textContent = money(k.itemsAllowed); $('#cc-dist').textContent = money(r2(k.itemsPresented - k.itemsAllowed)); }
     books.forEach((b) => {
@@ -207,6 +211,10 @@ function wireCount(c) {
       : Math.abs(st) <= 0.004 ? '<span class="pill p-done">No shortage or overage</span>' : st > 0 ? `<span class="pill p-flag">Shortage ₱${money(st)}</span>` : `<span class="pill p-flag">Overage ₱${money(-st)}</span>`;
   };
   const refresh = () => c.rerender();
+  $$('.cd-tab').forEach((t) => { t.onclick = () => {
+    Object.keys(OPEN).forEach((k) => { OPEN[k] = k === t.dataset.tab; });
+    $$('.cd-tab').forEach((x) => { const on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', String(on)); $('#cd-pane-' + x.dataset.tab).hidden = !on; });
+  }; });
   paint();
   // Remaining forms at the cut-off: each line saved as entered (cer_cutoff, one record per officer's exam).
   if (c.auditor) wireCut(c);
