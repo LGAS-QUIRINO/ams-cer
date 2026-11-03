@@ -6,6 +6,7 @@
 //   Annex D  Statement of Accountability – cash advances, by month
 // Other reports follow.
 import { store } from '../../js/store.js';
+import { covOf, inCov } from './banks.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { mayView, agencyName, fmtDate, money, num, autoPreparer, autoReviewer } from './cer.js';
 import { loadForms, saafRows, unusedFormsOf, countRanges, FORM_SHORT } from './forms.js';
@@ -85,7 +86,8 @@ export async function reportsView(ctx) {
       ${w.edited ? `<span class="pill p-flag">${w.edited} line${w.edited > 1 ? 's' : ''} differ${w.edited > 1 ? '' : 's'}</span>` : ''}<small class="muted">To change a line, click its Per CashBook amount and type what the cashbook shows.</small></div>` : '';
   // Bank statements of the auditee's accounts (Working Papers): imported lines within the coverage.
   const bset = bset0.map(flat).find((x) => x.id === `banks|${audit.lguId}`);
-  const bank = bank0.map(flat).filter((b) => b.auditId === audit.id && (b.lines || []).length).map((b) => {
+  const cov = covOf(audit, f.exams);
+  const bank = bank0.map(flat).filter((b) => b.auditId === audit.id && (b.lines || []).length).map((b0) => inCov(b0, cov)).filter((b) => b.lines.length).map((b) => {
     const acc = (bset?.list || []).find((x) => x.id === b.accountId) || {};
     return { account: b.account || acc.accountNo || '', label: [acc.bank, acc.fund].filter(Boolean).join(' · '), opening: b.opening ?? null, heads: b.heads || [], lines: b.lines };
   });

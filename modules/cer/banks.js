@@ -26,6 +26,19 @@ const r2 = (n) => Math.round(n * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, ...rest } = x; return rest; };
 const bad = (m) => { toast(m, 'bad'); return false; };
+// Coverage of the cash exam: the day after the last cash exam (earliest among its officers) up to the cash count date.
+export const covOf = (audit, exams) => { const ds = exams.filter((e) => e.auditId === audit.id && e.lastExamDate).map((e) => e.lastExamDate).sort(); return { from: ds[0] || '', to: audit.countDate }; };
+// The imported lines within the coverage as it is now (it may have changed since the import); the beginning balance follows.
+export function inCov(rec, cov) {
+  const all = rec.lines || [];
+  if (!all.length) return rec;
+  const lines = all.filter((l) => (!cov.from || l.date > cov.from) && l.date <= cov.to);
+  if (lines.length === all.length && (rec.covFrom || '') === cov.from) return rec;
+  const before = all.filter((l) => cov.from && l.date <= cov.from && l.bal !== null && l.bal !== undefined).pop();
+  const first = lines[0];
+  const opening = before ? before.bal : rec.covFrom === cov.from ? rec.opening : first && first.bal !== null && first.bal !== undefined ? r2(first.bal - (first.credit || 0) + (first.debit || 0)) : rec.opening;
+  return { ...rec, lines, opening, covFrom: cov.from, covTo: cov.to };
+}
 const nextDay = (d) => { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + 1); return t.toISOString().slice(0, 10); };
 const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
@@ -50,11 +63,9 @@ export async function banksView(ctx) {
   const acct = accounts.find((x) => x.id === q.get('acct')) || accounts[0] || null;
   const recId = acct ? `${audit.id}|${acct.id}` : '';
   const rec0 = recs0.map(flat).find((r) => r.id === recId);
-  const rec = { asOf: audit.countDate, ending: null, source: SOURCES[1], book: null, bankItems: [], found: {}, otherChecks: [], lines: [], ...(rec0 || {}) };
+  const cov = covOf(audit, exams0.map(flat));
+  const rec = inCov({ asOf: audit.countDate, ending: null, source: SOURCES[1], book: null, bankItems: [], found: {}, otherChecks: [], lines: [], ...(rec0 || {}) }, cov);
   const asOf = audit.countDate;   // always the cash count date
-  // Coverage of the cash exam: the day after the last cash exam (earliest among its officers) up to the cash count date.
-  const lastDates = exams0.map(flat).filter((e) => e.auditId === audit.id && e.lastExamDate).map((e) => e.lastExamDate).sort();
-  const cov = { from: lastDates[0] || '', to: audit.countDate };
   const top = (open = false) => `<div class="panel ${open ? 'cd-head' : 'cd-bar'} bk-bar">${open ? '<div class="cd-headrow">' : ''}
       <div class="field"><label for="bk-audit">Cash Examination</label><select class="input" id="bk-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>
       <div class="field"><label for="bk-acct">Bank Account</label><select class="input" id="bk-acct">${accounts.length ? accounts.map((x) => `<option value="${esc(x.id)}" ${acct && x.id === acct.id ? 'selected' : ''}>${esc(acctLabel(x))}</option>`).join('') : '<option value="">No bank account yet</option>'}</select></div>
@@ -136,7 +147,7 @@ export async function banksView(ctx) {
     if (!rec.lineOf && l.matched) return '<span class="pill p-done">Matched</span>';
     return l.debit && l.chq ? '<span class="pill p-stock">Check, not yet encoded</span>' : '<span class="pill p-stock">Not in the books</span>'; };
   const shown = lns.filter((l) => l.date <= asOf).filter((l) => !UI.only || unmatched.includes(l));
-  const stmtTbl = imported ? `<div class="bk-tools"><span class="dim">${lns.length} line${lns.length === 1 ? '' : 's'} from ${esc(fmtDate(rec.covFrom ? nextDay(rec.covFrom) : lns[0].date))} to ${esc(fmtDate(rec.covTo || asOf))} · ${lns.length - unmatched.length} found in the books · ${unmatched.length} not in the books</span>
+  const stmtTbl = imported ? `<div class="bk-tools"><span class="dim">${cov.from ? `Coverage ${esc(fmtDate(nextDay(cov.from)))} – ${esc(fmtDate(cov.to))}` : '<span class="pill p-flag">No last cash exam date</span>'} · ${lns.length} line${lns.length === 1 ? '' : 's'} · ${lns.length - unmatched.length} found in the books · ${unmatched.length} not in the books</span>
         <label class="cer-chip"><input type="checkbox" id="bk-only" ${UI.only ? 'checked' : ''}> Not in the books only</label></div>
       <div class="af-tbl bk-stmtwrap"><table class="af-reg bk-stmt"><thead><tr>${heads.map((h) => `<th scope="col"${numCol(h) ? ' class="r"' : ''}>${esc(h)}</th>`).join('')}<th scope="col">In the books</th></tr></thead>
       <tbody>${!UI.only && rec.opening !== null && rec.opening !== undefined ? `<tr class="bk-open">${heads.map((h, k) => `<td${numCol(h) ? ' class="r"' : ''}>${/balance/i.test(h) ? `<b>${money(rec.opening)}</b>` : k === 1 ? '<b>Beginning balance</b>' : ''}</td>`).join('')}<td class="dim">as of the last cash exam</td></tr>` : ''}
@@ -426,7 +437,8 @@ export async function bankFindings(audit) {
   const out = [], add = (key, text) => out.push({ key, text });
   const asOf = audit.countDate;
   accounts.forEach((acct) => {
-    const rec = recs0.map(flat).find((r) => r.id === `${audit.id}|${acct.id}`);
+    const rec0 = recs0.map(flat).find((r) => r.id === `${audit.id}|${acct.id}`);
+    const rec = rec0 ? inCov(rec0, covOf(audit, exams0.map(flat))) : rec0;
     const name = acctLabel(acct);
     if (!rec) { add(`bk0|${acct.id}`, `${name}: no bank statement or reconciliation yet.`); return; }
     const found = rec.found || {};
