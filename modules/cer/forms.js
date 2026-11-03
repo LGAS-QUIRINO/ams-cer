@@ -1482,9 +1482,10 @@ export function saafRows(f, officerId, exam, from, to) {
     .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from).forEach((b) => {
       const beg = from && b.issuedDate <= from ? (b.status === 'lost' && b.history?.some((h) => h.action === 'lost' && h.date <= from) ? [] : rawUnused(b, from)) : [];
       const rec = !from || b.issuedDate > from ? [[b.from, b.to]] : [];
-      const end = b.status === 'lost' ? [] : rawUnused(b, to);
       const mine = lines.filter((l) => l.bookletId === b.id);
       const count = cut ? mergeRanges(mine.flatMap((l) => l.ranges)) : null;
+      // Checks: no check register yet (Checks Issued comes later), so the balance end follows the cut-off count.
+      const end = b.status === 'lost' ? [] : b.form === 'chk' && count !== null ? count : rawUnused(b, to);
       if (!beg.length && !rec.length && !end.length && !(count && count.length)) return;
       const issued = subtractRanges([...beg, ...rec], count || end);
       out.push({ id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, face: faceOf(b), beg, rec, issued, end, count,
