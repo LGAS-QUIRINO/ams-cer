@@ -624,3 +624,24 @@ table.af-reg.bk-stmt td, table.af-reg.bk-stmt th{padding:7px 10px; white-space:n
 .cc-cutnote{margin:0 0 10px}
 .cc-mv{display:flex; flex-wrap:wrap; gap:6px 24px; margin-top:10px; font-size:13px}
 table.af-reg.af-cutoff .af-lc{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin-bottom:4px}
+
+/* Cash Count (Cut-off) v2: remaining forms entry; ② and ③ on the left, ④ on the right */
+.cut-entry{display:flex; flex-wrap:wrap; gap:10px 12px; align-items:flex-end}
+.cut-entry .field{margin:0}
+.cut-entry .cut-bk{flex:1 1 300px} .cut-entry .cut-ur{flex:2 1 300px}
+.cut-entry .cut-oth{flex:0 1 150px}
+.cut-entry .cut-q{flex:0 0 70px; text-align:right} .cut-entry .cut-q b{display:block; padding:9px 0; font-size:15px}
+table.af-reg.cut-tbl{min-width:0}
+.cc-grid2{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr); gap:18px; align-items:start}
+.cc-left{display:flex; flex-direction:column; gap:18px; min-width:0}
+.cc-left > .panel, .cc-grid2 > .panel{margin:0}
+.cc-grid2 table.af-reg.cc-tbl{min-width:0; width:100%; table-layout:fixed}
+.cc-grid2 .af-reg td, .cc-grid2 .af-reg th{padding:8px}
+.cc-grid2 .af-reg .input.cc-al{width:105px}
+.cc-right table.af-reg{min-width:0}
+@media (max-width:1100px){ .cc-grid2{grid-template-columns:1fr} }
+.vf-complete{display:inline-flex; align-items:center; gap:8px; font-size:13.5px; font-weight:600; padding:6px 12px; border:1px solid var(--line); border-radius:999px; background:#fff; cursor:pointer}
+.vf-progress{padding:6px 2px} .vf-progress ul{margin:8px 0 4px 18px; font-size:13.5px}
+.cut-entry{padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:#f8fafd; margin-bottom:14px}
+.cut-entry .field[hidden]{display:none}
+.cut-entry .cut-ur .input{width:100%}

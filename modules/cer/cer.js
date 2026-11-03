@@ -136,7 +136,7 @@ function begLine(st, k, lump) {
   const n = `${ch.length} check${ch.length === 1 ? '' : 's'}`;
   if (!ch.length) return '<span class="dim">No check itemized: shown as one beginning balance in Cash Advances.</span>';
   if (!l) return `₱${money(sum)} · from ${n}`;
-  if (sum > l + 0.004) return `<span class="cer-begover">⚠ ${n} total ₱${money(sum)}, more than the ₱${money(l)} typed. Check the amount; ₱${money(sum)} is used.</span>`;
+  if (sum > l + 0.004) return `₱${money(sum)} · from ${n} (more than the ₱${money(l)} typed; the checks are used)`;
   const rest = Math.round((l - sum) * 100) / 100;
   return `₱${money(l)} · ${n} ₱${money(sum)}${rest > 0.004 ? ` + ₱${money(rest)} not itemized` : ''}`;
 }
@@ -231,6 +231,7 @@ export async function render(ctx) {
   app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: view, crumb: open ? 'Audit Setup' : 'Audit Setup · Cash Examinations', me, roleText, body });
   tidyTop();
   $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
+  { const hb = $('#cer-hol'); if (hb) hb.onclick = () => holidaysModal(refs, isAuditor(refs)); }
   if (open) wireSetup(refs, cer, q, ctx.rerender);
   else if (parts[0] && parts[0] !== 'setup') history.replaceState(null, '', '#/cer/setup');
 }
@@ -262,7 +263,7 @@ function listHtml(refs, cer) {
   const cols = 'grid-template-columns:120px minmax(170px,1.1fr) minmax(220px,1.6fr) minmax(170px,1fr)';
   const canNew = isAuditor(refs);
   return `<div class="hello"><div><h1>Audit Setup</h1><p>One cash examination per auditee and count date. Each accountable officer has a separate exam record.</p></div>
-      ${canNew ? '<a class="btn primary" href="#/cer/setup?new=1">+ New Cash Examination</a>' : ''}</div>
+      <div class="btn-row"><button class="btn" type="button" id="cer-hol">Holidays</button>${canNew ? '<a class="btn primary" href="#/cer/setup?new=1">+ New Cash Examination</a>' : ''}</div></div>
     <div class="panel">
       <div class="panel-head"><h2>Cash Examinations</h2><span class="pill">${rows.length}</span></div>
       ${rows.length ? `<div class="t-head" style="${cols}"><span>Cash Count</span><span>Auditee</span><span>Accountable Officers</span><span>Prepared by</span></div>
@@ -283,7 +284,7 @@ function listHtml(refs, cer) {
 function blankExam(lgu) {
   const brgy = isBrgy(lgu);
   return { examId: '', officerId: '', functions: brgy ? ['collecting', 'disbursing'] : [], forms: brgy ? ['af51b', 'ctci'] : [],
-    bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '' }, lastExamDate: '', balances: {} };
+    bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '' }, lastExamDate: '', balances: {}, depositRule: 'next' };
 }
 function stateFrom(refs, cer, q) {
   const audit = cer.audits.find((x) => x.id === q.get('a')) || null;
@@ -298,7 +299,7 @@ function stateFrom(refs, cer, q) {
   };
   if (exam) {
     Object.assign(st, { examId: exam.id, officerId: exam.officerId, functions: [...(exam.functions || [])], forms: [...new Set((exam.forms || []).map((k) => fixBrgyForm(lgu, k)))],
-      bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '',
+      bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '', depositRule: exam.depositRule || 'next',
       balances: Object.fromEntries(Object.entries(exam.balances || {}).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, (() => { const x = v && v.lump !== undefined ? v.lump : v && v.amount; return x !== null && x !== undefined ? money(x) : ''; })()])) });
     ['maxCash', 'amount'].forEach((k) => { if (st.bond[k] !== '' && st.bond[k] !== null) st.bond[k] = money(st.bond[k]); });
   }
@@ -321,7 +322,7 @@ function setupHtml(refs, cer, q) {
   const newTab = !base.exam;   // a new officer exam is being set up
   const h = heads(refs, cer, st), opens = openState(key, h);
   return `<div class="hello"><div><h1>Audit Setup</h1><p>One cash examination per auditee and count date. Each accountable officer has a separate exam record.</p></div>
-      <div class="btn-row"><a class="btn" href="#/cer/setup">← All Cash Examinations</a>${edit ? '<button class="btn primary" type="button" id="cer-save">Save Setup</button>' : ''}</div></div>
+      <div class="btn-row"><a class="btn" href="#/cer/setup">← All Cash Examinations</a><button class="btn" type="button" id="cer-hol">Holidays</button>${edit ? '<button class="btn primary" type="button" id="cer-save">Save Setup</button>' : ''}</div></div>
     ${edit ? '' : '<div class="msg cer-ro">View only. The auditors (Team Member, ATL, SA) set up the cash examination.</div>'}
 
     <section class="panel acc-panel" aria-label="Cash Examination">
@@ -411,7 +412,11 @@ function officerHtml(refs, cer, st, edit) {
         ${isBrgy(lgu) ? '<span class="hint">Barangay Treasurer: collecting and disbursing accountabilities are computed separately.</span>' : ''}</fieldset>
     </div>
     ${(st.functions || []).includes('collecting') ? `<fieldset class="field"><legend>Accountable forms used in collecting</legend>
-      <div class="cer-chips">${formsForLgu(lgu).map(([k, label]) => `<label class="cer-chip"><input type="checkbox" data-form="${k}" ${chk(st.forms, k)} ${dis}> ${esc(label)}</label>`).join('')}</div></fieldset>` : ''}`, opens.has('officer'))}
+      <div class="cer-chips">${formsForLgu(lgu).map(([k, label]) => `<label class="cer-chip"><input type="checkbox" data-form="${k}" ${chk(st.forms, k)} ${dis}> ${esc(label)}</label>`).join('')}</div></fieldset>
+      ${isBrgy(lgu) ? '<span class="hint">Deposits: within 5 banking days after receipt (Barangay Treasurer).</span>' : `<div class="field cer-deprule"><label for="cer-deprule">Deposit rule</label><select class="input" id="cer-deprule" ${dis}>
+        <option value="next" ${st.depositRule !== 'weekly' ? 'selected' : ''}>Daily, or not later than the next banking day</option>
+        <option value="weekly" ${st.depositRule === 'weekly' ? 'selected' : ''}>At least once a week, or as soon as collections reach ₱10,000 (minimal collections / bank far)</option></select>
+        <span class="hint">Used by Verification to flag late deposits. Banking days skip weekends and holidays (Holidays).</span></div>`}` : ''}`, opens.has('officer'))}
 
     ${acc('bond', 'Bond and Limits', h.bond, `
       <div class="cer-g5">
@@ -507,6 +512,7 @@ function wireSetup(refs, cer, q, rerender) {
       if (st.functions.includes('collecting') && !st.forms.length && isBrgy(refs.lgu[st.lguId])) st.forms = ['af51b', 'ctci'];
       touch(); drawOfficer();
     }; });
+    const dr = $('#cer-deprule'); if (dr) dr.onchange = () => { st.depositRule = dr.value; touch(); };
     $$('[data-form]').forEach((c) => { c.onchange = () => { st.forms = $$('[data-form]').filter((x) => x.checked).map((x) => x.dataset.form); touch(); drawOfficer(); }; });
     $$('[data-bond]').forEach((i) => {
       i.oninput = () => { st.bond[i.dataset.bond] = i.value; touch(); $('#cer-warn').innerHTML = warnHtml(st); flag(); };
@@ -691,9 +697,67 @@ async function saveSetup(refs, cer, st) {
   const examId = st.examId || newId('cere');
   const oldExam = cer.exams.find((e) => e.id === examId);
   await store.save('cer_exams', examId, { auditId, officerId: st.officerId, functions: st.functions, forms: st.functions.includes('collecting') ? st.forms : [],
-    bond, lastExamDate, lastExamSource: prev ? 'system' : 'typed', balances, endBalances: oldExam ? (oldExam.endBalances || {}) : {} }, by(refs));
+    bond, lastExamDate, lastExamSource: prev ? 'system' : 'typed', balances, depositRule: st.depositRule || 'next', endBalances: oldExam ? (oldExam.endBalances || {}) : {} }, by(refs));
   DRAFT = null;
   toast('Audit Setup saved.', 'ok');
   location.hash = `#/cer/setup?a=${auditId}&o=${examId}`;
   return true;
+}
+
+/* ---------- Holidays and banking days (late deposits in Verification) ----------
+   cer_settings 'holidays|national' { list: [{ date, name }] } for all auditees; 'holidays|<municipality id>' for the local special
+   holidays (fiesta, founding anniversary) of that municipality and its barangays. */
+export async function holidaysOf(refs, lguId) {
+  const sets = Object.fromEntries((await store.list('cer_settings')).map((x) => [x.id, x.data]));
+  const l = refs.lgu[lguId], mun = l && l.data.kind === 'barangay' ? l.data.parentId : lguId;
+  return new Set([...(sets['holidays|national']?.list || []), ...(sets['holidays|' + mun]?.list || [])].map((h) => h.date));
+}
+const iso = (d) => d.toISOString().slice(0, 10);
+export const isBankingDay = (date, hol) => { const d = new Date(date + 'T00:00:00Z'), w = d.getUTCDay(); return w !== 0 && w !== 6 && !hol.has(date); };
+// The date n banking days after the given date.
+export function addBankingDays(date, n, hol) {
+  const d = new Date(date + 'T00:00:00Z'); let k = 0;
+  while (k < n) { d.setUTCDate(d.getUTCDate() + 1); if (isBankingDay(iso(d), hol)) k++; }
+  return iso(d);
+}
+export function bankingDaysBetween(a, b, hol) {   // banking days after a, up to and including b
+  if (!a || !b || b <= a) return 0;
+  const d = new Date(a + 'T00:00:00Z'); let k = 0;
+  while (iso(d) < b) { d.setUTCDate(d.getUTCDate() + 1); if (isBankingDay(iso(d), hol)) k++; }
+  return k;
+}
+async function holidaysModal(refs, edit) {
+  const sets = Object.fromEntries((await store.list('cer_settings')).map((x) => [x.id, x.data]));
+  const muns = refs.lgus.filter((l) => l.data.kind === 'municipality').sort((a, b) => a.data.name.localeCompare(b.data.name));
+  const lists = { national: [...(sets['holidays|national']?.list || [])] };
+  muns.forEach((m) => { lists[m.id] = [...(sets['holidays|' + m.id]?.list || [])]; });
+  let cur = 'national';
+  const dis = edit ? '' : 'disabled';
+  const draw = (bg) => {
+    const l = lists[cur].slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    lists[cur] = l;
+    $('#hol-rows', bg).innerHTML = l.length ? l.map((h, i) => `<tr data-i="${i}"><td><input class="input" type="date" data-k="date" value="${esc(h.date || '')}" aria-label="Date" ${dis}></td><td><input class="input" data-k="name" value="${esc(h.name || '')}" aria-label="Holiday" ${dis}></td><td>${edit ? '<button class="btn sm cd-x" type="button" aria-label="Remove">✕</button>' : ''}</td></tr>`).join('')
+      : '<tr><td colspan="3" class="dim">None yet.</td></tr>';
+    $$('tr[data-i]', bg).forEach((tr) => {
+      $$('[data-k]', tr).forEach((el) => { el.onchange = el.oninput = () => { lists[cur][+tr.dataset.i][el.dataset.k] = el.value; }; });
+      const x = $('.cd-x', tr); if (x) x.onclick = () => { lists[cur].splice(+tr.dataset.i, 1); draw(bg); };
+    });
+  };
+  const v = await modal({ title: 'Holidays', wide: true,
+    body: `<p class="hint" style="margin:0 0 10px">Banking days skip Saturdays, Sundays and these holidays. National holidays apply to all auditees; local special holidays (fiesta, founding anniversary) apply to the municipality and its barangays.</p>
+      <div class="field" style="max-width:360px"><label for="hol-of">List</label><select class="input" id="hol-of"><option value="national">National holidays (all auditees)</option>${muns.map((m) => `<option value="${esc(m.id)}">Local · ${esc(m.data.name)}</option>`).join('')}</select></div>
+      <div class="af-tbl"><table class="af-reg cd-edit"><thead><tr><th scope="col">Date</th><th scope="col">Holiday</th><th scope="col"></th></tr></thead><tbody id="hol-rows"></tbody></table></div>
+      ${edit ? '<button class="btn sm" type="button" id="hol-add">+ Add Holiday</button>' : ''}`,
+    onOpen: (bg) => { draw(bg); $('#hol-of', bg).onchange = (e) => { cur = e.target.value; draw(bg); };
+      const add = $('#hol-add', bg); if (add) add.onclick = () => { lists[cur].push({ date: '', name: '' }); draw(bg); const ins = $$('#hol-rows input[type=date]', bg); const last = ins.find((x) => !x.value); if (last) last.focus(); }; },
+    buttons: edit ? [{ label: 'Cancel', value: null }, { label: 'Save Holidays', cls: 'primary', value: 'save' }] : [{ label: 'Close', cls: 'primary', value: null }] });
+  if (v !== 'save') return;
+  for (const [k, l] of Object.entries(lists)) {
+    const clean = l.filter((h) => h.date).map((h) => ({ date: h.date, name: String(h.name || '').trim() }));
+    const old = (sets['holidays|' + k]?.list || []);
+    if (JSON.stringify(old) === JSON.stringify(clean)) continue;
+    await store.save('cer_settings', 'holidays|' + k, { list: clean }, by(refs), { quiet: true });
+  }
+  emitChange('local');
+  toast('Holidays saved.', 'ok');
 }

@@ -1,18 +1,18 @@
 // CER · Cash Count (design approved 18 Oct 2026), following the GF 74-A.
 // Per accountable officer of a cash examination, at the cut-off (done first, from what the officer presents):
-//   1. Cut-off                 each booklet in the officer's hands: seen, unused numbers on hand; checkbooks: last check issued.
-//                              Same record as the Physical Check in Accountable Forms (cer_formcheck); works even when the
-//                              collections, deposits and cash advances are not (all) encoded yet. A booklet not in the register is added here.
+//   1. Cut-off                 the remaining accountable forms presented: booklet (dropdown of the officer's booklets, or typed when
+//                              not in the register) and its unused numbers; checks by unused range. Only recorded here (the ending);
+//                              Verification compares it with the beginning and the encoded ORs once encoding is complete.
 //   2. Cash on Hand            bills by number of pieces; coins as one amount.
 //   3. Cash Items              checks, paid vouchers / payrolls not yet liquidated, etc.: presented, allowed (auditor), disallowed.
 //   4. Split by Accountability counted together, then split: Collections | Cash Advance, against the balance per books.
 //
 // Records:
 //   cer_cashcount  id = examId  { examId, bills{ '1000': pcs, … }, coins, items[{ particulars, appliesTo: 'col'|'ca', presented, allowed }], split{ col, ca } (typed; blank = automatic) }
-import { store } from '../../js/store.js';
+import { store, newId } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
-import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
-import { loadForms, unusedFormsOf, exportXlsx, registerOf, cutoffRowsOf, cutoffTableHtml, wireCutoff, addBeginningForms } from './forms.js';
+import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
+import { loadForms, unusedFormsOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm } from './collections.js';
 
 const canCount = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
@@ -58,7 +58,7 @@ export async function countView(ctx) {
   f.reports = reports.map(flat);
   const advs = advs0.map(flat), liqs = liqs0.map(flat);
   const crumb = 'Cash Count (Cut-off)';
-  const hello = `<div class="hello"><div><h1>Cash Count (Cut-off)</h1><p>Done first, from what the officer presents: the accountable forms on hand (unused numbers, last check), then cash on hand and cash items. The count is split by accountability and carried to the Report of Cash Examination (GF 74-A).</p></div></div>`;
+  const hello = `<div class="hello"><div><h1>Cash Count (Cut-off)</h1><p>The ending: what the officer presents at the cut-off. The remaining accountable forms, then cash on hand and cash items. The count is split by accountability and carried to the Report of Cash Examination (GF 74-A).</p></div></div>`;
   const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   if (!audits.length) return { crumb, body: hello + '<div class="panel"><div class="empty"><b>No cash examination yet.</b>The auditors set one up in Audit Setup.</div></div>' };
   const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
@@ -79,13 +79,14 @@ export async function countView(ctx) {
   if (DRAFT.key !== exam.id) DRAFT.key = exam.id, DRAFT.data = JSON.parse(JSON.stringify({ bills: {}, coins: '', items: [], split: {}, ...(saved || {}) }));
   const d = DRAFT.data;
   const books = booksOf(refs, f, o, exam, audit, advs, liqs);
-  const forms = unusedFormsOf(f, o.id, exam, audit.countDate);
+  const forms = unusedFormsOf(f, o.id, exam);
   const enc = canCount(refs);
   const dis = enc ? '' : 'disabled';
   const caChecks = advs.filter((a) => a.officerId === o.id).map((a) => a.checkNo);
-  const cutRows = cutoffRowsOf(f, o, exam);
   const auditor = isAuditor(refs);
-  const nSeen = cutRows.filter((b) => f.checks.find((c) => c.id === exam.id + '|' + b.id)?.seen).length;
+  const choices = cutoffChoices(f, o.id, audit.countDate);
+  const lgu = refs.lgu[audit.lguId];
+  const otherForms = [...formsForLgu(lgu), ['chk', 'Checks']];
   const mv = forms.filter((x) => x.face), nomv = forms.filter((x) => !x.face);
 
   const billRows = BILLS.map((v) => `<tr><td>₱ ${v.toLocaleString('en-US')}</td><td class="r"><label class="sr-only" for="b${v}">₱${v} pieces</label><input class="input af-sm r cc-pc" id="b${v}" data-bill="${v}" inputmode="numeric" value="${esc(d.bills[v] || '')}" placeholder="0" ${dis}></td><td class="r" data-amt="${v}"></td></tr>`).join('');
@@ -97,17 +98,26 @@ export async function countView(ctx) {
       <div class="stat"><span>Cash on Hand</span><b id="cc-s-cash">₱ 0.00</b><small>bills and coins counted</small></div>
       <div class="stat"><span>Cash Items Allowed</span><b id="cc-s-items" style="color:#1d4fb8">₱ 0.00</b><small id="cc-s-items2"></small></div>
       <div class="stat"><span>Total Inventory</span><b id="cc-s-inv">₱ 0.00</b><small>cash + allowed cash items</small></div>
-      <div class="stat"><span>Unused Forms</span><b>${forms.reduce((n, x) => n + x.qty, 0)} pcs</b><small>${nSeen} of ${cutRows.length} booklet${cutRows.length === 1 ? '' : 's'} seen at the cut-off</small></div>
+      <div class="stat"><span>Unused Forms</span><b>${forms.reduce((n, x) => n + x.qty, 0)} pcs</b><small>${forms.length} line${forms.length === 1 ? '' : 's'} at the cut-off</small></div>
     </div>
-    <section class="panel" aria-labelledby="cc-h0"><div class="cc-head"><span class="cd-num">1</span><h2 id="cc-h0">Cut-off: Accountable Forms Presented</h2><span class="cd-sub">booklets and checkbooks in the officer's hands at the count</span></div>
+    <section class="panel" aria-labelledby="cc-h0"><div class="cc-head"><span class="cd-num">1</span><h2 id="cc-h0">Remaining Accountable Forms</h2><span class="cd-sub">as presented at the cut-off</span></div>
       <div class="cd-body">
-        <p class="af-note cc-cutnote">Tick each booklet seen and type the unused numbers actually on hand, as ranges (e.g. 7311510, 7311516-7311550); for a checkbook, the last check issued. The last number used is known from this even when the collections, deposits and cash advances are not encoded yet.</p>
-        ${cutRows.length ? cutoffTableHtml(f, exam, cutRows, auditor) : '<div class="empty"><b>No booklets in this officer\'s hands on the count date.</b>Add the booklets the officer presents.</div>'}
-        ${cutRows.length ? `<div class="cc-mv">${mv.length ? `<span>Unused forms with money value <b>₱${money(mv.reduce((n, x) => n + x.amount, 0))}</b> <span class="dim">(${mv.reduce((n, x) => n + x.qty, 0)} pcs at face value)</span></span>` : ''}<span>Unused forms without money value <b>${nomv.reduce((n, x) => n + x.qty, 0)} pcs</b></span><span class="dim">as last saved</span></div>` : ''}
-        <div class="cd-actions">${auditor ? `<button class="btn" type="button" id="cc-addbk">+ Booklet not in the register</button>${cutRows.length ? '<button class="btn primary" type="button" id="cc-savecut">Save Cut-off</button>' : ''}` : '<span class="dim">The auditor does the cut-off.</span>'}</div>
-        <p class="af-note">A booklet not seen, or a difference from the register, goes to Verification for the auditor's judgment. The same record shows in Accountable Forms (Physical Check).</p>
+        ${auditor ? `<div class="cut-entry">
+          <div class="field cut-bk"><label for="cut-bk">Booklet</label><select class="input" id="cut-bk"><option value="">— Choose the booklet —</option>${choices.map((b) => `<option value="${esc(b.id)}">${esc(bookletName(b))}</option>`).join('')}<option value="__other">Other (not in the list)…</option></select></div>
+          <div class="field cut-oth" hidden><label for="cut-form">Form</label><select class="input" id="cut-form">${otherForms.map(([k, n]) => `<option value="${k}">${esc(n)}</option>`).join('')}</select></div>
+          <div class="field cut-oth" hidden><label for="cut-from">Series From</label><input class="input mono r" id="cut-from" inputmode="numeric" autocomplete="off"></div>
+          <div class="field cut-oth" hidden><label for="cut-to">Series To</label><input class="input mono r" id="cut-to" inputmode="numeric" autocomplete="off"></div>
+          <div class="field cut-ur"><label for="cut-ur" id="cut-url">Unused numbers</label><input class="input mono" id="cut-ur" placeholder="e.g. 3764072, 3764075-3764100" autocomplete="off"></div>
+          <div class="field cut-q"><span class="cd-lbl">Qty</span><b id="cut-qty">0</b></div>
+          <button class="btn primary" type="button" id="cut-enter">Enter</button></div>` : ''}
+        ${forms.length ? `<div class="af-tbl"><table class="af-reg cut-tbl"><thead><tr><th scope="col">Form</th><th scope="col">Booklet / Series</th><th scope="col">Unused Numbers</th><th scope="col" class="r">Qty</th><th scope="col" class="r">Face Value (₱)</th><th scope="col"></th></tr></thead>
+          <tbody>${forms.map((x) => `<tr><td><b>${esc(x.name)}</b>${x.other ? ' <span class="pill p-stock">Not in the list</span>' : ''}</td><td class="mono">${x.ns ? 'No serial' : `${x.from} – ${x.to}`}</td><td class="mono">${x.ns ? '' : esc(x.text) || '<span class="dim">None (all used)</span>'}</td>
+            <td class="r">${x.qty}</td><td class="r">${x.face ? money(x.amount) : ''}</td><td class="r">${auditor ? `<button class="btn sm" type="button" data-rmcut="${esc(x.id)}" aria-label="Remove ${esc(x.name)} ${esc(x.text)}">Remove</button>` : ''}</td></tr>`).join('')}
+            <tr class="cc-tot"><td colspan="3">Total</td><td class="r">${forms.reduce((n, x) => n + x.qty, 0)}</td><td class="r">${mv.length ? money(mv.reduce((n, x) => n + x.amount, 0)) : ''}</td><td></td></tr></tbody></table></div>`
+          : '<div class="empty"><b>No remaining forms entered yet.</b>Choose each booklet the officer presents and type its unused numbers.</div>'}
+        <p class="af-note">Several ranges can go on one line (a skipped number is then counted as used). Checks: the unused checks; the last check issued is the one before them. A form not in the list is typed under Other. The comparison with the beginning and the ORs encoded is in Verification.</p>
       </div></section>
-    <div class="cc-grid">
+    <div class="cc-grid2"><div class="cc-left">
       <section class="panel" aria-labelledby="cc-h1"><div class="cc-head"><span class="cd-num">2</span><h2 id="cc-h1">Cash on Hand</h2></div>
         <table class="af-reg cc-tbl"><thead><tr><th scope="col">Denomination</th><th scope="col" class="r">No. of Pcs.</th><th scope="col" class="r">Amount (₱)</th></tr></thead>
         <tbody><tr class="cc-sec"><td colspan="3">Bills</td></tr>${billRows}
@@ -129,7 +139,7 @@ export async function countView(ctx) {
         </div>
       </section>
     </div>
-    <section class="panel" aria-labelledby="cc-h4"><div class="cc-head"><span class="cd-num">4</span><h2 id="cc-h4">Split of the Count by Accountability</h2><span class="cd-sub">counted together, then split</span><span id="cc-pill" style="margin-left:auto"></span></div>
+    <section class="panel cc-right" aria-labelledby="cc-h4"><div class="cc-head"><span class="cd-num">4</span><h2 id="cc-h4">Split of the Count by Accountability</h2><span class="cd-sub">counted together, then split</span><span id="cc-pill" style="margin-left:auto"></span></div>
       <div class="cd-body">
         ${books.length ? `<div class="af-tbl"><table class="af-reg cc-split"><thead><tr><th scope="col">Nature of Funds</th>${books.map((b) => `<th scope="col" class="r">${esc(b.label)}</th>`).join('')}<th scope="col" class="r">Totals</th></tr></thead>
           <tbody>
@@ -144,9 +154,10 @@ export async function countView(ctx) {
         <div class="cd-actions"><button class="btn" type="button" id="cc-xls">Export to Excel</button><button class="btn" type="button" id="cc-print">Print Cash Count Sheet</button>${enc ? '<button class="btn primary" type="button" id="cc-save">Save Cash Count</button>' : ''}</div>
       </div>
     </section>
+    </div>
     <div id="cer-print" class="af-print" hidden></div>`;
 
-  return { crumb, body, wire: () => { wireTop(); wireCount({ rerender: ctx.rerender, refs, audit, exam, o, d, books, forms, saved, enc, lgu: refs.lgu[audit.lguId], f, cutRows }); } };
+  return { crumb, body, wire: () => { wireTop(); wireCount({ rerender: ctx.rerender, refs, audit, exam, o, d, books, forms, saved, enc, lgu: refs.lgu[audit.lguId], f, choices, auditor }); } };
 }
 
 export function compute(d, books) {
@@ -195,10 +206,8 @@ function wireCount(c) {
   };
   const refresh = () => c.rerender();
   paint();
-  // Cut-off: saved on its own, and together with the cash count.
-  const saveCut = c.cutRows.length && isAuditor(refs) ? wireCutoff(refs, c.f, { ...exam, audit }, $('.af-cutoff')?.closest('section') || document) : null;
-  const sc = $('#cc-savecut'); if (sc && saveCut) sc.onclick = async () => { sc.disabled = true; try { if (await saveCut()) toast('Cut-off saved.', 'ok'); } finally { sc.disabled = false; } };
-  const ab = $('#cc-addbk'); if (ab) ab.onclick = () => addBeginningForms(refs, c.f, registerOf(refs, o.lguId), o, audit.countDate, 'cutoff');
+  // Remaining forms at the cut-off: each line saved as entered (cer_cutoff, one record per officer's exam).
+  if (c.auditor) wireCut(c);
   $$('[data-bill]').forEach((i) => { i.oninput = () => { d.bills[i.dataset.bill] = i.value.replace(/[^\d]/g, ''); paint(); }; });
   const coins = $('#cc-coins');
   if (coins) { coins.oninput = () => { d.coins = coins.value; paint(); }; coins.onblur = () => { const v = num(coins.value); if (v !== null) coins.value = money(v); }; }
@@ -225,7 +234,7 @@ function wireCount(c) {
     if (Math.abs(k.unsplit) > 0.004) return bad(`₱${money(k.unsplit)} of the cash on hand is not split. Check the typed amounts.`);
     if (d.items.some((it) => (num(it.allowed ?? it.presented) ?? 0) > (+it.presented || 0) + 0.004)) return bad('An allowed amount is more than what was presented.');
     save.disabled = true;
-    try { if (saveCut && !(await saveCut())) return; DRAFT.key = ''; await store.save('cer_cashcount', exam.id, data(), by(refs)); toast('Cash Count saved.', 'ok'); } finally { save.disabled = false; }
+    try { DRAFT.key = ''; await store.save('cer_cashcount', exam.id, data(), by(refs)); toast('Cash Count saved.', 'ok'); } finally { save.disabled = false; }
   };
   $('#cc-xls').onclick = () => {
     const k = compute(d, books);
@@ -255,4 +264,54 @@ function wireCount(c) {
       <p>Counted in the presence of the accountable officer. Prepared by ${esc(refs.me?.data.name || '')}.</p>`;
     document.body.classList.add('af-printing'); p.hidden = false; window.print(); p.hidden = true; document.body.classList.remove('af-printing');
   };
+}
+
+function wireCut(c) {
+  const { refs, f, exam, o, choices } = c;
+  const sel = $('#cut-bk'); if (!sel) return;
+  const ur = $('#cut-ur'), qty = $('#cut-qty');
+  const isOther = () => sel.value === '__other';
+  const bk = () => choices.find((b) => b.id === sel.value) || null;
+  const nsNow = () => (isOther() ? $('#cut-form').value === 'cash' && !int($('#cut-from').value) : !!bk()?.noSerial);
+  const int = (v) => { const n = parseInt(String(v ?? '').replace(/[^\d]/g, ''), 10); return isNaN(n) ? null : n; };
+  const read = () => {
+    if (!sel.value) return { error: 'Choose the booklet.' };
+    if (isOther()) {
+      const form = $('#cut-form').value, a = int($('#cut-from').value), z = int($('#cut-to').value);
+      if (nsNow()) { const q = int(ur.value) || 0; return { line: { bookletId: '', form, from: 1, to: q, ns: true, ranges: q ? [[1, q]] : [] } }; }
+      if (!a || !z || z < a) return { error: 'Type the series (from and to) of the form.' };
+      const p = parseCutRanges(ur.value, a, z, 'the series'); if (p.error) return { error: p.error };
+      return { line: { bookletId: '', form, from: a, to: z, ns: false, ranges: p.ranges } };
+    }
+    const b = bk();
+    if (b.noSerial) { const q = int(ur.value) || 0; if (q > b.qty) return { error: `More than the ${b.qty} pieces of the lot.` }; return { line: { bookletId: b.id, ranges: q ? [[b.from, b.from + q - 1]] : [] } }; }
+    const p = parseCutRanges(ur.value, b.from, b.to); if (p.error) return { error: p.error };
+    return { line: { bookletId: b.id, ranges: p.ranges } };
+  };
+  const paint = () => {
+    $$('.cut-oth').forEach((el) => { el.hidden = !isOther(); });
+    $('#cut-url').textContent = nsNow() ? 'Pieces on hand' : 'Unused numbers';
+    ur.placeholder = nsNow() ? 'pcs' : isOther() ? 'e.g. 101, 105-150' : bk() ? `e.g. ${bk().from}-${bk().to}` : 'e.g. 3764072, 3764075-3764100';
+    const r = sel.value && ur.value.trim() ? read() : null; qty.textContent = r && r.line ? countRanges(r.line.ranges) : '0';
+  };
+  sel.onchange = paint; ur.oninput = paint; ['#cut-form', '#cut-from', '#cut-to'].forEach((k) => { const el = $(k); if (el) el.oninput = el.onchange = paint; });
+  ur.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#cut-enter').click(); } };
+  paint();
+  const cur = () => { const r = cutoffOf(f, exam.id); return { examId: exam.id, officerId: o.id, lines: r ? [...(r.lines || [])] : [] }; };
+  $('#cut-enter').onclick = async () => {
+    const r = read(); if (r.error) return bad(r.error);
+    const rec = cur();
+    // The same numbers cannot be on hand twice.
+    const key = (l) => (l.bookletId || `${l.form}|${l.from}|${l.to}`);
+    const clash = rec.lines.find((l) => key(l) === key(r.line) && (r.line.ns || l.ranges.some(([a, z]) => r.line.ranges.some(([x, y]) => x <= z && a <= y)) || (!l.ranges.length && !r.line.ranges.length)));
+    if (clash) return bad('This booklet is already entered with some of these numbers. Remove that line first to change it.');
+    rec.lines.push({ id: newId('cut'), ...r.line });
+    await store.save('cer_cutoff', exam.id, rec, by(refs));
+    toast('Saved.', 'ok');
+    setTimeout(() => { const s2 = $('#cut-bk'); if (s2) s2.focus(); }, 50);
+  };
+  $$('[data-rmcut]').forEach((b) => { b.onclick = async () => {
+    const rec = cur(); rec.lines = rec.lines.filter((l) => l.id !== b.dataset.rmcut);
+    await store.save('cer_cutoff', exam.id, rec, by(refs)); toast('Removed.', 'ok');
+  }; });
 }

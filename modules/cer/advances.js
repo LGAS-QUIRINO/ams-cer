@@ -31,7 +31,7 @@ function figures(advs, liqs) {
       const mine = liqs.filter((l) => l.advanceId === a.id);
       const liq = r2(mine.reduce((n, l) => n + (+l.amount || 0), 0));
       const bal = r2((+a.amount || 0) - liq);
-      const st = bal < -0.004 ? ['p-flag', 'Over-liquidated'] : bal <= 0.004 ? ['p-done', 'Fully liquidated'] : liq > 0 ? ['p-part', 'Partly liquidated'] : ['p-stock', 'Not yet liquidated'];
+      const st = bal < -0.004 ? ['p-stock', 'Over-liquidated'] : bal <= 0.004 ? ['p-done', 'Fully liquidated'] : liq > 0 ? ['p-part', 'Partly liquidated'] : ['p-stock', 'Not yet liquidated'];
       return { ...a, liq, bal, st, n: mine.length };
     });
   return list;
@@ -107,7 +107,7 @@ export async function advancesView(ctx) {
         <button class="btn primary" type="button" id="lq-enter">Enter</button></div>` : '<div class="cd-info">Encode the cash advance first, then its liquidations.</div>') : ''}
     ${lqRows.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">LR No. / Reference</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">For Check No.</th><th scope="col" class="r"></th></tr></thead>
       <tbody>${lqRows.map((l) => { const a = list.find((x) => x.id === l.advanceId); return `<tr><td>${esc(fmtDate(l.date))}</td><td class="mono">${esc(l.ref || '')}</td><td>${esc(l.particulars || '')}</td><td class="r">${money(l.amount)}</td>
-        <td class="mono">${a ? (a.rest ? 'Beginning balance' : esc(a.checkNo) + (a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : '')) : '<span class="pill p-flag">No check</span>'}${a && a.bal < -0.004 ? ' <span class="pill p-flag">Over-liquidated</span>' : ''}</td><td class="r">${enc ? `<button class="btn sm" type="button" data-elq="${esc(l.id)}" aria-label="Edit liquidation ${esc(l.ref || '')}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
+        <td class="mono">${a ? (a.rest ? 'Beginning balance' : esc(a.checkNo) + (a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : '')) : '<span class="dim">—</span>'}</td><td class="r">${enc ? `<button class="btn sm" type="button" data-elq="${esc(l.id)}" aria-label="Edit liquidation ${esc(l.ref || '')}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
       <tfoot><tr class="cd-foot"><td colspan="3">Total</td><td class="r">${money(totLq)}</td><td></td><td></td></tr></tfoot></table></div>`
       : '<div class="empty"><b>No liquidation encoded yet.</b></div>'}
     ${begChecks.length ? '<p class="af-note">Checks tagged Beginning were unliquidated as of the last cash exam; their amount is what was still unliquidated then. They are entered in Audit Setup, Beginning Balances.</p>' : ''}<p class="af-note">For Check No. starts on the oldest open cash advance; pick another when the LR names it. A liquidation larger than what is left on its check is flagged. A refund is entered here with its OR No. as the reference.</p>`;

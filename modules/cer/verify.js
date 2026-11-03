@@ -4,15 +4,17 @@
 //                                   Cash Advance): balance last exam + debits − credits = balance; inventory (Cash Count); shortage / (overage).
 //                                   By Month: the same, month by month (Annex C / D).
 //   2. Reconciliation with the officer's books (Annex E – G): cashbook balance and unrecorded items, typed.
-//   3. Findings: gathered from every screen; the auditor decides each one (Cleared, Noted, For AOM) with remarks.
+//   3. Findings: every flag of the examination is here only (the other screens just record). Shown once the auditor ticks
+//      "Encoding complete" for the officer (until then a progress line); the auditor decides each one (Cleared, Noted, For AOM).
 //
 // Records:
 //   cer_verify  id = examId  { examId, recon{ <column>: { cashbook, unrecBeg, unrecDebit, unrecCredit } },
-//                              decisions{ <finding key>: { decision, remarks } }, ready, readyBy, readyAt }
+//                              decisions{ <finding key>: { decision, remarks } }, complete, completeBy, completeAt, ready, readyBy, readyAt }
 import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
-import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, bondChecks } from './cer.js';
-import { loadForms, unusedFormsOf, skippedOf, FORM_SHORT, rangesText, exportXlsx } from './forms.js';
+import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
+import { bankFindings } from './banks.js';
+import { loadForms, cutoffFindings, exportXlsx } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, repName } from './collections.js';
 import { booksOf, compute } from './count.js';
 
@@ -110,8 +112,38 @@ export async function verifyView(ctx) {
   const unrep = Object.values(fig.chains).map((c) => c.pend).filter((g) => g.nOrs);
   unrep.forEach((g) => add(`nyr|${g.id}`, 'Collections', `${g.nOrs} OR${g.nOrs > 1 ? 's' : ''} (₱${money(g.orsTotal)}) not yet in a submitted ${g.kind}, ${g.fund}.`, '#/cer/collections'));
   f.ors.filter((x) => x.officerId === o.id && x.date > to).slice(0, 1).forEach(() => add('afterct', 'Collections', `${f.ors.filter((x) => x.officerId === o.id && x.date > to).length} OR(s) dated after the cash count.`, '#/cer/collections'));
-  f.booklets.filter((b) => b.officerId === o.id && b.status === 'issued').forEach((b) => { const sk = skippedOf(b); if (sk.length) add(`skip|${b.id}|${rangesText(sk)}`, 'Accountable Forms', `${FORM_SHORT[b.form] || b.form} ${rangesText(sk)} skipped between used numbers (booklet ${b.from} – ${b.to}).`, '#/cer/forms'); });
-  unusedFormsOf(f, o.id, exam, to).forEach((x) => { if (x.status[1] === 'Not seen' || x.status[1] === 'For checking' || x.status[1] === 'Not yet checked') add(`pc|${x.id}|${x.status[1]}`, 'Accountable Forms', `${x.name} ${x.ns ? "(no serial)" : x.from + " – " + x.to}: Physical Check ${x.status[1].toLowerCase()}.`, '#/cer/forms'); });
+  cutoffFindings(f, o, exam, from, to).forEach((x) => add(`af|${x.key}`, 'Accountable Forms', x.text, x.key === 'nocut' || x.key.startsWith('np|') || x.key.startsWith('nir|') ? `#/cer/count?a=${audit.id}&e=${exam.id}` : '#/cer/forms'));
+  // Late deposits: collections deposited in date order (first in, first out) against the deadline of the officer's rule.
+  const hol = await holidaysOf(refs, audit.lguId);
+  const brgy = lgu && lgu.data.kind === 'barangay';
+  const rule = brgy ? 'brgy' : exam.depositRule === 'weekly' ? 'weekly' : 'next';
+  const dueOf = (d) => (rule === 'brgy' ? addBankingDays(d, 5, hol) : rule === 'next' ? addBankingDays(d, 1, hol) : (() => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + 7); return x.toISOString().slice(0, 10); })());
+  const ruleText = rule === 'brgy' ? 'within 5 banking days (Barangay Treasurer)' : rule === 'next' ? 'not later than the next banking day' : 'at least once a week, or the next banking day once collections reach ₱10,000';
+  Object.values(fig.chains).filter((c) => c.kind !== 'SCR').forEach((c) => {
+    const gs = [...c.figs, c.pend];
+    const coll = {}; const put = (d, a) => { if (inScope(d) && a) coll[d] = r2((coll[d] || 0) + a); };
+    gs.forEach((g) => { (g.ors || []).filter((x) => x.status !== 'cancelled').forEach((x) => put(x.date, +x.amount || 0)); (g.rec?.remittances || []).forEach((m) => put(m.date, +m.amount || 0)); });
+    const deps = {}; gs.forEach((g) => (g.rec?.deposits || []).filter((d) => inScope(d.date)).forEach((d) => { deps[d.date] = r2((deps[d.date] || 0) + (+d.amount || 0)); }));
+    const queue = []; const begAmt = r2(+(gs[0]?.beg) || 0);
+    if (begAmt > 0.004 && from) queue.push({ date: from, amt: begAmt, due: from, beg: true });
+    const late = [];
+    const dates = [...new Set([...Object.keys(coll), ...Object.keys(deps)])].sort();
+    dates.forEach((d) => {
+      if (coll[d]) queue.push({ date: d, amt: coll[d], due: dueOf(d) });
+      let dep = deps[d] || 0;
+      while (dep > 0.004 && queue.length) { const q0 = queue[0]; const take = Math.min(q0.amt, dep); if (d > q0.due) late.push({ ...q0, amt: r2(take), dep: d }); q0.amt = r2(q0.amt - take); dep = r2(dep - take); if (q0.amt <= 0.004) queue.shift(); }
+      if (rule === 'weekly' && queue.reduce((n, q1) => n + q1.amt, 0) >= 10000) { const nb = addBankingDays(d, 1, hol); queue.forEach((q1) => { if (nb < q1.due) q1.due = nb; }); }
+    });
+    queue.filter((q1) => q1.due < to && q1.amt > 0.004).forEach((q1) => late.push({ ...q1, dep: '' }));
+    // One finding per deposit (and one for what is still undeposited at the cut-off), listing the collection dates it covered late.
+    const byDep = {}; late.forEach((x) => (byDep[x.dep] = byDep[x.dep] || []).push(x));
+    Object.entries(byDep).forEach(([dep, xs]) => {
+      const amt = r2(xs.reduce((n, x) => n + x.amt, 0));
+      const dates = xs.map((x) => (x.beg ? 'the balance at the last cash exam' : fmtDate(x.date)));
+      const span = dates.length > 3 ? `${dates[0]} to ${dates[dates.length - 1]} (${dates.length} days)` : dates.join(', ');
+      add(`latedep|${c.kind}|${c.fund}|${dep}|${xs.length}|${amt}`, 'Collections', `${dep ? `Deposit of ${fmtDate(dep)}` : 'Undeposited at the cut-off'} (${c.fund}): ₱${money(amt)} of collections of ${span} ${dep ? 'deposited late' : 'past the deadline'}; earliest due ${fmtDate(xs.map((x) => x.due).sort()[0])}. Rule: ${ruleText}.`, '#/cer/collections');
+    });
+  });
   const mineAdv = advs.filter((a) => a.officerId === o.id && (!a.beg || a.begExamId === exam.id));
   mineAdv.forEach((a) => {
     const l = r2(liqs.filter((x) => x.advanceId === a.id && x.date <= to).reduce((n, x) => n + (+x.amount || 0), 0)); const left = r2((+a.amount || 0) - l);
@@ -121,11 +153,28 @@ export async function verifyView(ctx) {
   const myReports = new Set(f.reports.filter((r) => r.officerId === o.id).map((r) => r.id));
   bank0.map(flat).filter((r) => r.auditId === audit.id).forEach((rec) => Object.entries(rec.found || {}).forEach(([k, bd]) => {
     const [t, rid, d, ref, amt] = k.split('|');
-    if (t === 'dep' && myReports.has(rid) && d && bd && days(d, bd) > 0) add(`late|${k}`, 'Deposits', `${ref || 'Deposit'} of ${fmtDate(d)} (₱${money(+amt)}) reached the bank ${days(d, bd)} day${days(d, bd) > 1 ? 's' : ''} later, on ${fmtDate(bd)}.`, '#/cer/banks');
+    if (t === 'dep' && myReports.has(rid) && d && bd && days(d, bd) > 0) add(`late|${k}`, 'Bank Statements', `${ref || 'Deposit'} of ${fmtDate(d)} (₱${money(+amt)}) reached the bank ${days(d, bd)} day${days(d, bd) > 1 ? 's' : ''} later, on ${fmtDate(bd)}.`, '#/cer/banks');
   }));
   bondChecks({ bond: exam.bond || {}, countDate: to }).forEach((w, i) => add(`bond|${i}`, 'Audit Setup', w.text.replace(/<[^>]+>/g, ''), '#/cer/setup?a=' + audit.id));
+  const maxCash = num(exam.bond?.maxCash);
+  if (maxCash && T('balance') > maxCash + 0.004) add('maxcash', 'Cash Count', `Accountability at the count, ₱${money(T('balance'))}, is more than the maximum cash accountability of ₱${money(maxCash)}.`, '#/cer/count');
+  // Beginning checks of a cash advance balance more than the lump sum typed in Audit Setup.
+  ['ca', 'sdo', 'pcf'].forEach((k) => { const b = exam.balances?.[k]; if (!b) return; const lump = +b.lump || 0; const s = r2(advs.filter((a) => a.beg && a.begExamId === exam.id && (a.begKey || 'ca') === k).reduce((n, a) => n + (+a.amount || 0), 0));
+    if (lump && s > lump + 0.004) add(`beglump|${k}`, 'Audit Setup', `Beginning checks of the cash advance total ₱${money(s)}, more than the ₱${money(lump)} typed as the balance at the last cash exam.`, '#/cer/setup?a=' + audit.id); });
+  (await bankFindings(audit)).forEach((x) => add(`bank|${x.key}`, 'Bank Statements', x.text, '#/cer/banks?a=' + audit.id));
+  // Late deposits per the bank (deposit slip date vs the date the bank credited it) stay under Bank Statements.
 
   const ver = ver0.map(flat).find((v) => v.id === exam.id) || { recon: {}, decisions: {} };
+  // Progress of the encoding, shown until the auditor ticks "Encoding complete".
+  const myOrs = f.ors.filter((x) => x.officerId === o.id && inScope(x.date));
+  const lastOr = myOrs.map((x) => x.date).sort().pop();
+  const nRep = f.reports.filter((r) => r.officerId === o.id && !r.pending).length;
+  const myAdv = advs.filter((a) => a.officerId === o.id && !a.beg && inScope(a.date)), myLiq = liqs.filter((l) => l.officerId === o.id && inScope(l.date));
+  const nCut = (f.cutoffs || []).find((c) => c.id === exam.id)?.lines?.length || 0;
+  const progress = [`Cut-off: ${nCut ? `${nCut} line${nCut > 1 ? 's' : ''} of remaining forms` : 'not entered'}${count ? ', cash counted' : ', no cash count'}`,
+    `Collections & Deposits: ${myOrs.length} OR${myOrs.length === 1 ? '' : 's'}${lastOr ? ` up to ${fmtDate(lastOr)}` : ''} · ${nRep} report${nRep === 1 ? '' : 's'}`,
+    `Cash Advances: ${myAdv.length} check${myAdv.length === 1 ? '' : 's'} · ${myLiq.length} liquidation${myLiq.length === 1 ? '' : 's'}`];
+  const complete = !!ver.complete;
   const dec = (k) => ver.decisions?.[k] || { decision: 'To decide', remarks: '' };
   const decided = findings.filter((x) => dec(x.key).decision !== 'To decide').length;
   const auditor = isAuditor(refs);
@@ -187,7 +236,7 @@ export async function verifyView(ctx) {
       <div class="stat"><span>Balance of Accountability</span><b>₱ ${fmtAmt(T('balance'))}</b><small>per audit, as of the count</small></div>
       <div class="stat"><span>Inventory Counted</span><b>${inv ? '₱ ' + money(T('inv')) : '—'}</b><small>${inv ? 'cash + allowed cash items' : 'no cash count saved yet'}</small></div>
       <div class="stat"><span>Shortage / (Overage)</span><b class="${totSh !== null && Math.abs(totSh) > 0.004 ? 'warn' : ''}" style="${totSh !== null && Math.abs(totSh) <= 0.004 ? 'color:var(--ok)' : ''}">${totSh === null ? '—' : '₱ ' + fmtAmt(totSh)}</b><small>${totSh === null ? 'after the cash count' : Math.abs(totSh) <= 0.004 ? 'no shortage or overage' : totSh > 0 ? 'shortage' : 'overage'}</small></div>
-      <div class="stat"><span>Findings</span><b class="${findings.length - decided ? 'warn' : ''}">${findings.length}</b><small>${decided} decided · ${findings.length - decided} to decide</small></div>
+      <div class="stat"><span>Findings</span><b class="${complete && findings.length - decided ? 'warn' : ''}">${complete ? findings.length : '—'}</b><small>${complete ? `${decided} decided · ${findings.length - decided} to decide` : 'shown once encoding is complete'}</small></div>
     </div>
     <section class="panel" aria-labelledby="vf-h1"><div class="cc-head"><span class="cd-num">1</span><h2 id="vf-h1">Statement of Accountability</h2><span class="cd-sub">GF 74-A, part D · computed</span>
       <div class="seg" role="group" aria-label="View" style="margin-left:auto"><a href="#" data-view="sum" class="${UI.view === 'sum' ? 'on' : ''}" aria-pressed="${UI.view === 'sum'}">Summary</a><a href="#" data-view="month" class="${UI.view === 'month' ? 'on' : ''}" aria-pressed="${UI.view === 'month'}">By Month (Annex C / D)</a></div></div>
@@ -195,10 +244,12 @@ export async function verifyView(ctx) {
     <section class="panel" aria-labelledby="vf-h2"><div class="cc-head"><span class="cd-num">2</span><h2 id="vf-h2">Reconciliation with the Officer's Books</h2><span class="cd-sub">Annex E – G · type from the cashbook</span></div>
       <div class="cd-body">${recon}</div></section>
     <section class="panel" aria-labelledby="vf-h3"><div class="cc-head"><span class="cd-num">3</span><h2 id="vf-h3">Findings</h2><span class="cd-sub">found by the app · decided by the auditor</span>
-      <label class="sr-only" for="vf-show">Show</label><select class="input af-sm" id="vf-show" style="margin-left:auto;width:auto"><option value="" ${!show ? 'selected' : ''}>All findings (${findings.length})</option><option value="todo" ${show === 'todo' ? 'selected' : ''}>To decide (${findings.length - decided})</option><option value="aom" ${show === 'aom' ? 'selected' : ''}>For AOM</option></select></div>
-      <div class="cd-body">${findingsHtml}<p class="af-note">Nothing is concluded by the app; the auditor decides each finding. Click the area to open the screen it comes from.</p></div></section>
-    <div class="panel vf-status"><div><b>Status of this examination</b><span>${ver.ready ? `Ready for Reports since ${esc(fmtDate(String(ver.readyAt || '').slice(0, 10)))}${ver.readyBy ? ' · ' + esc(ver.readyBy) : ''}.` : findings.length - decided ? `${findings.length - decided} finding${findings.length - decided > 1 ? 's' : ''} still to decide. Mark it ready once every finding is decided.` : 'Every finding is decided.'}</span></div>
-      <div class="btn-row"><button class="btn" type="button" id="vf-xls">Export to Excel</button>${auditor ? (ver.ready ? '<button class="btn" type="button" id="vf-unready">Reopen</button>' : '<button class="btn primary" type="button" id="vf-ready">Mark Ready for Reports</button>') : ''}</div></div>`;
+      <label class="vf-complete" style="margin-left:auto"><input type="checkbox" id="vf-complete" ${complete ? 'checked' : ''} ${auditor ? '' : 'disabled'}> Encoding complete</label>
+      ${complete ? `<label class="sr-only" for="vf-show">Show</label><select class="input af-sm" id="vf-show" style="width:auto"><option value="" ${!show ? 'selected' : ''}>All findings (${findings.length})</option><option value="todo" ${show === 'todo' ? 'selected' : ''}>To decide (${findings.length - decided})</option><option value="aom" ${show === 'aom' ? 'selected' : ''}>For AOM</option></select>` : ''}</div>
+      <div class="cd-body">${complete ? `${findingsHtml}<p class="af-note">Nothing is concluded by the app; the auditor decides each finding. Click the area to open the screen it comes from. Untick Encoding complete to go back to encoding.</p>`
+        : `<div class="vf-progress"><b>Encoding in progress</b><ul>${progress.map((t) => `<li>${esc(t)}</li>`).join('')}</ul><p class="af-note">The findings (missing ORs, late deposits, bank items, shortage and the rest) show once every record of this officer is encoded. Tick <b>Encoding complete</b> then.</p></div>`}</div></section>
+    <div class="panel vf-status"><div><b>Status of this examination</b><span>${!complete ? 'Encoding in progress. Tick Encoding complete in Findings when every record is encoded.' : ver.ready ? `Ready for Reports since ${esc(fmtDate(String(ver.readyAt || '').slice(0, 10)))}${ver.readyBy ? ' · ' + esc(ver.readyBy) : ''}.` : findings.length - decided ? `${findings.length - decided} finding${findings.length - decided > 1 ? 's' : ''} still to decide. Mark it ready once every finding is decided.` : 'Every finding is decided.'}</span></div>
+      <div class="btn-row"><button class="btn" type="button" id="vf-xls">Export to Excel</button>${auditor && complete ? (ver.ready ? '<button class="btn" type="button" id="vf-unready">Reopen</button>' : '<button class="btn primary" type="button" id="vf-ready">Mark Ready for Reports</button>') : ''}</div></div>`;
 
   return { crumb, body, wire: () => { wireTop(); wireVerify({ refs, rerender: ctx.rerender, exam, audit, o, st, books, findings, ver, dec, auditor, months }); } };
 }
@@ -206,7 +257,7 @@ export async function verifyView(ctx) {
 function wireVerify(c) {
   const { refs, exam, audit, o, st, books, findings, ver, dec, auditor } = c;
   $$('[data-view]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); UI.view = a.dataset.view; c.rerender(); }; });
-  $('#vf-show').onchange = (e) => go({ show: e.target.value });
+  if ($('#vf-show')) $('#vf-show').onchange = (e) => go({ show: e.target.value });
   const paintRc = () => books.forEach((b) => {
     const g = (f2) => { const el = $(`[data-rc="${b.key}"][data-f="${f2}"]`); return el ? (num(el.value) || 0) : 0; };
     const has = $(`[data-rc="${b.key}"][data-f="cashbook"]`)?.value.trim();
@@ -237,6 +288,9 @@ function wireVerify(c) {
     saveVer({ ready: true, readyBy: refs.me?.data.name || by(refs), readyAt: new Date().toISOString() }, 'Marked ready for Reports.');
   };
   const ur = $('#vf-unready'); if (ur) ur.onclick = () => saveVer({ ready: false }, 'Reopened.');
+  const cp = $('#vf-complete'); if (cp && auditor) cp.onchange = () => (cp.checked
+    ? saveVer({ complete: true, completeBy: refs.me?.data.name || by(refs), completeAt: new Date().toISOString() }, 'Encoding marked complete. The findings are shown.')
+    : saveVer({ complete: false, ready: false }, 'Back to encoding. The findings are hidden until encoding is complete.'));
   $('#vf-xls').onclick = () => exportXlsx(`Verification ${o.name} ${audit.countDate}.xlsx`, 'Verification', [
     ...st.map((x) => ({ Part: 'Statement of Accountability', Item: x.label, 'Balance, Last Exam': x.beg, Debits: x.debit, Credits: x.credit, Balance: x.balance, Inventory: x.inv ?? '', 'Shortage/(Overage)': x.sh ?? '' })),
     {}, ...findings.map((x) => ({ Part: 'Finding', Item: x.area, 'Balance, Last Exam': x.text, Debits: dec(x.key).decision, Credits: dec(x.key).remarks }))]);

@@ -17,7 +17,7 @@
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
-import { exportXlsx } from './forms.js';
+import { exportXlsx, lastChecksOf } from './forms.js';
 import { repName } from './collections.js';
 
 const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
@@ -36,7 +36,7 @@ const SOURCES = ['Soft copy (imported)', 'PDF', 'Printed', 'Bank confirmation'];
 
 export async function banksView(ctx) {
   const { refs, q } = ctx;
-  const [audits0, settings0, reports0, advs0, recs0, officers0, exams0, books0, fchk0] = await Promise.all(['cer_audits', 'cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_officers', 'cer_exams', 'cer_booklets', 'cer_formcheck'].map((t) => store.list(t)));
+  const [audits0, settings0, reports0, advs0, recs0, officers0, exams0, books0, cut0] = await Promise.all(['cer_audits', 'cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_officers', 'cer_exams', 'cer_booklets', 'cer_cutoff'].map((t) => store.list(t)));
   const audits = audits0.map(flat).filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   const settings = Object.fromEntries(settings0.map((s) => [s.id, s.data]));
   const crumb = 'Bank Statements';
@@ -84,7 +84,7 @@ export async function banksView(ctx) {
   // Cut-off (Cash Count): the last check written in each checkbook at the count. A check numbered after it, in the same checkbook,
   // was issued after the cut-off: not an outstanding check of this examination.
   const examIds = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => e.id));
-  const cuts = fchk0.map(flat).filter((c) => examIds.has(c.examId) && c.lastCheck && c.lastCheck.no).map((c) => { const bk = books0.map(flat).find((b) => b.id === c.bookletId); return bk ? { from: +bk.from, to: +bk.to, last: +chqKey(c.lastCheck.no) } : null; }).filter(Boolean);
+  const cuts = lastChecksOf({ cutoffs: cut0.map(flat), booklets: books0.map(flat) }, examIds);
   const afterCut = (x) => { if (x.kind !== 'chk') return false; const n = +chqKey(x.ref); return !!n && cuts.some((c) => n >= c.from && n <= c.to && n > c.last); };
   list.forEach((x) => { x.after = afterCut(x) && !rec.found[x.key]; });
   const result = (x) => {
@@ -134,7 +134,7 @@ export async function banksView(ctx) {
   const numCol = (h) => /debit|credit|balance|amount|withdraw|deposit/i.test(h);
   const inBooks = (l) => { const x = byLine[l.i]; if (x) return `<span class="pill p-done">${x.kind === 'dep' ? 'Deposit' : 'Check'} ${esc(x.ref)}</span>`;
     if (!rec.lineOf && l.matched) return '<span class="pill p-done">Matched</span>';
-    return `<span class="pill p-flag">Not in the books</span>${l.note ? `<div class="bk-note">⚠ ${esc(l.note)}</div>` : ''}`; };
+    return '<span class="pill p-stock">Not in the books</span>'; };
   const shown = lns.filter((l) => l.date <= asOf).filter((l) => !UI.only || unmatched.includes(l));
   const stmtTbl = imported ? `<div class="bk-tools"><span class="dim">${lns.length} line${lns.length === 1 ? '' : 's'} from ${esc(fmtDate(rec.covFrom ? nextDay(rec.covFrom) : lns[0].date))} to ${esc(fmtDate(rec.covTo || asOf))} · ${lns.length - unmatched.length} found in the books · ${unmatched.length} not in the books</span>
         <label class="cer-chip"><input type="checkbox" id="bk-only" ${UI.only ? 'checked' : ''}> Not in the books only</label></div>
@@ -415,4 +415,42 @@ async function accountsModal(refs, lguId, accounts, funds, enc) {
   const clean = list.filter((x) => x.bank || x.accountNo).map((x) => ({ id: x.id || newId('ba'), bank: String(x.bank || '').trim(), accountNo: String(x.accountNo || '').trim(), fund: x.fund || funds[0] }));
   await store.save('cer_settings', 'banks|' + lguId, { list: clean }, by(refs));
   toast('Bank accounts saved.', 'ok');
+}
+
+/* ---------- for Verification: the bank accounts of the auditee, as findings ---------- */
+export async function bankFindings(audit) {
+  const [settings0, reports0, advs0, recs0, exams0, books0, cut0] = await Promise.all(['cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_exams', 'cer_booklets', 'cer_cutoff'].map((t) => store.list(t)));
+  const accounts = (settings0.map(flat).find((x) => x.id === 'banks|' + audit.lguId) || {}).list || [];
+  const examIds = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => e.id));
+  const cuts = lastChecksOf({ cutoffs: cut0.map(flat), booklets: books0.map(flat) }, examIds);
+  const out = [], add = (key, text) => out.push({ key, text });
+  const asOf = audit.countDate;
+  accounts.forEach((acct) => {
+    const rec = recs0.map(flat).find((r) => r.id === `${audit.id}|${acct.id}`);
+    const name = acctLabel(acct);
+    if (!rec) { add(`bk0|${acct.id}`, `${name}: no bank statement or reconciliation yet.`); return; }
+    const found = rec.found || {};
+    const items = [];
+    reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => (r.deposits || []).forEach((d) => items.push({ key: `dep|${r.id}|${d.date}|${d.ref}|${d.amount}`, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0 })));
+    advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
+    (rec.otherChecks || []).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0 }));
+    const list = items.filter((x) => x.date && x.date <= asOf);
+    const after = (x) => { const n = +chqKey(x.ref); return x.kind === 'chk' && !!n && cuts.some((c) => n >= c.from && n <= c.to && n > c.last); };
+    const dits = list.filter((x) => x.kind === 'dep' && !found[x.key]), ocs = list.filter((x) => x.kind === 'chk' && !found[x.key] && !after(x));
+    const dit = r2(dits.reduce((n, x) => n + x.amount, 0)), oc = r2(ocs.reduce((n, x) => n + x.amount, 0));
+    const linked = new Set(Object.entries(rec.lineOf || {}).filter(([k]) => found[k]).map(([, i]) => i));
+    const un = (rec.lines || []).filter((l) => !(rec.lineOf ? linked.has(l.i) : l.matched) && !l.added && l.date <= asOf);
+    const sum = (a, g) => r2(a.reduce((n, x) => n + (+g(x) || 0), 0));
+    const bi = (rec.bankItems || []).filter((b) => !b.date || b.date <= asOf);
+    const unCr = sum(un, (l) => l.credit), unDr = sum(un, (l) => l.debit);
+    const credits = r2(unCr + sum(bi.filter((b) => b.type === 'credit'), (b) => b.amount)), debits = r2(unDr + sum(bi.filter((b) => b.type === 'debit'), (b) => b.amount));
+    (rec.lines || []).filter((l) => l.note && l.date <= asOf).forEach((l) => add(`bkamt|${acct.id}|${l.i}`, `${name}: cheque ${l.chq} of ${fmtDate(l.date)} is ₱${money(l.debit)} in the bank; ${l.note.replace(/^Check No\. \S+ is /, 'the books show ')}.`));
+    if (un.length) add(`bkun|${acct.id}|${un.length}|${unCr}|${unDr}`, `${name}: ${un.length} bank line${un.length > 1 ? 's' : ''} not in the books (credits ₱${money(unCr)}, debits ₱${money(unDr)}). Interest and service charges are expected; look into the rest (Bank Statements, tab 1, "Not in the books only").`);
+    if (dits.length) add(`bkdit|${acct.id}|${dits.length}|${dit}`, `${name}: ${dits.length} deposit${dits.length > 1 ? 's' : ''} in transit, ₱${money(dit)}: ${dits.slice(0, 6).map((x) => `${x.ref || 'deposit'} ${fmtDate(x.date)}`).join(', ')}${dits.length > 6 ? '…' : ''}.`);
+    if (ocs.length) add(`bkoc|${acct.id}|${ocs.length}|${oc}`, `${name}: ${ocs.length} outstanding check${ocs.length > 1 ? 's' : ''}, ₱${money(oc)}: ${ocs.slice(0, 6).map((x) => x.ref).join(', ')}${ocs.length > 6 ? '…' : ''}.`);
+    const hasEnd = rec.ending !== null && rec.ending !== undefined && rec.ending !== '', hasBook = rec.book !== null && rec.book !== undefined && rec.book !== '';
+    if (!hasEnd || !hasBook) add(`bkrc0|${acct.id}`, `${name}: bank reconciliation not complete (${!hasEnd ? 'no bank balance' : 'no cashbook balance'}).`);
+    else { const d = r2((+rec.ending + dit - oc) - (+rec.book + credits - debits)); if (Math.abs(d) >= 0.005) add(`bkrc|${acct.id}|${d}`, `${name}: adjusted bank and adjusted book balances differ by ₱${money(d)}.`); }
+  });
+  return out;
 }

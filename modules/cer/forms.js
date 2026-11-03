@@ -100,9 +100,9 @@ const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin
 /* ---------- data ---------- */
 export async function loadForms() {
   const cer = await loadCer();
-  const [booklets, checks, raaf, settings, ors] = await Promise.all([store.list('cer_booklets'), store.list('cer_formcheck'), store.list('cer_raaf'), store.list('cer_settings'), store.list('cer_ors')]);
+  const [booklets, checks, raaf, settings, ors, cutoffs] = await Promise.all([store.list('cer_booklets'), store.list('cer_formcheck'), store.list('cer_raaf'), store.list('cer_settings'), store.list('cer_ors'), store.list('cer_cutoff')]);
   const flat = (r) => ({ id: r.id, ...r.data });
-  const out = { ...cer, booklets: booklets.map(flat), checks: checks.map(flat), raaf: raaf.map(flat), settings: Object.fromEntries(settings.map((s) => [s.id, s.data])), ors: ors.map(flat) };
+  const out = { ...cer, booklets: booklets.map(flat), checks: checks.map(flat), cutoffs: cutoffs.map(flat), raaf: raaf.map(flat), settings: Object.fromEntries(settings.map((s) => [s.id, s.data])), ors: ors.map(flat) };
   // Numbers encoded in Collections & Deposits (issued or cancelled) are used numbers of their booklet.
   const byBk = {}; out.ors.forEach((o) => { if (o.bookletId) (byBk[o.bookletId] = byBk[o.bookletId] || []).push({ n: o.serial, d: o.date }); });
   out.booklets.forEach((b) => { b.orNos = byBk[b.id] || []; });
@@ -200,7 +200,7 @@ const issuedText = (b, short) => (b.issuedAsOf ? `<span class="dim af-nw">Not ye
 const rangeText = (a, z) => `${a} – ${z}`;
 
 // Out-of-sequence: an officer used a later booklet of a form while an earlier one still has unused numbers.
-function outOfSequence(f) {
+export function outOfSequence(f) {
   const out = new Set();
   const byKey = {};
   f.booklets.filter(held).forEach((b) => { const k = b.officerId + '|' + b.form; (byKey[k] = byKey[k] || []).push(b); });
@@ -282,7 +282,7 @@ function registerView(ctx, f, lguId) {
       <div class="stat"><span>In Stock · Custodian</span><b>${stock.length}</b><small>booklets · ${stock.reduce((n, b) => n + b.qty, 0)} pcs</small></div>
       <div class="stat"><span>With Accountable Officers</span><b style="color:#1d4fb8">${withAo.length}</b><small>booklets · ${withAo.reduce((n, b) => n + unusedOf(b), 0)} unused pcs</small></div>
       <div class="stat"><span>Exhausted</span><b style="color:var(--ok)">${done.length}</b><small>every number used or cancelled</small></div>
-      <div class="stat"><span>For Checking</span><b class="${forCheck.size ? 'warn' : 'dim'}">${forCheck.size}</b><small>out of sequence, skipped numbers</small></div>
+      <div class="stat"><span>Longest with an AO</span><b>${longest ? `${longest.issuedAsOf ? '≥ ' : ''}${dAo(longest)} days` : '—'}</b><small>${longest ? `${esc(f.officers.find((o) => o.id === longest.officerId)?.name || '')}, ${FORM_SHORT[longest.form]}` : 'no booklet with an AO'}</small></div>
     </div>
 
     ${enc ? encodeHtml(refs, Object.assign(offs, { lguId, f }), q) : ''}
@@ -299,8 +299,7 @@ function registerView(ctx, f, lguId) {
         <thead><tr><th scope="col">Form</th><th scope="col">Serial Range</th><th scope="col" class="r">Qty</th><th scope="col">Received</th><th scope="col">Custody</th><th scope="col">Issued</th><th scope="col" class="r">Days with AO</th><th scope="col" class="r">Used</th><th scope="col">Unused</th><th scope="col">Status</th></tr></thead>
         <tbody>${rows.map((b) => {
           const o = f.officers.find((x) => x.id === b.officerId); const st = statusOf(b); const d = dAo(b); const sk = skippedOf(b);
-          const flagSeq = oos.has(b.id);
-          return `<tr class="${flagSeq ? 'flag' : ''}" data-bk="${esc(b.id)}" tabindex="0">
+          return `<tr data-bk="${esc(b.id)}" tabindex="0">
             <td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td class="r">${b.qty}</td>
             <td>${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${b.receivedDirect ? `<b class="af-direct">Received directly</b> · ` : ''}${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'import' ? 'Imported from Excel' : ''))}</small>${begTag(b)}</td>
             <td>${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small>${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock<small>Custodian (${custOf(lgu)})</small>`}</td>
@@ -308,25 +307,10 @@ function registerView(ctx, f, lguId) {
             <td class="r">${d === null ? '<span class="dim">—</span>' : `<b>${daysText(b, d)}</b><small class="dim af-nw">${aoCutoff(f, b.officerId) ? 'to ' + esc(fmtDate(cutOf(b))) : 'as of today'}</small>`}</td>
             <td class="r">${usedOf(b)}</td>
             <td class="mono">${unusedCell(b)}</td>
-            <td><span class="pill ${st.cls}">${st.label}</span>${flagSeq ? '<br><span class="pill p-flag">Out of sequence</span>' : ''}${sk.length ? '<br><span class="pill p-flag">Skipped numbers</span>' : ''}</td></tr>`;
+            <td><span class="pill ${st.cls}">${st.label}</span></td></tr>`;
         }).join('')}</tbody></table></div>
         <p class="af-note">Click a booklet to see its history and to Issue, Transfer, Return or report it Lost.</p>`
       : `<div class="empty"><b>${mine.length ? 'No booklet matches these filters.' : 'No booklets in this register yet.'}</b>${mine.length ? '' : 'Encode the custodian\'s booklets with <b>Receive</b>, or the forms already out with <b>Starting Inventory</b>.'}</div>`}
-    </section>
-
-    <section class="panel" aria-labelledby="res-h">
-      <div class="panel-head"><h2 id="res-h">Forms Control Results</h2></div>
-      <div class="af-res">
-        ${result(oos.size ? 'warn' : 'ok', oos.size ? `Out-of-sequence use · ${oos.size}` : 'No out-of-sequence use',
-          oos.size ? [...oos].map((id) => { const b = mine.find((x) => x.id === id); const o = f.officers.find((x) => x.id === b.officerId); return `${esc(o ? o.name : 'An officer')} used ${FORM_SHORT[b.form]} ${serialText(b)} while an earlier booklet still has unused numbers.`; }).join('<br>') : 'Each officer uses the earlier booklet of a form before starting the next.')}
-        ${result(skipped.length ? 'warn' : 'ok', skipped.length ? `Skipped numbers between used ORs · ${skipped.reduce((n, b) => n + countRanges(skippedOf(b)), 0)}` : 'No skipped numbers between used ORs',
-          skipped.length ? skipped.map((b) => `${esc(f.officers.find((o) => o.id === b.officerId)?.name || '')}, ${FORM_SHORT[b.form]} ${serialText(b)}: ${rangesText(skippedOf(b))}`).join('<br>') + '<br>Confirm each at the Physical Check: on hand, cancelled, or not on hand.' : 'Unused numbers come after the last number used in each booklet.')}
-        ${result(overlapCount(mine) ? 'warn' : 'ok', overlapCount(mine) ? `Overlapping serial ranges · ${overlapCount(mine)}` : 'No overlapping serial ranges', 'No number may appear in two booklets.')}
-        ${result('info', longest ? `Longest with an AO · ${longest.issuedAsOf ? '≥ ' : ''}${dAo(longest)} days` : 'No booklet with an AO', longest ? `${esc(f.officers.find((o) => o.id === longest.officerId)?.name || '')}, ${FORM_SHORT[longest.form]} ${rangeText(longest.from, longest.to)}, ${longest.issuedAsOf ? 'on hand as of' : 'issued'} ${esc(fmtDate(longest.issuedDate))}.` : 'Issue booklets to the accountable officers to start counting.')}
-        ${result('info', `${withAo.reduce((n, b) => n + unusedOf(b), 0)} unused forms with AOs`, 'To be confirmed in each officer\'s Physical Check at the cash count.')}
-        ${result(wrong.length ? 'warn' : 'ok', wrong.length ? `Receipts used by another officer · ${wrong.length}` : 'No receipt used by another officer',
-          wrong.length ? wrong.slice(0, 12).map((x) => `${esc(f.officers.find((o) => o.id === x.officerId)?.name || '')} encoded ${FORM_SHORT[x.form] || x.form} ${x.serial}, in a booklet ${x.bk.status === 'issued' ? 'issued to ' + esc(f.officers.find((o) => o.id === x.bk.officerId)?.name || 'another officer') : 'not issued to anyone'}.`).join('<br>') + (wrong.length > 12 ? '<br>…' : '') : 'Every receipt encoded in Collections is in a booklet issued to the officer who used it.')}
-      </div>
     </section>`;
   const exportRows = () => rows.map((b) => { const o = f.officers.find((x) => x.id === b.officerId); const d = dAo(b);
     return { Form: FORM_SHORT[b.form] || b.form, 'Series From': b.from, 'Series To': b.to, Qty: b.qty, 'Date Received': fmtDate(b.receivedDate), 'Received From': b.receivedFrom || '',
@@ -511,7 +495,7 @@ async function findSerial(ctx, f, lguId, offs, text) {
     const sk = skippedOf(b).some(([a, z]) => a <= n && n <= z);
     return `<div class="af-find"><b>${esc(FORM_SHORT[b.form] || b.form)} ${n}</b>
       <span>Booklet ${serialText(b)} · ${b.status === 'issued' && o ? `with <b>${esc(o.name)}</b>${o.designation ? ', ' + esc(o.designation) : ''} since ${esc(fmtDate(b.issuedDate))}` : b.status === 'stock' ? `in stock with the custodian (${custOf(refs.lgu[b.lguId])})` : 'lost / destroyed'}${here ? '' : ` · in the register of ${esc(agencyName(refs, refs.lgu[b.lguId]))}`}</span>
-      <span>Number: ${state}${sk ? ' · <b class="warn-t">skipped</b> (unused between used numbers)' : ''}</span>
+      <span>Number: ${state}${sk ? ' · unused, between used numbers' : ''}</span>
       <span class="af-findbtns">${here ? `<button class="btn sm" type="button" data-open="${esc(b.id)}">Open booklet</button>` : `<a class="btn sm" href="#/cer/forms?lgu=${esc(b.lguId)}">Go to that register</a>`}</span></div>`;
   }).join('');
   $$('[data-open]', box).forEach((btn) => { btn.onclick = () => bookletModal(ctx, f, f.booklets.find((b) => b.id === btn.dataset.open), offs); });
@@ -693,7 +677,7 @@ function historyHtml(refs, f, b) {
   return `<ol class="af-hist">${(b.history || []).map((h) => `<li><b>${esc(ACTION[h.action] || h.action)}${h.officerId ? ' · ' + esc(name(h.officerId)) : ''}</b>
       <small>${esc(fmtDate(h.date))}${h.note ? ' · ' + esc(h.note) : ''}${h.by ? ' · by ' + esc(refs.users.find((u) => u.data.email === h.by)?.data.name || h.by) : ''}</small></li>`).join('')}
     ${usedOf(b) && !b.exhaustedDate ? `<li><b>${usedOf(b)} used · unused ${rt(b, rawUnused(b)) || 'none'}</b><small>${b.unusedAtStart || b.usedBefore ? 'as of the last cash exam, from the issuance record' : 'from Collections &amp; Deposits'}</small></li>` : ''}
-    ${skippedOf(b).length ? `<li><b>Skipped numbers · ${rangesText(skippedOf(b))}</b><small>unused numbers below the last one used; confirm at the Physical Check</small></li>` : ''}</ol>`;
+</ol>`;
 }
 async function bookletModal(ctx, f, b, offs) {
   const { refs } = ctx;
@@ -741,7 +725,7 @@ async function bookletModal(ctx, f, b, offs) {
 // A booklet can be deleted (encoded by mistake) only while nothing is recorded against it.
 function whyNoDelete(f, b) {
   if ((b.orNos || []).length) return `This booklet has ${b.orNos.length} receipt${b.orNos.length > 1 ? 's' : ''} encoded in Collections & Deposits. Remove those first, or correct the booklet with Edit.`;
-  if (f.checks.some((c) => c.bookletId === b.id)) return 'This booklet has a Physical Check record from a cash examination. Correct it with Edit instead.';
+  if (f.checks.some((c) => c.bookletId === b.id) || (f.cutoffs || []).some((c) => (c.lines || []).some((l) => l.bookletId === b.id))) return 'This booklet is in the cut-off of a cash examination. Correct it with Edit instead.';
   return '';
 }
 async function deleteBooklet(refs, f, b) {
@@ -755,7 +739,7 @@ async function deleteBooklet(refs, f, b) {
 }
 async function editBooklet(ctx, f, b, offs) {
   const { refs } = ctx;
-  const locked = (b.orNos || []).length || f.checks.some((c) => c.bookletId === b.id);
+  const locked = (b.orNos || []).length || f.checks.some((c) => c.bookletId === b.id) || (f.cutoffs || []).some((c) => (c.lines || []).some((l) => l.bookletId === b.id));
   const withOff = b.status !== 'stock';
   const partly = Array.isArray(b.unusedAtStart);
 
@@ -869,30 +853,20 @@ function officerView(ctx, f, lguId) {
     .sort((a, b) => b.audit.countDate.localeCompare(a.audit.countDate));
   const exam = exams.find((e) => e.id === q.get('exam')) || exams[0] || null;
   const asOf = exam ? exam.audit.countDate : today();   // days in hand are counted up to the cash count
-  const tab = ['check', 'hand', 'all'].includes(q.get('tab')) ? q.get('tab') : 'check';
+  const tab = ['hand', 'all'].includes(q.get('tab')) ? q.get('tab') : 'hand';
   const longest = inHand.map((b) => daysWithAo(b, asOf)).sort((a, b) => b - a)[0];
-  const checkRows = exam ? cutoffRowsOf(f, o, exam) : [];
-  const chk = (b) => f.checks.find((c) => c.id === exam.id + '|' + b.id) || null;
-  const seen = checkRows.filter((b) => chk(b)?.seen).length;
+  const cutN = exam ? cutoffLines(f, exam.id).length : 0;
   const byForm = {}; inHand.forEach((b) => { byForm[b.form] = (byForm[b.form] || 0) + unusedOf(b); });
   const auditor = isAuditor(refs);
-  const tabs = [['check', 'Physical Check'], ['hand', 'Booklets in Hand'], ['all', 'All Booklets Issued']];
+  const tabs = [['hand', 'Booklets in Hand'], ['all', 'All Booklets Issued']];
   const link = (t) => `#/cer/forms/officer?lgu=${esc(lguId)}&o=${esc(o.id)}${exam ? '&exam=' + esc(exam.id) : ''}&tab=${t}`;
   let tabBody = '';
-  if (tab === 'check') {
-    tabBody = !exam ? '<div class="empty"><b>No cash examination for this officer yet.</b>Set one up in Audit Setup; the Physical Check is done at its cash count.</div>'
-      : `<div class="af-note top">Cash count of ${esc(fmtDate(exam.audit.countDate))}${exams.length > 1 ? ` · <label for="af-exam" class="sr-only">Cash examination</label><select class="input af-sm" id="af-exam">${exams.map((e) => `<option value="${esc(e.id)}" ${e.id === exam.id ? 'selected' : ''}>${esc(fmtDate(e.audit.countDate))}</option>`).join('')}</select>` : ''}.
-          Tick each booklet seen and type the unused numbers actually on hand, as ranges (e.g. 7311510, 7311516-7311550). This fills the SAAF (Annex B) and the unused forms in the GF-74A.</div>
-        ${checkRows.length ? `${cutoffTableHtml(f, exam, checkRows, auditor)}
-          <div class="af-foot"><p class="af-note">A booklet not seen, or a difference, goes to Verification for the auditor's judgment. It is never concluded as missing by the system.</p>
-            ${auditor ? '<button class="btn primary" type="button" id="af-savecheck">Save Physical Check</button>' : '<span class="dim">The auditor does the Physical Check.</span>'}</div>`
-        : '<div class="empty"><b>No booklets in this officer\'s hands on the count date.</b>Booklets issued on or before the cash count, not yet exhausted, are listed here.</div>'}`;
-  } else {
+  {
     const list = tab === 'hand' ? inHand : mine.slice().sort((a, b) => String(b.issuedDate).localeCompare(String(a.issuedDate)));
     tabBody = list.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col">Issued</th><th scope="col" class="r">Days in Hand</th><th scope="col" class="r">Used</th><th scope="col">Unused</th><th scope="col">Status</th></tr></thead>
       <tbody>${list.map((b) => { const st = statusOf(b); const d = daysWithAo(b, asOf);
         return `<tr data-bk="${esc(b.id)}" tabindex="0"><td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td>${issuedText(b)}</td><td class="r">${daysText(b, d)}</td><td class="r">${usedOf(b)}</td>
-          <td class="mono">${unusedCell(b)}</td><td><span class="pill ${st.cls}">${st.label}</span>${skippedOf(b).length ? '<br><span class="pill p-flag">Skipped numbers</span>' : ''}</td></tr>`; }).join('')}</tbody></table></div>
+          <td class="mono">${unusedCell(b)}</td><td><span class="pill ${st.cls}">${st.label}</span></td></tr>`; }).join('')}</tbody></table></div>
       <p class="af-note">Click a booklet to see its history and to Transfer, Return or report it Lost.</p>`
       : `<div class="empty"><b>${tab === 'hand' ? 'No booklets in this officer\'s hands.' : 'No booklets issued to this officer yet.'}</b></div>`;
   }
@@ -902,7 +876,7 @@ function officerView(ctx, f, lguId) {
       <div class="stat"><span>Booklets in Hand</span><b>${inHand.length}</b><small>not yet exhausted</small></div>
       <div class="stat"><span>Unused per Register</span><b style="color:#1d4fb8">${inHand.reduce((n, b) => n + unusedOf(b), 0)} pcs</b><small>${Object.entries(byForm).map(([k, n]) => `${FORM_SHORT[k]} ${n}`).join(' · ') || '—'}</small></div>
       <div class="stat"><span>Longest in Hand</span><b>${longest ?? 0} days</b><small>${!inHand.length ? 'nothing in hand' : exam ? 'up to the cash count' : 'as of today'}</small></div>
-      <div class="stat"><span>Physical Check</span><b class="${exam && checkRows.length && seen === checkRows.length ? '' : 'dim'}" style="${exam && checkRows.length && seen === checkRows.length ? 'color:var(--ok)' : ''}">${exam ? `${seen} of ${checkRows.length}` : '—'}</b><small>${exam ? 'seen at the cash count' : 'no cash examination yet'}</small></div>
+      <div class="stat"><span>Cut-off</span><b>${exam ? `${cutN} line${cutN === 1 ? '' : 's'}` : '—'}</b><small>${exam ? `<a href="#/cer/count?a=${esc(exam.auditId)}&e=${esc(exam.id)}">entered in Cash Count (Cut-off)</a>` : 'no cash examination yet'}</small></div>
     </div>
     <section class="panel" aria-label="Officer's forms">
       <nav class="cer-tabs af-tabs" aria-label="Views">${tabs.map(([k, l]) => `<a href="${link(k)}" class="${k === tab ? 'on' : ''}" ${k === tab ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
@@ -975,66 +949,6 @@ async function addCheckbook(refs, f, lguId, o) {
   emitChange('local');
   toast(`${plan.parts.length} checkbook${plan.parts.length > 1 ? 's' : ''} added for ${o.name}.`, 'ok');
 }
-// Cut-off / Physical Check of one officer at one cash examination: each booklet in the officer's hands on the count date,
-// seen or not, and the unused numbers actually on hand (checkbooks: the last check issued). Shown in Cash Count (Cut-off)
-// and in Accountable Forms (Physical Check); one record (cer_formcheck) either way.
-export function cutoffRowsOf(f, o, exam) {
-  const countDate = exam.audit ? exam.audit.countDate : (f.audits.find((a) => a.id === exam.auditId) || {}).countDate;
-  return f.booklets.filter((b) => b.officerId === o.id && b.status !== 'stock' && b.issuedDate && b.issuedDate <= countDate && statusOf(b).key !== 'done' && b.status !== 'lost').sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
-}
-export function cutoffTableHtml(f, exam0, checkRows, auditor) {
-  const exam = exam0.audit ? exam0 : { ...exam0, audit: f.audits.find((a) => a.id === exam0.auditId) };
-  const chk = (b) => f.checks.find((c) => c.id === exam.id + '|' + b.id) || null;
-  return `<div class="af-tbl"><table class="af-reg af-cutoff">
-          <thead><tr><th scope="col">Seen</th><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col" class="r">Days in Hand</th><th scope="col">Unused per Register</th><th scope="col">Unused per Count</th><th scope="col" class="r">Difference</th><th scope="col">Result</th></tr></thead>
-          <tbody>${checkRows.map((b) => {
-            const c = chk(b) || {}; const reg = unusedRanges(b); const n = countRanges(reg); const sk = skippedOf(b);
-            const counted = Array.isArray(c.ranges) ? c.ranges : (c.unusedFrom && c.unusedTo ? [[c.unusedFrom, c.unusedTo]] : null);
-            const diff = counted === null ? null : n - countRanges(counted);
-            const isChk = b.form === 'chk', lc = c.lastCheck || b.lastCheck || {};
-            const res = !c.seen ? (c.id ? ['p-flag', 'Not seen'] : ['p-stock', 'Not yet checked']) : isChk ? ['p-done', 'Last check recorded'] : counted && sameRanges(counted, reg) ? ['p-done', 'Agrees'] : ['p-flag', 'For checking'];
-            return `<tr data-ck="${esc(b.id)}"><td><input type="checkbox" class="af-seen" ${c.seen ? 'checked' : ''} ${auditor ? '' : 'disabled'} aria-label="Seen: ${esc(FORM_SHORT[b.form])} ${b.from} to ${b.to}"></td>
-              <td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td class="r">${b.issuedAsOf ? '≥ ' : ''}${days(b.issuedDate, exam.audit.countDate)}</td>
-              <td class="mono">${reg.length ? (b.noSerial ? `${n} pcs` : `${rangesText(reg)} (${n})`) : 'None'}${faceOf(b) && n ? `<small>${peso(n * faceOf(b))}</small>` : ''}${sk.length ? `<small class="warn-t">Skipped: ${rangesText(sk)} · on hand, cancelled or not on hand?</small>` : ''}</td>
-              <td>${isChk ? `<div class="af-lc"><input class="input af-sm mono af-lc-no" inputmode="numeric" placeholder="Last check No." value="${esc(lc.no || '')}" aria-label="Last check issued: check No." ${auditor ? '' : 'disabled'}>
-                <input class="input af-sm af-lc-date" type="date" value="${esc(lc.date || '')}" aria-label="Last check issued: date" ${auditor ? '' : 'disabled'}>
-                <input class="input af-sm af-lc-payee" placeholder="Payee / particulars" value="${esc(lc.payee || '')}" aria-label="Last check issued: payee or particulars" ${auditor ? '' : 'disabled'}>
-                <input class="input af-sm r af-lc-amt" inputmode="decimal" placeholder="Amount" value="${lc.amount ? esc(Number(lc.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })) : ''}" aria-label="Last check issued: amount" ${auditor ? '' : 'disabled'}></div>
-                <small class="dim">Unused (from the last check; mark a skipped or cancelled check by editing):</small>` : ''}<input class="input af-sm mono af-ur" ${b.noSerial ? 'inputmode="numeric" placeholder="pcs"' : ''} value="${esc(b.noSerial ? String(countRanges(counted || reg)) : counted ? rangesText(counted).replace(/ – /g, '-') : rangesText(reg).replace(/ – /g, '-'))}" aria-label="Unused per count${b.noSerial ? ' (pieces)' : ''}" ${auditor ? '' : 'disabled'}></td>
-              <td class="r">${diff === null ? '<span class="dim">—</span>' : diff}</td><td><span class="pill ${res[0]}">${res[1]}</span>${!isChk && !b.noSerial && c.seen && counted ? `<small class="dim">${counted.length && counted[0][0] > b.from ? `Last used: ${counted[0][0] - 1}` : !counted.length ? 'All used' : 'None used'}</small>` : ''}</td></tr>`;
-          }).join('')}</tbody></table></div>`;
-}
-// Wire the last-check box (fills the unused checks) and save every row of the cut-off inside root.
-export function wireCutoff(refs, f, exam, root = document, after = null) {
-  $$('tr[data-ck]', root).forEach((tr) => { const n = $('.af-lc-no', tr); if (!n) return;
-    const b = f.booklets.find((x) => x.id === tr.dataset.ck);
-    n.oninput = () => { const v = int(n.value); if (v && v >= b.from && v <= b.to) $('.af-ur', tr).value = v < b.to ? `${v + 1}-${b.to}` : ''; }; });
-  return async () => {
-    for (const tr of $$('tr[data-ck]', root)) {
-      const b = f.booklets.find((x) => x.id === tr.dataset.ck);
-      const p = b.noSerial ? (() => { const q = int($('.af-ur', tr).value) ?? 0; return q > b.qty ? { error: `more than the ${b.qty} pieces of the lot.` } : { ranges: q ? [[b.from, b.from + q - 1]] : [] }; })() : parseRanges($('.af-ur', tr).value, b.from, b.to);
-      if (p.error) { toast(`${FORM_SHORT[b.form]} ${serialText(b)}: ${p.error}`, 'bad'); return false; }
-      if (b.form === 'chk') { const no = int($('.af-lc-no', tr).value); if (no && (no < b.from || no > b.to)) { toast(`Check No. ${no} is outside the checkbook ${serialText(b)}.`, 'bad'); return false; } }
-    }
-    for (const tr of $$('tr[data-ck]', root)) {
-      const id = exam.id + '|' + tr.dataset.ck;
-      const b = f.booklets.find((x) => x.id === tr.dataset.ck);
-      const p = b.noSerial ? (() => { const q = int($('.af-ur', tr).value) ?? 0; return { ranges: q ? [[b.from, b.from + q - 1]] : [] }; })() : parseRanges($('.af-ur', tr).value, b.from, b.to);
-      const rec = { examId: exam.id, bookletId: b.id, seen: $('.af-seen', tr).checked, ranges: p.ranges };
-      if (b.form === 'chk') {
-        const no = int($('.af-lc-no', tr).value);
-        rec.lastCheck = { no: no || '', date: $('.af-lc-date', tr).value, payee: $('.af-lc-payee', tr).value.trim(), amount: parseFloat(String($('.af-lc-amt', tr).value).replace(/[,₱\s]/g, '')) || 0 };
-        // The checkbook's unused checks follow the cut-off (no check register yet).
-        if (rec.seen) await store.save('cer_booklets', b.id, { ...strip(b), unusedAtStart: p.ranges, lastCheck: rec.lastCheck }, by(refs), { quiet: true });
-      }
-      await store.save('cer_formcheck', id, rec, by(refs), { quiet: true });
-    }
-    if (after) after();
-    emitChange('local');
-    return true;
-  };
-}
-
 function clearanceHtml(refs, f, o, mine, lguId) {
   const list = mine.filter(held).sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
   return `<h2>Accountable Forms in the Officer's Hands</h2>
@@ -1050,9 +964,6 @@ function wireOfficer(ctx, f, lguId, o, exam, offs) {
   $('#af-clear').onclick = () => { document.body.classList.add('af-printing'); $('#cer-print').hidden = false; window.print(); $('#cer-print').hidden = true; document.body.classList.remove('af-printing'); };
   const ex = $('#af-exam'); if (ex) ex.onchange = () => go({ exam: ex.value });
   $$('tr[data-bk]').forEach((tr) => { const open = () => bookletModal(ctx, f, f.booklets.find((b) => b.id === tr.dataset.bk), offs); tr.onclick = open; tr.onkeydown = (e) => { if (e.key === 'Enter') open(); }; });
-  const save = $('#af-savecheck');
-  if (save && exam) { const doSave = wireCutoff(refs, f, exam);
-    save.onclick = async () => { save.disabled = true; try { if (await doSave()) toast('Physical Check saved.', 'ok'); } finally { save.disabled = false; } }; }
 }
 
 /* ================= 3 · RAAF Reconciliation ================= */
@@ -1065,7 +976,7 @@ export function mergeRanges(rs) {
   rs.slice().sort((x, y) => x[0] - y[0]).forEach(([a, z]) => { const l = out[out.length - 1]; if (l && a <= l[1] + 1) l[1] = Math.max(l[1], z); else out.push([a, z]); });
   return out;
 }
-function subtractRanges(rs, cut) {
+export function subtractRanges(rs, cut) {
   let out = mergeRanges(rs);
   for (const [c, d] of mergeRanges(cut)) {
     const next = [];
@@ -1501,36 +1412,94 @@ async function fundsModal(refs, f, lguId) {
   toast('Funds saved.', 'ok');
 }
 
-// For Cash Count: the officer's booklets in hand on the count date, with the unused numbers per register and per the Physical Check.
-export function unusedFormsOf(f, officerId, exam, countDate) {
-  return f.booklets.filter((b) => b.officerId === officerId && b.status === 'issued' && b.issuedDate && b.issuedDate <= countDate && statusOf(b).key !== 'done')
-    .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from).map((b) => {
-      const c = exam ? f.checks.find((x) => x.id === exam.id + '|' + b.id) : null;
-      const counted = c && Array.isArray(c.ranges) ? c.ranges : null;
-      const un = c && c.seen && counted ? counted : unusedRanges(b);
-      const st = !c ? ['p-stock', 'Not yet checked'] : !c.seen ? ['p-flag', 'Not seen'] : b.form === 'chk' ? ['p-done', 'Last check recorded'] : counted && sameRanges(counted, unusedRanges(b)) ? ['p-done', 'Agrees'] : ['p-flag', 'For checking'];
-      const qty = countRanges(un), face = faceOf(b);
-      return { id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, from: b.noSerial ? '' : b.from, to: b.noSerial ? '' : b.to, ns: !!b.noSerial, ranges: un, qty, text: b.noSerial ? `${qty} pcs (no serial)` : rangesText(un),
-        face, amount: face * qty, status: st, lastCheck: c?.lastCheck || b.lastCheck || null };
-    });
+/* ---------- Cut-off (Cash Count): the officer's remaining accountable forms at the count ----------
+   cer_cutoff  id = examId  { examId, officerId, lines[{ id, bookletId ('' = typed, not in the register), form, from, to, ns, ranges[[a, z]] }] }
+   Ranges are the unused numbers on hand (a form without serial: [[1, pcs]]). Nothing is compared here; Verification does that. */
+export const cutoffOf = (f, examId) => (f.cutoffs || []).find((c) => c.id === examId) || null;
+export function cutoffLines(f, examId) {
+  const c = cutoffOf(f, examId); if (!c) return [];
+  return (c.lines || []).map((l) => { const b = l.bookletId ? f.booklets.find((x) => x.id === l.bookletId) : null;
+    return { ...l, b, form: b ? b.form : l.form, from: b ? b.from : l.from, to: b ? b.to : l.to, ns: b ? !!b.noSerial : !!l.ns, ranges: l.ranges || [] }; });
+}
+// The officer's booklets for the cut-off dropdown: in hand per the register on the count date (beginning + received), not lost.
+export function cutoffChoices(f, officerId, countDate) {
+  return f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.status !== 'lost' && b.issuedDate && b.issuedDate <= countDate)
+    .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
+}
+export const bookletName = (b) => `${FORM_SHORT[b.form] || b.form} · ${b.noSerial ? `${b.qty} pcs (no serial)` : `${b.from}–${b.to}`}`;
+export function parseCutRanges(text, from, to) { return parseRanges(text, from, to); }
+
+// For Cash Count and Reports: the remaining forms at the cut-off, one row per line entered.
+export function unusedFormsOf(f, officerId, exam) {
+  if (!exam) return [];
+  return cutoffLines(f, exam.id).map((l) => {
+    const qty = countRanges(l.ranges), face = faceOf(l.b || { form: l.form });
+    return { id: l.id, bookletId: l.bookletId, form: l.form, name: FORM_SHORT[l.form] || l.form, from: l.ns ? '' : l.from, to: l.ns ? '' : l.to, ns: l.ns, ranges: l.ranges, qty,
+      text: l.ns ? `${qty} pcs (no serial)` : rangesText(l.ranges), face, amount: face * qty, other: !l.bookletId };
+  });
+}
+// The last check issued per checkbook at the cut-off: the number before the first unused one (all used: the last of the checkbook).
+export function lastChecksOf(f, examIds) {
+  const out = [];
+  (f.cutoffs || []).filter((c) => examIds.has(c.id)).forEach((c) => (c.lines || []).forEach((l) => {
+    const b = l.bookletId ? f.booklets.find((x) => x.id === l.bookletId) : null;
+    const form = b ? b.form : l.form; if (form !== 'chk') return;
+    const from = +(b ? b.from : l.from), to = +(b ? b.to : l.to), rs = l.ranges || [];
+    out.push({ from, to, last: rs.length ? rs[0][0] - 1 : to });
+  }));
+  return out;
 }
 
 // For Reports (SAAF, Annex B): each booklet of the officer within the scope of audit, as Beginning, Received, Issued,
-// Ending (per the register) and per Count (Physical Check at this cash examination). Ranges are [[from, to], …].
+// Ending (per the register) and per Count (the cut-off). Forms typed at the cut-off that are not in the register are added
+// with the count only. Ranges are [[from, to], …]; the SAAF prints one line per range.
 export function saafRows(f, officerId, exam, from, to) {
   const out = [];
+  const cut = exam ? cutoffOf(f, exam.id) : null, lines = exam ? cutoffLines(f, exam.id) : [];
   f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && b.issuedDate <= to)
     .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from).forEach((b) => {
       const beg = from && b.issuedDate <= from ? (b.status === 'lost' && b.history?.some((h) => h.action === 'lost' && h.date <= from) ? [] : rawUnused(b, from)) : [];
       const rec = !from || b.issuedDate > from ? [[b.from, b.to]] : [];
       const end = b.status === 'lost' ? [] : rawUnused(b, to);
-      if (!beg.length && !rec.length && !end.length) return;
-      const issued = subtractRanges([...beg, ...rec], end);
-      const c = exam ? f.checks.find((x) => x.id === exam.id + '|' + b.id) : null;
-      const count = c && c.seen && Array.isArray(c.ranges) ? c.ranges : null;
+      const mine = lines.filter((l) => l.bookletId === b.id);
+      const count = cut ? mergeRanges(mine.flatMap((l) => l.ranges)) : null;
+      if (!beg.length && !rec.length && !end.length && !(count && count.length)) return;
+      const issued = subtractRanges([...beg, ...rec], count || end);
       out.push({ id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, face: faceOf(b), beg, rec, issued, end, count,
         diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || '' });
     });
+  lines.filter((l) => !l.bookletId).forEach((l) => out.push({ id: l.id, form: l.form, name: FORM_SHORT[l.form] || l.form, booklet: [l.from, l.to], ns: l.ns, face: faceOf({ form: l.form }), beg: [], rec: [], issued: [], end: [], count: l.ranges, diff: -countRanges(l.ranges), fund: '', other: true }));
+  return out.sort((a, b) => a.form.localeCompare(b.form) || a.booklet[0] - b.booklet[0]);
+}
+
+// For Verification (once encoding is complete): the cut-off against the register and the ORs encoded.
+export function cutoffFindings(f, o, exam, from, to) {
+  const out = [], add = (key, text) => out.push({ key, text });
+  const cut = cutoffOf(f, exam.id), lines = cutoffLines(f, exam.id);
+  if (!cut) { add('nocut', 'No cut-off entered yet: the remaining accountable forms are entered in Cash Count (Cut-off).'); return out; }
+  const toR = (ns) => mergeRanges(ns.map((n) => [n, n]));
+  f.booklets.filter((b) => b.officerId === o.id && b.status !== 'stock' && b.issuedDate && b.issuedDate <= to).forEach((b) => {
+    const name = `${FORM_SHORT[b.form] || b.form} ${serialText(b)}`;
+    const mine = lines.filter((l) => l.bookletId === b.id);
+    if (!mine.length) {
+      if (b.status !== 'lost' && statusOf(b).key !== 'done') add(`np|${b.id}`, `${name}: in the officer's hands per the register (${rangesText(rawUnused(b, to)) || 'none unused'}), but not presented at the cut-off.`);
+      return;
+    }
+    if (b.form === 'chk' || b.noSerial) return;
+    const count = mergeRanges(mine.flatMap((l) => l.ranges));
+    const avail = from && b.issuedDate <= from ? rawUnused(b, from) : [[b.from, b.to]];
+    const used = subtractRanges(avail, count);
+    const ors = new Set((b.orNos || []).map((x) => x.n));
+    const miss = []; used.forEach(([a, z]) => { for (let n = a; n <= z && miss.length < 5000; n++) if (!ors.has(n)) miss.push(n); });
+    if (miss.length) add(`miss|${b.id}|${miss.length}`, `${name}: ${miss.length} OR${miss.length > 1 ? 's' : ''} used before the cut-off with no collection encoded: ${rangesText(toR(miss))}.`);
+    const onUn = (b.orNos || []).filter((x) => count.some(([a, z]) => a <= x.n && x.n <= z)).map((x) => x.n);
+    if (onUn.length) add(`onun|${b.id}|${onUn.length}`, `${name}: ${onUn.length} OR${onUn.length > 1 ? 's' : ''} encoded on numbers still unused at the cut-off: ${rangesText(toR(onUn))}.`);
+  });
+  lines.filter((l) => !l.bookletId).forEach((l) => add(`nir|${l.id}`, `${FORM_SHORT[l.form] || l.form} ${l.ns ? `${countRanges(l.ranges)} pcs (no serial)` : `${l.from} – ${l.to}`}: not in the register, no record of receipt. Check the logbook or the series encoded.`));
+  const mineAll = f.booklets.filter((b) => b.officerId === o.id);
+  outOfSequence({ booklets: mineAll }).forEach((id) => { const b = mineAll.find((x) => x.id === id); add(`oos|${id}`, `${FORM_SHORT[b.form]} ${serialText(b)} used while an earlier booklet of the same form still had unused numbers.`); });
+  const wrong = f.ors.filter((x) => x.officerId === o.id && x.bookletId).map((x) => ({ ...x, bk: f.booklets.find((b) => b.id === x.bookletId) })).filter((x) => x.bk && x.bk.officerId !== o.id);
+  if (wrong.length) add(`wrong|${wrong.length}`, `${wrong.length} OR${wrong.length > 1 ? 's' : ''} encoded in a booklet not issued to this officer: ${wrong.slice(0, 8).map((x) => x.serial).join(', ')}${wrong.length > 8 ? '…' : ''}.`);
   return out;
 }
 export { countRanges };
