@@ -92,6 +92,16 @@ async function confirmBig(form, a, z, n) {
 const today = () => new Date().toISOString().slice(0, 10);
 const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
 const int = (s) => { const v = parseInt(String(s ?? '').replace(/[^\d]/g, ''), 10); return isNaN(v) ? null : v; };
+// Serial To follows Serial From: filled when To is empty, was filled automatically, or is lower than From (left over from an
+// earlier entry). A To typed by hand and not lower than From is kept.
+function autoTo(t, a, end) {
+  if (!a || !t) return false;
+  const z = int(t.value);
+  if (t.value && !t.dataset.auto && z !== null && z >= a) return false;
+  t.value = end; t.dataset.auto = '1';
+  if (!t.dataset.autoWired) { t.dataset.autoWired = '1'; t.addEventListener('input', () => { delete t.dataset.auto; }); }
+  return true;
+}
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const monthLabel = (m) => (m ? `${MONTHS[+m.slice(5, 7) - 1]} ${m.slice(0, 4)}` : '');
 // Encoding is for Team Staff (JO) and the auditors; OSA Staff view only.
@@ -463,7 +473,7 @@ function wireRegister(ctx, f, lguId, offs) {
   const heldSel = $('#e-held');
   if (heldSel) heldSel.onchange = () => { $('#e-offrow').hidden = heldSel.value === 'custodian'; preview(); };
   wirePart('e', document, preview);
-  $('#e-from').addEventListener('change', () => { const a = int($('#e-from').value), t = $('#e-to'); if (a && !t.value && mv !== 'issue') t.value = a + (int(per?.value) || PER_BOOKLET) - 1; preview(); });
+  $('#e-from').addEventListener('change', () => { const a = int($('#e-from').value), t = $('#e-to'); if (a && mv !== 'issue') autoTo(t, a, a + (int(per?.value) || PER_BOOKLET) - 1); preview(); });
   enter.onclick = async () => {
     enter.disabled = true;
     Object.assign(LAST, { form: $('#e-form').value, date: $('#e-date').value, per: int(per?.value) || LAST.per,
@@ -937,7 +947,7 @@ async function addCheckbook(refs, f, lguId, o) {
       <p class="af-note">Enter the complete series. A date not known: use the start date of the register. These checkbooks show only on this officer's page, never in the custodian's register.</p>
       <div class="af-note" id="k-prev"></div>`,
     onOpen: (bg) => { $$('#k-from, #k-to, #k-per', bg).forEach((el) => { el.oninput = () => show(bg); });
-      $('#k-from', bg).addEventListener('change', () => { const a = int($('#k-from', bg).value), t = $('#k-to', bg); if (a && !t.value) { t.value = bookletOf(a, int($('#k-per', bg).value) || CHK_PER)[1]; show(bg); } });
+      $('#k-from', bg).addEventListener('change', () => { const a = int($('#k-from', bg).value), t = $('#k-to', bg); if (a && autoTo(t, a, bookletOf(a, int($('#k-per', bg).value) || CHK_PER)[1])) show(bg); });
       wirePart('k', bg, () => show(bg)); },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Save Checkbooks', cls: 'primary', value: 'save', check: (bg) => {
       const r = read(bg); if (r.error) { toast(r.error, 'bad'); return false; }
@@ -1628,7 +1638,7 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
       $$('input[name="g-kind"]', bg).forEach((r) => { r.onchange = () => show(bg); });
       wireSrcSelect($('#g-srcsel', bg), refs, f, regId, () => show(bg), true);
       $$('#g-from, #g-to, #g-per, #g-form, #g-ns', bg).forEach((el) => { el.oninput = () => show(bg); el.onchange = () => show(bg); });
-      $('#g-from', bg).addEventListener('change', () => { const a = int($('#g-from', bg).value), t = $('#g-to', bg); if (a && !t.value) { t.value = bookletOf(a, int($('#g-per', bg).value) || (srcNow(bg) === 'bank' ? CHK_PER : PER_BOOKLET))[1]; show(bg); } });
+      $('#g-from', bg).addEventListener('change', () => { const a = int($('#g-from', bg).value), t = $('#g-to', bg); if (a && autoTo(t, a, bookletOf(a, int($('#g-per', bg).value) || (srcNow(bg) === 'bank' ? CHK_PER : PER_BOOKLET))[1])) show(bg); });
       wirePart('g', bg, () => show(bg)); show(bg); },
     buttons: [{ label: 'Cancel', value: null }, { label: cut ? 'Add Booklet' : 'Save Beginning Forms', cls: 'primary', value: 'save', check: (bg) => {
       const r = read(bg); if (r.error) { toast(r.error, 'bad'); return false; }
