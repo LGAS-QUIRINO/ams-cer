@@ -7,7 +7,8 @@
 //
 // Records:
 //   cer_cashadv   one cash advance  { lguId, officerId, date, checkNo, particulars, amount }
-//   cer_liquid    one liquidation   { lguId, officerId, date, ref, particulars, amount, advanceId, type: 'liq' | 'refund' (refund: ref = OR No.) }
+//   cer_liquid    one liquidation   { lguId, officerId, date, ref, particulars, amount, advanceId, type: 'liq' | 'refund' (refund: ref = OR No.),
+//                                    countAnyway (ticked: counted in the cash exam although dated outside the scope) }
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
@@ -64,6 +65,9 @@ export async function advancesView(ctx) {
   // Beginning checks: entered in Audit Setup, unliquidated as of the last cash exam (amount = what was still unliquidated).
   const begChecks = allAdv.filter((a) => a.beg && a.begExamId === exam.id);
   const liqs = liqs0.map(flat).filter((l) => l.officerId === o.id);
+  // Scope of this cash exam: after the last cash exam, up to the count date.
+  const scope = { from: exam.lastExamDate || '', to: audit.countDate };
+  const outOf = (d) => !!d && ((scope.from && d <= scope.from) || d > scope.to);
   const beg = r2(BEG_KEYS.reduce((n, k) => n + (+(exam.balances?.[k]?.amount) || 0), 0));
   const begSum = r2(begChecks.reduce((n, a) => n + (+a.amount || 0), 0));
   const rest = r2(beg - begSum);
@@ -110,7 +114,7 @@ export async function advancesView(ctx) {
         <button class="btn primary" type="button" id="lq-enter">Enter</button></div>
       <div class="ca-tools"><a href="#" class="cd-link" data-tpl="lq">Template</a><button class="btn sm" type="button" data-imp="lq">Import from Excel</button></div>` : '<div class="cd-info">Encode the cash advance first, then its liquidations.</div>') : ''}
     ${lqRows.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">Type</th><th scope="col">LR No. / OR No.</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">For Check No.</th><th scope="col" class="r"></th></tr></thead>
-      <tbody>${lqRows.map((l) => { const a = list.find((x) => x.id === l.advanceId); return `<tr><td>${esc(fmtDate(l.date))}</td><td>${l.type === 'refund' ? '<span class="pill p-done">Refund</span>' : 'Liquidation'}</td><td class="mono">${esc(l.ref || '')}</td><td>${esc(l.particulars || '')}</td><td class="r">${money(l.amount)}</td>
+      <tbody>${lqRows.map((l) => { const a = list.find((x) => x.id === l.advanceId); return `<tr><td>${esc(fmtDate(l.date))}${outOf(l.date) ? (l.countAnyway ? '<br><span class="pill p-done">Outside the scope · counted</span>' : '<br><span class="pill p-flag">Outside the scope</span>') : ''}</td><td>${l.type === 'refund' ? '<span class="pill p-done">Refund</span>' : 'Liquidation'}</td><td class="mono">${esc(l.ref || '')}</td><td>${esc(l.particulars || '')}</td><td class="r">${money(l.amount)}</td>
         <td class="mono">${a ? (a.rest ? 'Beginning balance' : esc(a.checkNo) + (a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : '')) : '<span class="dim">—</span>'}</td><td class="r">${enc ? `<button class="btn sm" type="button" data-elq="${esc(l.id)}" aria-label="Edit liquidation ${esc(l.ref || '')}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
       <tfoot><tr class="cd-foot"><td colspan="4">Total${liqs.some((l) => l.type === 'refund') ? ` <span class="dim">(refunds ₱${money(r2(liqs.filter((l) => l.type === 'refund').reduce((n, l) => n + (+l.amount || 0), 0)))})</span>` : ''}</td><td class="r">${money(totLq)}</td><td></td><td></td></tr></tfoot></table></div>`
       : '<div class="empty"><b>No liquidation encoded yet.</b></div>'}
@@ -170,7 +174,7 @@ export async function advancesView(ctx) {
     } catch (err) { toast(err.message || String(err), 'bad'); } }; });
     $$('[data-imp]').forEach((b) => { b.onclick = () => importRows(b.dataset.imp, { refs, base, allAdv, list, o }); });
     $$('[data-eca]').forEach((b) => { b.onclick = () => editAdv(refs, list.find((a) => a.id === b.dataset.eca), allAdv, liqs); });
-    $$('[data-elq]').forEach((b) => { b.onclick = () => editLiq(refs, liqs.find((l) => l.id === b.dataset.elq), list); });
+    $$('[data-elq]').forEach((b) => { b.onclick = () => editLiq(refs, liqs.find((l) => l.id === b.dataset.elq), list, outOf); });
     if (LAST.focus) { const el = $(LAST.focus === 'ca' ? '#ca-check' : '#lq-ref'); if (el) el.focus(); LAST.focus = ''; }
   } };
 }
@@ -222,7 +226,7 @@ async function editAdv(refs, a, advs, liqs) {
   await store.save('cer_cashadv', id, { ...rec, ...act }, by(refs)); toast(`Check No. ${act.checkNo} saved.`, 'ok');
 }
 
-async function editLiq(refs, l, list) {
+async function editLiq(refs, l, list, outOf) {
   if (!l) return;
   let act = null;
   const v = await modal({ title: `Edit liquidation ${l.ref || ''}`,
@@ -231,9 +235,11 @@ async function editLiq(refs, l, list) {
       <div class="field"><label for="el-ref">LR No. / Reference</label><input class="input mono" id="el-ref" value="${esc(l.ref || '')}"></div>
       <div class="field"><label for="el-part">Particulars</label><input class="input" id="el-part" value="${esc(l.particulars || '')}"></div>
       <div class="field"><label for="el-amt">Amount (₱)</label><input class="input r" id="el-amt" inputmode="decimal" value="${esc(money(l.amount))}"></div>
-      <div class="field"><label for="el-for">For Check No.</label><select class="input" id="el-for">${list.map((a) => `<option value="${esc(a.id)}" ${a.id === l.advanceId ? 'selected' : ''}>${esc(a.rest ? `Beginning balance (not itemized) · ₱${money(a.bal)} left` : `${a.checkNo}${a.beg ? ' (Beginning)' : ''} · ${a.particulars || fmtDate(a.date)} · ₱${money(a.bal)} left`)}</option>`).join('')}</select></div></div>`,
+      <div class="field"><label for="el-for">For Check No.</label><select class="input" id="el-for">${list.map((a) => `<option value="${esc(a.id)}" ${a.id === l.advanceId ? 'selected' : ''}>${esc(a.rest ? `Beginning balance (not itemized) · ₱${money(a.bal)} left` : `${a.checkNo}${a.beg ? ' (Beginning)' : ''} · ${a.particulars || fmtDate(a.date)} · ₱${money(a.bal)} left`)}</option>`).join('')}</select></div></div>
+      <label class="cer-tick" id="el-cntbox" ${outOf(l.date) ? '' : 'hidden'}><input type="checkbox" id="el-cnt" ${l.countAnyway ? 'checked' : ''}> Count even if outside the scope</label>`,
+    onOpen: (bg) => { $('#el-date', bg).oninput = () => { $('#el-cntbox', bg).hidden = !outOf($('#el-date', bg).value); }; },
     buttons: [{ label: 'Delete', value: 'del' }, { label: 'Cancel', value: null }, { label: 'Save', cls: 'primary', value: 'save', check: (bg) => {
-      const x = { type: $('#el-type', bg).value, date: $('#el-date', bg).value, ref: $('#el-ref', bg).value.trim(), particulars: $('#el-part', bg).value.trim(), amount: num($('#el-amt', bg).value), advanceId: $('#el-for', bg).value };
+      const x = { type: $('#el-type', bg).value, date: $('#el-date', bg).value, ref: $('#el-ref', bg).value.trim(), particulars: $('#el-part', bg).value.trim(), amount: num($('#el-amt', bg).value), advanceId: $('#el-for', bg).value, countAnyway: outOf($('#el-date', bg).value) && $('#el-cnt', bg).checked };
       const err = checkLiq(x); if (err) return bad(err);
       act = x; return true;
     } }] });

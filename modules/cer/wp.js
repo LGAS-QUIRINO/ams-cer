@@ -29,7 +29,7 @@ export function wpLines(c, paper, ver) {
   if (paper === 'a2a') {
     const mine = advs.filter((a) => a.officerId === o.id);
     mine.filter((a) => !a.beg && inScope(a.date)).forEach((a) => lines.push({ key: `ca|${a.id}`, date: a.date, part: a.particulars || '', no: a.checkNo || '', d: +a.amount || 0, c: 0, ord: 0 }));
-    liqs.filter((l) => l.officerId === o.id && inScope(l.date)).forEach((l) => {
+    liqs.filter((l) => l.officerId === o.id && A.liqIn(l)).forEach((l) => {
       const a = mine.find((x) => x.id === l.advanceId);
       const part = [l.type === 'refund' ? `Refund, OR No. ${l.ref}` : l.ref, l.particulars, a ? `check No. ${a.checkNo}` : l.advanceId === '__beg' ? 'beginning balance' : ''].filter(Boolean).join(' · ');
       lines.push({ key: `lq|${l.id}`, date: l.date, part, no: '', d: 0, c: +l.amount || 0, ord: 1 });

@@ -81,7 +81,7 @@ export async function reportsView(ctx) {
   const who = miss.length ? `<div class="cd-info">Choose ${miss.join(' and ')} in Audit Setup; the reports show blank names until then.</div>` : '';
   const note = who + (!A.count && rep === '74a' ? '<div class="cd-info">No cash count saved yet for this officer: part B is blank. Save it in Cash Count.</div>' : '');
   const status = ver?.ready ? '<span class="pill p-done">Verification: Ready for Reports</span>' : '<span class="pill p-flag">Verification not yet marked ready</span>';
-  const same = w ? `<div class="wp-same"><label class="cd-chk"><input type="checkbox" id="wp-same" ${w.edited ? '' : 'checked'}> Per CashBook same as Per Audit</label>
+  const same = w ? `<div class="wp-same"><label class="cer-tick"><input type="checkbox" id="wp-same" ${w.edited ? '' : 'checked'}> Per CashBook same as Per Audit</label>
       ${w.edited ? `<span class="pill p-flag">${w.edited} line${w.edited > 1 ? 's' : ''} differ${w.edited > 1 ? '' : 's'}</span>` : ''}<small class="muted">To change a line, click its Per CashBook amount and type what the cashbook shows.</small></div>` : '';
   // Bank statements of the auditee's accounts (Working Papers): imported lines within the coverage.
   const bset = bset0.map(flat).find((x) => x.id === `banks|${audit.lguId}`);

@@ -724,3 +724,7 @@ table.rp-rsa{max-width:640px; margin:14px auto}
   body.rp-printing tr.wp-diff td{background:none}
   body.rp-printing #cer-print .wp-t td, body.rp-printing #cer-print .wp-t th{font-size:8pt; padding:2px 3px}
 }
+/* Tick with its label (Per CashBook same; Count even if outside the scope) */
+.cer-tick{display:flex; align-items:center; gap:8px; font-size:14px; color:inherit; cursor:pointer}
+.cer-tick[hidden]{display:none}
+#el-cntbox{margin-top:12px}
