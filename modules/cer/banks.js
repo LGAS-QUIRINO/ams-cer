@@ -11,7 +11,7 @@
 //   cer_settings 'banks|<lguId>'   { list: [{ id, bank, accountNo, fund }] }
 //   cer_bankrec  id <auditId>|<accountId>
 //                { auditId, accountId, lguId, asOf, ending, source, book, bankItems[{ date, type: 'credit'|'debit', particulars, amount }],
-//                  found{ <item key>: bankDate }, otherChecks[{ id, date, checkNo, payee, amount }], lines[] (imported, for reference),
+//                  found{ <item key>: bankDate }, otherChecks[{ id, date, checkNo, payee, amount }], lines[] (imported; saved in parts <id>#lines<k> { part, recId, k, lines }, lineParts = how many),
 //                  opening (bank balance at the last cash exam), account (account No. read from it), covFrom / covTo (coverage imported),
 //                  lineOf{ <item key>: line i } (which imported line each item matched; unmatched lines count as bank credits / debits) }
 import { store, newId } from '../../js/store.js';
@@ -25,6 +25,28 @@ const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin
 const r2 = (n) => Math.round(n * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, ...rest } = x; return rest; };
+// The statement lines are kept in parts (records <recId>#lines<k> in cer_bankrec): one Google Sheet cell holds 50,000 characters at most.
+const PART = '#lines';
+export const isPart = (r) => String(r.id).includes(PART);
+export function withLines(rec, all) {
+  if (!rec || !rec.lineParts) return rec;
+  const lines = [];
+  for (let k = 0; k < rec.lineParts; k++) { const p = all.find((x) => x.id === `${rec.id}${PART}${k}`); if (p) lines.push(...(p.lines || [])); }
+  return { ...rec, lines };
+}
+async function saveRec(recId, data, who) {
+  const { lines, ...main } = data;
+  if (lines !== undefined) {
+    const parts = []; let cur = [], size = 0;
+    lines.forEach((l) => { const n = JSON.stringify(l).length; if (cur.length && size + n > 30000) { parts.push(cur); cur = []; size = 0; } cur.push(l); size += n; });
+    if (cur.length) parts.push(cur);
+    const old = +main.lineParts || 0;
+    for (let k = 0; k < parts.length; k++) await store.save('cer_bankrec', `${recId}${PART}${k}`, { part: true, recId, k, lines: parts[k] }, who, { quiet: true });
+    for (let k = parts.length; k < old; k++) await store.save('cer_bankrec', `${recId}${PART}${k}`, { part: true, recId, k, lines: [] }, who, { quiet: true, deleted: true });
+    main.lineParts = parts.length;
+  }
+  await store.save('cer_bankrec', recId, main, who);
+}
 const bad = (m) => { toast(m, 'bad'); return false; };
 // Coverage of the cash exam: the last cash exam date (after its cut-off) (earliest among its officers) up to the cash count date.
 export const covOf = (audit, exams) => { const ds = exams.filter((e) => e.auditId === audit.id && e.lastExamDate).map((e) => e.lastExamDate).sort(); return { from: ds[0] || '', to: audit.countDate }; };
@@ -61,9 +83,9 @@ export async function banksView(ctx) {
   const enc = canEncode(refs);
   const acct = accounts.find((x) => x.id === q.get('acct')) || accounts[0] || null;
   const recId = acct ? `${audit.id}|${acct.id}` : '';
-  const rec0 = recs0.map(flat).find((r) => r.id === recId);
+  const recsAll = recs0.map(flat), rec0 = recsAll.find((r) => r.id === recId);
   const cov = covOf(audit, exams0.map(flat));
-  const rec = inCov({ asOf: audit.countDate, ending: null, source: SOURCES[1], book: null, bankItems: [], found: {}, otherChecks: [], lines: [], ...(rec0 || {}) }, cov);
+  const rec = inCov({ asOf: audit.countDate, ending: null, source: SOURCES[1], book: null, bankItems: [], found: {}, otherChecks: [], lines: [], ...(withLines(rec0, recsAll) || {}) }, cov);
   const asOf = audit.countDate;   // always the cash count date
   const top = (open = false) => `<div class="panel ${open ? 'cd-head' : 'cd-bar'} bk-bar">${open ? '<div class="cd-headrow">' : ''}
       <div class="field"><label for="bk-audit">Cash Examination</label><select class="input" id="bk-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>
@@ -243,7 +265,7 @@ function wireBanks(c) {
   const de = $('#bk-doneedit'); if (de) de.onclick = () => { UI.edit = false; rr(); };
   const save = async (patch, msg) => {
     const cur = c.rec0 ? strip(c.rec0) : { auditId: audit.id, accountId: acct.id, lguId: audit.lguId, asOf: rec.asOf, ending: rec.ending, source: rec.source, book: rec.book, bankItems: [], found: {}, otherChecks: [], lines: [] };
-    await store.save('cer_bankrec', recId, { ...cur, ...patch }, by(refs));
+    await saveRec(recId, { ...cur, ...patch }, by(refs));
     if (msg) toast(msg, 'ok');
   };
   if ($('#bk-savest')) $('#bk-savest').onclick = () => {
@@ -436,8 +458,8 @@ export async function bankFindings(audit) {
   const out = [], add = (key, text) => out.push({ key, text });
   const asOf = audit.countDate;
   accounts.forEach((acct) => {
-    const rec0 = recs0.map(flat).find((r) => r.id === `${audit.id}|${acct.id}`);
-    const rec = rec0 ? inCov(rec0, covOf(audit, exams0.map(flat))) : rec0;
+    const recsAll = recs0.map(flat), rec0 = recsAll.find((r) => r.id === `${audit.id}|${acct.id}`);
+    const rec = rec0 ? inCov(withLines(rec0, recsAll), covOf(audit, exams0.map(flat))) : rec0;
     const name = acctLabel(acct);
     if (!rec) { add(`bk0|${acct.id}`, `${name}: no bank statement or reconciliation yet.`); return; }
     const found = rec.found || {};
