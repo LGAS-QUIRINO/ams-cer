@@ -295,8 +295,8 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
 
   const DEP = isRem ? 'Remittance' : 'Deposit';
   const depRow = (d = {}) => `<tr class="cd-dep"><td><input class="input" type="date" data-k="date" value="${esc(d.date || '')}" aria-label="Deposit date" ${enc ? '' : 'disabled'}></td>
-      <td><input class="input" data-k="ref" value="${esc(d.ref || '')}" ${isRem ? 'placeholder="MTO OR No."' : 'list="cd-reflist" placeholder="Choose or type"'} aria-label="Reference" ${enc ? '' : 'disabled'}></td>
-      ${isRem ? '' : `<td><input class="input mono" data-k="no" value="${esc(d.no || '')}" placeholder="Optional" aria-label="Deposit slip No." ${enc ? '' : 'disabled'}></td>`}
+      <td><input class="input" data-k="ref" value="${esc(d.ref || '')}" list="cd-reflist" placeholder="${isRem ? 'Choose or type the name' : 'Choose or type'}" aria-label="${isRem ? 'Liquidating Officer' : 'Reference'}" ${enc ? '' : 'disabled'}></td>
+      <td><input class="input mono" data-k="no" value="${esc(d.no || '')}" placeholder="Optional" aria-label="${isRem ? 'MTO OR No.' : 'Deposit slip No.'}" ${enc ? '' : 'disabled'}></td>
       <td><input class="input r" data-k="amount" inputmode="decimal" value="${d.amount !== undefined && d.amount !== '' ? esc(money(d.amount)) : ''}" aria-label="Amount" ${enc ? '' : 'disabled'}></td>
       <td>${enc ? '<button class="btn sm cd-x" type="button" aria-label="Remove deposit">✕</button>' : ''}</td></tr>`;
   const agree = !cur.pending && cur.rec.hardTotal !== null && cur.rec.hardTotal !== undefined && cur.rec.hardTotal !== '' ? (Math.abs(+cur.rec.hardTotal - cur.coll) < 0.005 ? '<span class="pill p-done">Agrees with hard copy</span>' : `<span class="pill p-stock">Hard copy ₱${money(cur.rec.hardTotal)}</span>`) : '';
@@ -310,12 +310,12 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <label class="sr-only" for="cd-depshow">Show</label><select class="input af-sm" id="cd-depshow"><option value="all" ${DEPSHOW.v !== 'sel' ? 'selected' : ''}>All of this officer</option><option value="sel" ${DEPSHOW.v === 'sel' ? 'selected' : ''}>${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</option></select>
       <button class="btn sm" type="button" id="cd-depxls">Export to Excel</button></div>
     ${shownDeps.length ? `<div class="af-tbl cd-depscroll"><table class="af-reg cd-deptbl"><thead><tr><th scope="col">Date</th><th scope="col">Reference</th><th scope="col" class="r">Amount (₱)</th><th scope="col">${KS0}</th><th scope="col">Fund</th></tr></thead>
-      <tbody>${shownDeps.map((d) => `<tr data-pickdep="${esc(d.g.id)}" tabindex="0" class="${d.g.id === selId ? 'cd-on' : ''}"><td>${esc(fmtDate(d.date))}</td><td class="mono">${esc(depRefText(d))}</td><td class="r">${money(+d.amount || 0)}</td><td>${esc(d.g.pending ? `Not yet in an ${d.kind}` : repName(d.g.rec, d.kind))}</td><td>${esc(d.fund)}</td></tr>`).join('')}</tbody>
+      <tbody>${shownDeps.map((d) => `<tr data-pickdep="${esc(d.g.id)}" tabindex="0" class="${d.g.id === selId ? 'cd-on' : ''}"><td>${esc(fmtDate(d.date))}</td><td class="mono">${esc(depRefText(d, d.kind === 'SCR'))}</td><td class="r">${money(+d.amount || 0)}</td><td>${esc(d.g.pending ? `Not yet in an ${d.kind}` : repName(d.g.rec, d.kind))}</td><td>${esc(d.fund)}</td></tr>`).join('')}</tbody>
       <tfoot><tr class="cd-foot"><td colspan="2">Total</td><td class="r">${money(r2(shownDeps.reduce((n, d) => n + (+d.amount || 0), 0)))}</td><td colspan="2"></td></tr></tfoot></table></div>`
       : `<div class="empty"><b>No ${isRem ? 'remittance' : 'deposit'} encoded yet.</b></div>`}</div>`;
-  const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : 'Deposit Date'}</th><th scope="col">${isRem ? 'Reference (MTO OR No.)' : 'Reference'}</th>${isRem ? '' : '<th scope="col">No.</th>'}<th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
+  const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : 'Deposit Date'}</th><th scope="col">${isRem ? 'Liquidating Officer' : 'Reference'}</th><th scope="col">${isRem ? 'MTO OR No.' : 'No.'}</th><th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
       <tbody id="cd-deps">${(cur.rec?.deposits || []).map(depRow).join('')}</tbody></table></div>
-    ${isRem ? '' : `<datalist id="cd-reflist">${depRefs(f, audit.lguId).map((v) => `<option value="${esc(v)}">`).join('')}</datalist>`}
+    <datalist id="cd-reflist">${(isRem ? loNames(refs, f, lgu) : depRefs(f, audit.lguId)).map((v) => `<option value="${esc(v)}">`).join('')}</datalist>
     ${enc ? `<div class="cd-actions"><button class="btn sm" type="button" id="cd-adddep">+ Add ${DEP}</button><button class="btn primary" type="button" id="cd-savedep">Save ${DEP}s</button></div>` : ''}
     <div class="cd-sum">
       <b class="cd-sumh">Summary (computed) · ${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</b>
@@ -573,8 +573,8 @@ function remRowHtml(c) {
 }
 function depRowHtml(rem) {
   return `<tr class="cd-dep"><td><input class="input" type="date" data-k="date" aria-label="${rem ? 'Date received by MTO' : 'Deposit date'}"></td>
-    <td><input class="input" data-k="ref" ${rem ? 'placeholder="MTO OR No."' : 'list="cd-reflist" placeholder="Choose or type"'} aria-label="Reference"></td>
-    ${rem ? '' : '<td><input class="input mono" data-k="no" placeholder="Optional" aria-label="Deposit slip No."></td>'}
+    <td><input class="input" data-k="ref" list="cd-reflist" placeholder="${rem ? 'Choose or type the name' : 'Choose or type'}" aria-label="${rem ? 'Liquidating Officer' : 'Reference'}"></td>
+    <td><input class="input mono" data-k="no" placeholder="Optional" aria-label="${rem ? 'MTO OR No.' : 'Deposit slip No.'}"></td>
     <td><input class="input r" data-k="amount" inputmode="decimal" aria-label="Amount"></td>
     <td><button class="btn sm cd-x" type="button" aria-label="Remove deposit">✕</button></td></tr>`;
 }
@@ -584,8 +584,17 @@ function depRefs(f, lguId) {
   const typed = f.reports.filter((r) => r.lguId === lguId && r.kind !== 'SCR').flatMap((r) => (r.deposits || []).map((d) => String(d.ref || '').trim())).filter(Boolean);
   return [...new Set([...DEP_REFS, ...typed.sort((a, b) => a.localeCompare(b))])];
 }
-// "Cash Deposit Slip · No. 123456" (the No. is optional).
-export const depRefText = (d) => [d.ref || '', d.no ? `No. ${d.no}` : ''].filter(Boolean).join(' · ');
+// SCR remittances: the Liquidating Officer of the municipality who received them (matched later in that officer's cash exam).
+// The list: officers of the municipality encoded as Liquidating Officer or with the Liquidating function, plus names typed before.
+function loNames(refs, f, lgu) {
+  const mun = lgu.data.kind === 'barangay' ? lgu.data.parentId : lgu.id;
+  const inMun = (id) => id === mun || refs.lgu[id]?.data.parentId === mun;
+  const los = f.officers.filter((o) => o.lguId === mun && (/liquidating/i.test(o.designation || '') || f.exams.some((e) => e.officerId === o.id && (e.functions || []).includes('liquidating')))).map((o) => o.name);
+  const typed = f.reports.filter((r) => r.kind === 'SCR' && inMun(r.lguId)).flatMap((r) => (r.deposits || []).map((d) => String(d.ref || '').trim())).filter((v) => v && !/^(mto\s*)?or\b|^\d+$/i.test(v));
+  return [...new Set([...los, ...typed])].sort((a, b) => a.localeCompare(b));
+}
+// "Cash Deposit Slip · No. 123456" or, for a remittance, "Sheena Gonzaga · OR 12345" (the No. is optional).
+export const depRefText = (d, rem = false) => [d.ref || '', d.no ? `${rem ? 'OR' : 'No.'} ${d.no}` : ''].filter(Boolean).join(' · ');
 
 // The next (n) for an unnumbered report of the same officer, kind, date and fund: 0 when it is the only one.
 function dupeOf(f, officerId, K, date, fund, skipId) {
