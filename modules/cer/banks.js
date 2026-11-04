@@ -19,7 +19,7 @@ import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
 import { exportXlsx, lastChecksOf } from './forms.js';
-import { repName } from './collections.js';
+import { repName, depRefText } from './collections.js';
 
 const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
 const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
@@ -107,7 +107,7 @@ export async function banksView(ctx) {
   const items = [];
   reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => (r.deposits || []).forEach((d) => {
     const key = `dep|${r.id}|${d.date}|${d.ref}|${d.amount}`;
-    items.push({ key, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0,
+    items.push({ key, kind: 'dep', date: d.date, ref: depRefText(d), amount: +d.amount || 0,
       from: `${r.pending ? 'Not yet reported' : repName(r)} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });
   }));
   advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0,
@@ -484,7 +484,7 @@ export async function bankFindings(audit) {
     if (!rec) { add(`bk0|${acct.id}`, `${name}: no bank statement or reconciliation yet.`); return; }
     const found = rec.found || {};
     const items = [];
-    reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => (r.deposits || []).forEach((d) => items.push({ key: `dep|${r.id}|${d.date}|${d.ref}|${d.amount}`, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0 })));
+    reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => (r.deposits || []).forEach((d) => items.push({ key: `dep|${r.id}|${d.date}|${d.ref}|${d.amount}`, kind: 'dep', date: d.date, ref: depRefText(d), amount: +d.amount || 0 })));
     advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
     (rec.otherChecks || []).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0 }));
     const list = items.filter((x) => x.date && x.date <= asOf);
