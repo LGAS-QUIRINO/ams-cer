@@ -87,7 +87,7 @@ export async function countView(ctx) {
   const caChecks = advs.filter((a) => a.officerId === o.id).map((a) => a.checkNo);
   const auditor = isAuditor(refs);
   const editSplit = DRAFT.editSplit || Object.values(d.split || {}).some((v) => v !== '' && v !== null && v !== undefined);
-  const choices = cutoffChoices(f, o.id, audit.countDate);
+  const choices = cutoffChoices(f, o.id, audit.countDate, exam.id);
   const lgu = refs.lgu[audit.lguId];
   const otherForms = [...formsForLgu(lgu), ['chk', 'Checks']];
   const mv = forms.filter((x) => x.face), nomv = forms.filter((x) => !x.face);

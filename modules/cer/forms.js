@@ -1444,8 +1444,11 @@ export function cutoffLines(f, examId) {
     return { ...l, b, form: b ? b.form : l.form, from: b ? b.from : l.from, to: b ? b.to : l.to, ns: b ? !!b.noSerial : !!l.ns, ranges: l.ranges || [] }; });
 }
 // The officer's booklets for the cut-off dropdown: in hand per the register on the count date (beginning + received), not lost.
-export function cutoffChoices(f, officerId, countDate) {
-  return f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.status !== 'lost' && b.issuedDate && b.issuedDate <= countDate)
+// Only booklets with numbers still unused per the register (ORs encoded in Collections are used) and not yet entered at this cut-off.
+export function cutoffChoices(f, officerId, countDate, examId = '') {
+  const entered = new Set(examId ? cutoffLines(f, examId).map((l) => l.bookletId).filter(Boolean) : []);
+  return f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.status !== 'lost' && b.issuedDate && b.issuedDate <= countDate
+      && !entered.has(b.id) && rawUnused(b, countDate).length)
     .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
 }
 export const bookletName = (b) => `${FORM_SHORT[b.form] || b.form} · ${b.noSerial ? `${b.qty} pcs (no serial)` : `${b.from}–${b.to}`}${b.form === 'chk' && b.fund ? ` · ${b.fund}` : ''}`;
