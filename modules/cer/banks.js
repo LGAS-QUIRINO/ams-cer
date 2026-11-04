@@ -13,7 +13,8 @@
 //                { auditId, accountId, lguId, asOf, ending, source, book, bankItems[{ date, type: 'credit'|'debit', particulars, amount }],
 //                  found{ <item key>: bankDate }, otherChecks[{ id, date, checkNo, payee, amount }], lines[] (imported; saved in parts <id>#lines<k> { part, recId, k, lines }, lineParts = how many),
 //                  opening (bank balance at the last cash exam), account (account No. read from it), covFrom / covTo (coverage imported),
-//                  lineOf{ <item key>: line i } (which imported line each item matched; unmatched lines count as bank credits / debits) }
+//                  lineOf{ <item key>: line i } (which imported line each item matched; unmatched lines count as bank credits / debits),
+//                  noAuto[] (item keys unticked by hand: never matched again automatically) }
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
@@ -118,6 +119,14 @@ export async function banksView(ctx) {
   const examIds = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => e.id));
   const cuts = lastChecksOf({ cutoffs: cut0.map(flat), booklets: books0.map(flat) }, examIds);
   const afterCut = (x) => { if (x.kind !== 'chk') return false; const n = +chqKey(x.ref); return !!n && cuts.some((c) => n >= c.from && n <= c.to && n > c.last); };
+  // Items encoded after the upload: matched against the statement already uploaded (unmatched by hand stay unmatched).
+  const auto = (() => {
+    const lns = rec.lines || []; if (!lns.length || !enc) return null;
+    const found = { ...(rec.found || {}) }, lineOf = { ...(rec.lineOf || {}) };
+    const used = new Set(Object.entries(lineOf).filter(([k]) => found[k]).map(([, i]) => i));
+    const n = matchItems(list.filter((x) => !found[x.key] && !(rec.noAuto || []).includes(x.key)), lns, found, lineOf, used);
+    return n ? { n, found, lineOf } : null;
+  })();
   list.forEach((x) => { x.after = afterCut(x) && !rec.found[x.key]; });
   const result = (x) => {
     const bd = rec.found[x.key];
@@ -239,7 +248,7 @@ export async function banksView(ctx) {
     ['dc', 'Deposits and Checks', `${nFound} of ${list.length} found in the bank`, dcBody],
     ['rc', 'Reconciliation', diff === null ? 'Type the cashbook balance' : Math.abs(diff) < 0.005 ? 'Agrees' : `Difference ₱${money(diff)}`, rcBody]]);
 
-  const ctxw = { refs, audit, acct, recId, rec, rec0, list, asOf, enc, cov, unmatched, accounts, funds, credits, debits, dit, oc, adjBank, adjBook, diff };
+  const ctxw = { refs, audit, acct, recId, rec, rec0, list, auto, asOf, enc, cov, unmatched, accounts, funds, credits, debits, dit, oc, adjBank, adjBook, diff };
   return { crumb, body, wire: () => { wireTop(); wireBanks(ctxw); } };
 }
 const acctLabel = (x) => `${x.bank || 'Bank'} · ${x.accountNo || '—'} · ${x.fund}`;
@@ -292,8 +301,9 @@ function wireBanks(c) {
   if ($('#bk-savefound')) $('#bk-savefound').onclick = () => {
     UI.edit = false;
     const found = { ...(rec.found || {}) };
-    $$('tr[data-key]').forEach((tr) => { const k = tr.dataset.key; const bd = $('.bk-bd', tr).value; if ($('.bk-chk', tr).checked && bd) found[k] = bd; else delete found[k]; });
-    save({ found }, 'Saved.');
+    const noAuto = new Set(rec.noAuto || []);
+    $$('tr[data-key]').forEach((tr) => { const k = tr.dataset.key; const bd = $('.bk-bd', tr).value; if ($('.bk-chk', tr).checked && bd) { found[k] = bd; noAuto.delete(k); } else { if (found[k]) noAuto.add(k); delete found[k]; } });
+    save({ found, noAuto: [...noAuto] }, 'Saved.');
   };
   $$('[data-rmoth]').forEach((b) => { b.onclick = () => save({ otherChecks: (rec.otherChecks || []).filter((x) => x.id !== b.dataset.rmoth) }, 'Check removed.'); });
   $('#bk-addchk').onclick = async () => {
@@ -310,11 +320,34 @@ function wireBanks(c) {
     if (out) save({ otherChecks: [...(rec.otherChecks || []), out] }, `Check No. ${out.checkNo} added.`);
   };
   $('#bk-import').onclick = () => importStatement(c, save);
+  if (c.auto && !UI.edit) save({ found: c.auto.found, lineOf: c.auto.lineOf }, `${c.auto.n} matched with the uploaded statement.`);
 }
 
 /* ---------- import a soft copy ---------- */
 // Check Nos. compared by digits only, without leading zeros (bank 0001749813 = books 1749813).
 const chqKey = (v) => String(v ?? '').replace(/\D/g, '').replace(/^0+/, '');
+// Matches the book items to the bank lines: a check No. in the Cheque Number column wins; otherwise deposits to credits and
+// checks to debits of the same amount, nearest date (bank on or after the book date: within 15 days for a deposit, a year for a check).
+// found / lineOf / used are filled in; returns how many items were matched.
+function matchItems(list, lines, found, lineOf, used) {
+  let n = 0;
+  const take = (x, l) => { used.add(l.i); found[x.key] = l.date; lineOf[x.key] = l.i; n++; };
+  const tryMatch = (x, pick) => {
+    if (found[x.key]) return;
+    const cands = lines.filter((l) => !used.has(l.i) && Math.abs((x.kind === 'dep' ? l.credit : l.debit) - x.amount) < 0.005 && l.date && (!x.date || (days(x.date, l.date) >= -1 && days(x.date, l.date) <= (x.kind === 'dep' ? 15 : 366))));
+    const l = pick(cands, x); if (l) take(x, l);
+  };
+  list.filter((x) => x.kind === 'chk' && !found[x.key]).forEach((x) => {
+    const k = chqKey(x.ref); if (!k) return;
+    const same = lines.filter((l) => !used.has(l.i) && l.debit && l.chq && chqKey(l.chq) === k);
+    const l = same.find((y) => Math.abs(y.debit - x.amount) < 0.005);
+    if (l) take(x, l);
+    else same.forEach((y) => { y.note = `Check No. ${x.ref} is ₱${money(x.amount)} in the books`; });
+  });
+  list.filter((x) => x.kind === 'chk').forEach((x) => tryMatch(x, (cs) => cs.find((l) => x.ref && !l.chq && chqKey(l.desc).includes(chqKey(x.ref))) || cs.filter((l) => !l.chq || !chqKey(x.ref)).sort((a, b) => Math.abs(days(x.date, a.date)) - Math.abs(days(x.date, b.date)))[0]));
+  list.filter((x) => x.kind === 'dep').forEach((x) => tryMatch(x, (cs) => cs.sort((a, b) => Math.abs(days(x.date, a.date)) - Math.abs(days(x.date, b.date)))[0]));
+  return n;
+}
 async function importStatement(c, save) {
   const { rec, list, acct } = c;
   const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.xlsx,.xls,.csv';
@@ -339,23 +372,10 @@ async function importStatement(c, save) {
       }
       // Match: a check No. in the Cheque Number column (or the description) wins; otherwise deposits to credits and checks to debits
       // of the same amount, nearest date (bank on or after the book date: within 15 days for a deposit, a year for a check).
-      const found = { ...(rec.found || {}) };
+      // Matches typed by hand stay; the import's own matches are made again against the new lines.
+      const found = Object.fromEntries(Object.entries(rec.found || {}).filter(([k]) => !(rec.lineOf && k in rec.lineOf)));
       const used = new Set(), lineOf = {};
-      const tryMatch = (x, pick) => {
-        if (found[x.key]) return;
-        const cands = lines.filter((l) => !used.has(l.i) && Math.abs((x.kind === 'dep' ? l.credit : l.debit) - x.amount) < 0.005 && l.date && (!x.date || (days(x.date, l.date) >= -1 && days(x.date, l.date) <= (x.kind === 'dep' ? 15 : 366))));
-        const l = pick(cands, x); if (!l) return;
-        used.add(l.i); found[x.key] = l.date; lineOf[x.key] = l.i;
-      };
-      list.filter((x) => x.kind === 'chk' && !found[x.key]).forEach((x) => {
-        const k = chqKey(x.ref); if (!k) return;
-        const same = lines.filter((l) => !used.has(l.i) && l.debit && l.chq && chqKey(l.chq) === k);
-        const l = same.find((y) => Math.abs(y.debit - x.amount) < 0.005);
-        if (l) { used.add(l.i); found[x.key] = l.date; lineOf[x.key] = l.i; }
-        else same.forEach((y) => { y.note = `Check No. ${x.ref} is ₱${money(x.amount)} in the books`; });
-      });
-      list.filter((x) => x.kind === 'chk').forEach((x) => tryMatch(x, (cs) => cs.find((l) => x.ref && !l.chq && chqKey(l.desc).includes(chqKey(x.ref))) || cs.filter((l) => !l.chq || !chqKey(x.ref)).sort((a, b) => Math.abs(days(x.date, a.date)) - Math.abs(days(x.date, b.date)))[0]));
-      list.filter((x) => x.kind === 'dep').forEach((x) => tryMatch(x, (cs) => cs.sort((a, b) => Math.abs(days(x.date, a.date)) - Math.abs(days(x.date, b.date)))[0]));
+      matchItems(list.filter((x) => !(rec.noAuto || []).includes(x.key)), lines, found, lineOf, used);
       lines.forEach((l) => { l.matched = used.has(l.i); });
       // Beginning = the bank balance at the last cash exam (the line before the coverage, or worked back from the first line in it);
       // ending = the bank balance at the cash count (the last line in the coverage).
