@@ -106,16 +106,16 @@ async function journalView(ctx) {
     const form = enc ? entryHtml(ED.d, officers, !!ED.id, m) : '';
     const rows = list.map((c) => {
       const t = taxOf(c), ls = c.lines || [], fl = flagsOf(c);
-      return `<tr class="${c.id === ED.id ? 'cd-on' : ''}"><td>${esc(fmtDate(c.date))}</td><td class="mono">${esc(c.checkNo)}</td><td>${esc(c.ref || '')}</td><td>${esc(c.payee || '')}</td><td>${esc(c.cancelled ? 'Cancelled' : c.particulars || '')}</td>
+      return `<tr class="${c.id === ED.id ? 'cd-on' : ''}"><td>${esc(fmtDate(c.date))}</td><td class="mono">${esc(c.checkNo)}</td><td>${esc(c.ref || '')}</td><td title="${esc(c.payee || '')}">${esc(c.payee || '')}</td><td title="${esc(c.particulars || '')}">${esc(c.cancelled ? 'Cancelled' : c.particulars || '')}</td>
         <td class="r">${c.cancelled ? '' : money(checkAmountOf(c))}</td><td class="r">${c.cancelled || !hasEntry(c) ? '' : money(t.amount)}</td>
-        <td>${ls.map((l) => `<span class="mono">${esc(l.code)}</span> <small class="dim">${esc(l.name || names[l.code] || '')}</small>`).join('<br>')}</td>
-        <td class="r">${ls.map((l) => money(l.gross)).join('<br>')}</td><td>${c.cancelled || !hasEntry(c) ? '' : isTaxable(c) ? `Yes${vatText(c) ? ` <small class="dim">${vatText(c)}</small>` : ''}` : 'No'}</td>
+        <td title="${esc(ls.map((l) => `${l.code} ${l.name || names[l.code] || ''} ₱${money(l.gross)}`).join('\n'))}">${ls.length ? `<span class="mono">${esc(ls[0].code)}</span> <small class="dim">${esc(ls[0].name || names[ls[0].code] || '')}</small>${ls.length > 1 ? ` <span class="pill">+${ls.length - 1}</span>` : ''}` : ''}</td>
+        <td class="r">${ls.length ? money(grossOf(c)) : ''}</td><td>${c.cancelled || !hasEntry(c) ? '' : isTaxable(c) ? `Yes${vatText(c) ? ` <small class="dim">${vatText(c)}</small>` : ''}` : 'No'}</td>
         <td class="sd-notec">${fl.map((t) => `<span class="sd-flag">${esc(t)}</span>`).join('')}${enc ? `<button type="button" class="sd-note" data-note="${esc(c.id)}" title="Auditor's note">${c.note ? esc(c.note) : '<span class="dim">+ note</span>'}</button>` : esc(c.note || '')}</td>
         <td>${enc ? `<button class="btn sm ${!c.cancelled && !hasEntry(c) ? 'primary' : ''}" type="button" data-sdedit="${esc(c.id)}">${!c.cancelled && !hasEntry(c) ? 'Fill entry' : 'Edit'}</button>` : ''}</td></tr>`;
     }).join('');
     inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Check Disbursements Journal · ${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
         ${enc ? '<button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-xls">Export to Excel</button></div>
-      ${list.length ? `<div class="af-tbl"><table class="af-reg sd-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">DV / Payroll</th><th scope="col">Payee</th><th scope="col">Particulars</th><th scope="col" class="r">Check Amount</th><th scope="col" class="r">Tax</th><th scope="col">Account</th><th scope="col" class="r">Gross Amount</th><th scope="col">Taxable</th><th scope="col">Auditor's Note</th><th scope="col"></th></tr></thead>
+      ${list.length ? `<div class="af-tbl sd-scroll"><table class="af-reg sd-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">DV / Payroll</th><th scope="col">Payee</th><th scope="col">Particulars</th><th scope="col" class="r">Check Amount</th><th scope="col" class="r">Tax</th><th scope="col">Account</th><th scope="col" class="r">Gross Amount</th><th scope="col">Taxable</th><th scope="col">Auditor's Note</th><th scope="col"></th></tr></thead>
         <tbody>${rows}</tbody><tfoot><tr class="cd-foot"><td colspan="5">Total, ${esc(monthLabel(m))}</td><td class="r">${money(totals.a)}</td><td class="r">${money(totals.t)}</td><td></td><td class="r">${money(totals.g)}</td><td colspan="3"></td></tr></tfoot></table></div>`
         : `<div class="empty"><b>No check encoded for ${esc(monthLabel(m))}.</b></div>`}</div>`;
   } else {
