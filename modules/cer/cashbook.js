@@ -37,7 +37,7 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
   const byDay = {};
   f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && orIn(f, x, from, to)).forEach((x) => { const k = `${x.date}|${x.form}`; (byDay[k] = byDay[k] || []).push(x); });
   Object.entries(byDay).forEach(([k, xs]) => { const [date, form] = k.split('|'); const ns = xs.map((x) => +x.serial).sort((a, b) => a - b);
-    row(date, `Collections (${SHORT[form] || FORM_SHORT[form] || form})`, `OR Nos. ${ns[0]}${ns.length > 1 ? '–' + ns[ns.length - 1] : ''}`, { cltC: r2(xs.reduce((n, x) => n + (+x.amount || 0), 0)) }); });
+    row(date, `Collections (${SHORT[form] || FORM_SHORT[form] || form})`, `${ns[0]}${ns.length > 1 ? '–' + ns[ns.length - 1] : ''}`, { cltC: r2(xs.reduce((n, x) => n + (+x.amount || 0), 0)) }); });
   // Deposits (and, for the SCR, remittances to the MTO).
   f.reports.filter((r) => r.officerId === o.id).forEach((r) => (r.deposits || []).filter((d) => inS(d.date)).forEach((d) => {
     const rem = r.kind === 'SCR', toBank = !rem && r.fund === acct.fund;
@@ -47,9 +47,9 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
   const jrNos = new Set();
   jr.filter((c) => c.lguId === audit.lguId && c.acctId === acct.id && inS(c.date)).forEach((c) => {
     jrNos.add(chkNo(c.checkNo));
-    if (c.cancelled) { row(c.date, 'Cancelled', `Check No. ${c.checkNo}`, {}); return; }
+    if (c.cancelled) { row(c.date, 'Cancelled', String(c.checkNo), {}); return; }
     const ls = c.lines || [], mineCa = c.officerId === o.id;
-    row(c.date, [c.payee, c.particulars].filter(Boolean).join(' · '), [`Check No. ${c.checkNo}`, c.ref].filter(Boolean).join(' · '), {
+    row(c.date, [c.payee, c.particulars].filter(Boolean).join(' · '), [c.checkNo, c.ref].filter(Boolean).join(' · '), {
       cibK: checkAmountOf(c), ca: mineCa ? r2(ls.filter((l) => CA_ONLY.includes(l.code)).reduce((n, l) => n + (+l.gross || 0), 0)) : 0,
       pc: r2(ls.filter((l) => l.code === PC_CODE).reduce((n, l) => n + (+l.gross || 0), 0)) });
   });
@@ -57,10 +57,10 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
   advs.filter((a) => a.officerId === o.id && !a.beg && !a.fromJournal && inS(a.date)).forEach((a) => {
     const inJr = jrNos.has(chkNo(a.checkNo));
     if (inJr) return;
-    row(a.date, `Cash advance${a.particulars ? ' · ' + a.particulars : ''}`, a.checkNo ? `Check No. ${a.checkNo}` : '', { ca: +a.amount || 0, cibK: +a.amount || 0 });
+    row(a.date, `Cash advance${a.particulars ? ' · ' + a.particulars : ''}`, a.checkNo ? String(a.checkNo) : '', { ca: +a.amount || 0, cibK: +a.amount || 0 });
   });
   // Liquidations and refunds.
-  liqs.filter((l) => l.officerId === o.id && (inS(l.date) || l.countAnyway)).forEach((l) => row(l.date, l.type === 'refund' ? 'Refund of cash advance' : `Liquidation${l.particulars && !/^liquidation$/i.test(l.particulars) ? ' · ' + l.particulars : ''}`, l.type === 'refund' ? `OR No. ${l.ref || ''}` : l.ref || '', { ca: -(+l.amount || 0) }));
+  liqs.filter((l) => l.officerId === o.id && (inS(l.date) || l.countAnyway)).forEach((l) => row(l.date, l.type === 'refund' ? 'Refund of cash advance' : `Liquidation${l.particulars && !/^liquidation$/i.test(l.particulars) ? ' · ' + l.particulars : ''}`, l.ref || '', { ca: -(+l.amount || 0) }));
   // Typed here: bank credits and debits, petty cash payments.
   (cb.other || []).filter((x) => inS(x.date)).forEach((x) => row(x.date, x.part || OTHER[x.type], x.ref || '',
     { otherId: x.id, ...(x.type === 'bankCr' ? { cibD: +x.amount || 0 } : x.type === 'bankDr' ? { cibK: +x.amount || 0 } : { pc: -(+x.amount || 0) }) }));
