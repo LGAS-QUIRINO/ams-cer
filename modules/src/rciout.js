@@ -1,6 +1,6 @@
 // Source Documents · Print, and Export to Excel, PDF and Word, in the layout shown on screen: title, office,
-// bank · account No. · fund, month, the bordered table, Total. Paper: long (8.5 x 13 in), portrait, 0.5 in margins.
-// spec: { title, office, acct, month, cols: [{ h, w (inches), right }], rows: [[cell]], total: [cell], empty }
+// bank · account No. · fund, month, the bordered table, Total. Paper: long (8.5 x 13 in), portrait (landscape: true), 0.5 in margins.
+// spec: { title, office, acct, month, landscape, cols: [{ h, w (inches), right, g (group heading over it, e.g. DEBIT) }], rows: [[cell]], total: [cell], empty }
 //   cell: a string, a number (money), or { t, span, right, bold }. Text may hold line breaks (\n).
 import { loadExcelJS } from '../cer/wp.js';
 
@@ -30,13 +30,23 @@ function cellsOf(spec, row, bold) {
   });
 }
 const bodyRows = (spec) => (spec.rows.length ? spec.rows.map((r) => cellsOf(spec, r)) : [[{ t: spec.empty || 'None.', num: null, span: spec.cols.length, col: 0, center: true }]]);
+// The heading: one row, or two when columns are grouped (the group over its columns; the others span both rows).
+function heads(spec) {
+  const r1 = [], r2 = [], two = spec.cols.some((c) => c.g);
+  spec.cols.forEach((c, i) => {
+    if (!c.g) r1.push({ h: c.h, col: i, span: 1, rows: two ? 2 : 1 });
+    else { const last = r1[r1.length - 1]; if (last && last.g === c.g) last.span++; else r1.push({ h: c.g, g: c.g, col: i, span: 1, rows: 1 }); r2.push({ h: c.h, col: i, span: 1 }); }
+  });
+  return { two, r1, r2 };
+}
+const pageW = (spec) => (spec.landscape ? 13 : 8.5);
 const widthOf = (spec, c) => spec.cols.slice(c.col, c.col + c.span).reduce((n, x) => n + x.w, 0);
 
 /* ---------- Print ---------- */
 export function htmlDoc(spec) {
   const td = (c) => `<td${c.span > 1 ? ` colspan="${c.span}"` : ''} class="${[c.right ? 'r' : '', c.center ? 'c' : '', c.bold ? 'b' : ''].join(' ')}">${esc(c.t).replace(/\n/g, '<br>')}</td>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(spec.title)}</title><style>
-    @page{size:8.5in 13in; margin:0.5in}
+    @page{size:${spec.landscape ? '13in 8.5in' : '8.5in 13in'}; margin:0.5in}
     body{font-family:Arial,Helvetica,sans-serif; font-size:${spec.cols.length > 6 ? 9 : 10}pt; color:#000; margin:0}
     h1{text-align:center; font-size:13pt; margin:0 0 6pt; letter-spacing:.5px; text-transform:uppercase}
     p.h{text-align:center; margin:0 0 10pt; line-height:1.4}
@@ -46,7 +56,7 @@ export function htmlDoc(spec) {
     thead{display:table-header-group} tr{break-inside:avoid}
     .r{text-align:right} .c{text-align:center} .b{font-weight:bold}
   </style></head><body><h1>${esc(spec.title)}</h1><p class="h"><b>${esc(spec.office)}</b><br>${esc(spec.acct)}<br>${esc(spec.month)}</p>
-  <table><colgroup>${spec.cols.map((c) => `<col style="width:${c.w}in">`).join('')}</colgroup><thead><tr>${spec.cols.map((c) => `<th>${esc(c.h)}</th>`).join('')}</tr></thead>
+  <table><colgroup>${spec.cols.map((c) => `<col style="width:${c.w}in">`).join('')}</colgroup><thead>${(() => { const H = heads(spec); return `<tr>${H.r1.map((x) => `<th${x.span > 1 ? ` colspan="${x.span}"` : ''}${x.rows > 1 ? ' rowspan="2"' : ''}>${esc(x.h)}</th>`).join('')}</tr>${H.two ? `<tr>${H.r2.map((x) => `<th>${esc(x.h)}</th>`).join('')}</tr>` : ''}`; })()}</thead>
   <tbody>${bodyRows(spec).map((r) => `<tr>${r.map(td).join('')}</tr>`).join('')}<tr>${cellsOf(spec, spec.total, true).map(td).join('')}</tr></tbody></table></body></html>`;
 }
 export function printDoc(spec) {
@@ -61,18 +71,22 @@ export function printDoc(spec) {
 export async function xlsxDoc(spec, file) {
   const ExcelJS = await loadExcelJS();
   const n = spec.cols.length, wb = new ExcelJS.Workbook(), ws = wb.addWorksheet(spec.sheet || 'Report');
-  ws.pageSetup = { paperSize: 14, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, printTitlesRow: '6:6',
+  const H = heads(spec), hEnd = H.two ? 7 : 6;
+  ws.pageSetup = { paperSize: 14, orientation: spec.landscape ? 'landscape' : 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, printTitlesRow: `6:${hEnd}`,
     margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } };   // 14 = Folio, 8.5 x 13 in
-  const chars = spec.cols.map((c) => Math.round(c.w * 13.5));
+  const chars = spec.cols.map((c) => Math.round(c.w * 13.5));   // ~13.5 characters per inch
   ws.columns = chars.map((width) => ({ width }));
   const font = { name: 'Arial', size: n > 6 ? 9 : 10 };
   const line = { style: 'thin', color: { argb: 'FF000000' } }, box = { top: line, left: line, bottom: line, right: line };
   const title = (r, text, f) => { ws.mergeCells(r, 1, r, n); const c = ws.getCell(r, 1); c.value = text; c.font = { ...font, ...f }; c.alignment = { horizontal: 'center' }; };
   title(1, spec.title.toUpperCase(), { bold: true, size: 13 });
   title(2, spec.office, { bold: true }); title(3, spec.acct); title(4, spec.month);
-  const hr = ws.getRow(6); spec.cols.forEach((h, i) => { const c = hr.getCell(i + 1); c.value = h.h; c.font = { ...font, bold: true }; c.border = box; c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; });
-  hr.height = 28;
-  let r = 7;
+  const hcell = (r, col, text, bold) => { const c = ws.getCell(r, col + 1); c.value = text; c.font = { ...font, bold }; c.border = box; c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; };
+  for (let r0 = 6; r0 <= hEnd; r0++) for (let i = 0; i < n; i++) ws.getCell(r0, i + 1).border = box;
+  H.r1.forEach((x) => { hcell(6, x.col, x.h, !x.g); if (x.span > 1 || x.rows > 1) ws.mergeCells(6, x.col + 1, 5 + x.rows, x.col + x.span); });
+  H.r2.forEach((x) => hcell(7, x.col, x.h, true));
+  ws.getRow(6).height = H.two ? 18 : 28; if (H.two) ws.getRow(7).height = 18;
+  let r = hEnd + 1;
   const put = (cells) => {
     const row = ws.getRow(r); let lines = 1;
     for (let i = 1; i <= n; i++) row.getCell(i).border = box;
@@ -94,14 +108,16 @@ export async function pdfDoc(spec, file) {
   await loadScript('lib/jspdf.umd.min.js', () => !!window.jspdf);
   await loadScript('lib/jspdf.plugin.autotable.min.js', () => !!(window.jspdf && window.jspdf.jsPDF.API.autoTable));
   const { jsPDF } = window.jspdf;
-  const pdf = new jsPDF({ unit: 'in', format: [8.5, 13], orientation: 'portrait' });
-  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(13); pdf.text(spec.title.toUpperCase(), 4.25, 0.75, { align: 'center' });
-  pdf.setFontSize(10); pdf.text(spec.office, 4.25, 1.0, { align: 'center' });
-  pdf.setFont('helvetica', 'normal'); pdf.text(spec.acct, 4.25, 1.18, { align: 'center' }); pdf.text(spec.month, 4.25, 1.36, { align: 'center' });
+  const pdf = new jsPDF({ unit: 'in', format: [8.5, 13], orientation: spec.landscape ? 'landscape' : 'portrait' });
+  const mid = pageW(spec) / 2;
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(13); pdf.text(spec.title.toUpperCase(), mid, 0.75, { align: 'center' });
+  pdf.setFontSize(10); pdf.text(spec.office, mid, 1.0, { align: 'center' });
+  pdf.setFont('helvetica', 'normal'); pdf.text(spec.acct, mid, 1.18, { align: 'center' }); pdf.text(spec.month, mid, 1.36, { align: 'center' });
   const cell = (x) => ({ content: x.t, colSpan: x.span, styles: { halign: x.center ? 'center' : x.right ? 'right' : 'left', fontStyle: x.bold ? 'bold' : 'normal' } });
   const body = [...bodyRows(spec), cellsOf(spec, spec.total, true)].map((r) => r.map(cell));
-  const tw = spec.cols.reduce((s, c) => s + c.w, 0), side = (8.5 - tw) / 2;
-  pdf.autoTable({ startY: 1.55, head: [spec.cols.map((c) => c.h)], body, theme: 'grid', margin: { left: side, right: side, top: 0.5, bottom: 0.5 },
+  const tw = spec.cols.reduce((s, c) => s + c.w, 0), side = (pageW(spec) - tw) / 2, H = heads(spec);
+  const head = [H.r1.map((x) => ({ content: x.h, colSpan: x.span, rowSpan: x.rows, styles: { fontStyle: x.g ? 'normal' : 'bold' } })), ...(H.two ? [H.r2.map((x) => x.h)] : [])];
+  pdf.autoTable({ startY: 1.55, head, body, theme: 'grid', margin: { left: side, right: side, top: 0.5, bottom: 0.5 },
     styles: { font: 'helvetica', fontSize: spec.cols.length > 6 ? 8 : 9, textColor: 0, lineColor: 0, lineWidth: 0.01, cellPadding: 0.05, valign: 'top', overflow: 'linebreak' },
     headStyles: { fillColor: false, textColor: 0, fontStyle: 'bold', halign: 'center', valign: 'middle' },
     columnStyles: Object.fromEntries(spec.cols.map((c, i) => [i, { cellWidth: c.w }])) });
@@ -120,11 +136,15 @@ export async function docxDoc(spec, file) {
   const cell = (x, head) => new X.TableCell({ borders, columnSpan: x.span > 1 ? x.span : undefined, width: { size: Math.round(widthOf(spec, x) * TW), type: X.WidthType.DXA },
     verticalAlign: head ? X.VerticalAlign.CENTER : X.VerticalAlign.TOP, margins: { top: 40, bottom: 40, left: 70, right: 70 },
     children: [para(x.t, { bold: x.bold || head, align: head || x.center ? A.CENTER : x.right ? A.RIGHT : A.LEFT })] });
-  const rows = [new X.TableRow({ tableHeader: true, cantSplit: true, children: spec.cols.map((c, i) => cell({ t: c.h, span: 1, col: i }, true)) })];
+  const H = heads(spec);
+  const hc = (x, bold) => new X.TableCell({ borders, columnSpan: x.span > 1 ? x.span : undefined, rowSpan: x.rows > 1 ? x.rows : undefined, width: { size: Math.round(widthOf(spec, x) * TW), type: X.WidthType.DXA },
+    verticalAlign: X.VerticalAlign.CENTER, margins: { top: 40, bottom: 40, left: 70, right: 70 }, children: [para(x.h, { bold, align: A.CENTER })] });
+  const rows = [new X.TableRow({ tableHeader: true, cantSplit: true, children: H.r1.map((x) => hc(x, !x.g)) })];
+  if (H.two) rows.push(new X.TableRow({ tableHeader: true, cantSplit: true, children: H.r2.map((x) => hc(x, true)) }));
   [...bodyRows(spec), cellsOf(spec, spec.total, true)].forEach((r) => rows.push(new X.TableRow({ cantSplit: true, children: r.map((x) => cell(x)) })));
   const tw = spec.cols.reduce((s, c) => s + c.w, 0);
   const doc = new X.Document({ sections: [{
-    properties: { page: { size: { width: 8.5 * TW, height: 13 * TW }, margin: { top: 0.5 * TW, bottom: 0.5 * TW, left: 0.5 * TW, right: 0.5 * TW } } },
+    properties: { page: { size: { width: 8.5 * TW, height: 13 * TW, orientation: spec.landscape ? X.PageOrientation.LANDSCAPE : X.PageOrientation.PORTRAIT }, margin: { top: 0.5 * TW, bottom: 0.5 * TW, left: 0.5 * TW, right: 0.5 * TW } } },
     children: [para(spec.title.toUpperCase(), { bold: true, size: 26, align: A.CENTER, after: 120 }), para(spec.office, { bold: true, align: A.CENTER, size: 20 }), para(spec.acct, { align: A.CENTER, size: 20 }), para(spec.month, { align: A.CENTER, after: 200, size: 20 }),
       new X.Table({ width: { size: Math.round(tw * TW), type: X.WidthType.DXA }, columnWidths: spec.cols.map((c) => Math.round(c.w * TW)), layout: X.TableLayoutType.FIXED, rows })] }] });
   save(await X.Packer.toBlob(doc), file);

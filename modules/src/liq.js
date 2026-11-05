@@ -102,10 +102,16 @@ export async function liqView(c) {
     <p class="af-note">The same liquidations as in Cash Examination, Cash Advances. Listed under the bank account of the cash advance check, by the date of the liquidation.</p></div>`;
 
   const spec = () => ({ title: 'Liquidation Journal', sheet: 'Liquidation Journal', office: agencyName(refs, lgu), acct: acctLabel(acct), month: monthLabel(m), empty: 'No liquidation this month.',
-    cols: [{ h: 'Date', w: 0.8 }, { h: 'Type', w: 0.74 }, { h: 'LR No. / OR No.', w: 0.72 }, { h: 'Particulars', w: 1.24 }, { h: 'Debit Account(s)', w: 1.58 }, { h: 'Amount', w: 0.8, right: true }, { h: 'Credit Account', w: 0.92 }, { h: 'For Check No.', w: 0.68 }],
-    rows: list.map((l) => { const deb = debitsOf(l), a = advOf(l.advanceId);
-      return [fmtDate(l.date), l.type === 'refund' ? 'Refund' : 'Liquidation', l.ref || '', liqText(l, a), deb.map((x) => `${x.code} ${names[x.code] || x.name || ''}${deb.length > 1 ? ` – ${money(x.amount)}` : ''}`).join('\n'), r2(l.amount), acctTxt(creditOf(l)), forTxt(l)]; }),
-    total: [{ t: 'Total', span: 5 }, total, { t: '', span: 2 }] });
+    landscape: true,
+    cols: [{ h: 'Date', w: 0.85 }, { h: 'Type', w: 0.85 }, { h: 'LR No. / OR No.', w: 0.9 }, { h: 'Particulars', w: 1.9 },
+      { h: 'Account Code', w: 0.95, g: 'DEBIT' }, { h: 'Account Name', w: 1.4, g: 'DEBIT' }, { h: 'Amount', w: 1.0, right: true, g: 'DEBIT' },
+      { h: 'Account Code', w: 0.95, g: 'CREDIT' }, { h: 'Account Name', w: 1.3, g: 'CREDIT' }, { h: 'Amount', w: 1.0, right: true, g: 'CREDIT' }, { h: 'For Check No.', w: 0.8 }],
+    // One row per debit account; the date, particulars, credit and check on the first.
+    rows: list.flatMap((l) => { const deb = debitsOf(l), a = advOf(l.advanceId), cr = creditOf(l);
+      return (deb.length ? deb : [null]).map((x, i) => [...(i ? ['', '', '', ''] : [fmtDate(l.date), l.type === 'refund' ? 'Refund' : 'Liquidation', l.ref || '', liqText(l, a)]),
+        x ? x.code : '', x ? names[x.code] || x.name || '' : '', x ? r2(x.amount) : '',
+        ...(i ? ['', '', '', ''] : [cr, names[cr] || '', r2(l.amount), forTxt(l)])]); }),
+    total: [{ t: 'Total', span: 4 }, '', '', sumOf(list.flatMap(debitsOf)), '', '', total, ''] });
 
   const wire = () => {
     wireOut('lq', spec, `Liquidation Journal ${agencyName(refs, lgu)} ${acct.accountNo || ''} ${m}`, (msg) => toast(msg, 'bad'));
