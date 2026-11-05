@@ -9,7 +9,7 @@ import { moduleFrame } from '../../js/frame.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from '../cer/cer.js';
 import { exportXlsx, loadXlsx, excelDate } from '../cer/forms.js';
 import { accountsModal, DEFAULT_FUNDS } from '../cer/banks.js';
-import { loadCoa, loadJournal, CA_CODES, grossOf, taxOf, checkAmountOf, isCa, chkNo } from './journal.js';
+import { loadCoa, loadJournal, CA_CODES, grossOf, taxOf, checkAmountOf, isCa, isTaxable, chkNo } from './journal.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -82,36 +82,40 @@ async function journalView(ctx) {
   const tabs = `<div class="sd-tabs" role="tablist">${[['ckdj', 'Check Disbursements Journal'], ['tax', 'Tax Register'], ['rci', 'Report of Checks Issued']].map(([k, t]) => `<button type="button" role="tab" class="sd-tab ${k === tab ? 'on' : ''}" data-tab="${k}" aria-selected="${k === tab}">${t}</button>`).join('')}</div>`;
   const totals = { g: r2(list.reduce((n, c) => n + (c.cancelled ? 0 : grossOf(c)), 0)), t: r2(list.reduce((n, c) => n + taxOf(c).amount, 0)), a: r2(list.reduce((n, c) => n + checkAmountOf(c), 0)) };
   const offName = (id) => officers.find((o) => o.id === id)?.name || '';
+  const vatText = (c) => { const v = taxOf(c).vat; return v === true ? 'VAT' : v === false ? 'Non-VAT' : ''; };
 
   let inner = '';
   if (tab === 'ckdj') {
-    // The entry form: a new check, or the one being edited.
+    // The entry line: a new check, or the one being edited.
     const key = `${lgu.id}|${acct.id}`;
     if (ED.key !== key) Object.assign(ED, { key, id: '', d: null });
     if (ED.id && !mine.some((c) => c.id === ED.id)) Object.assign(ED, { id: '', d: null });
-    if (!ED.d) ED.d = { date: '', checkNo: '', ref: '', payee: '', particulars: '', lines: [blankLine()], tax: { rate: 0, one: false, amount: '' }, cancelled: false, officerId: '', note: '' };
+    if (!ED.d) ED.d = blankCheck('', '');
     const form = enc ? entryHtml(ED.d, officers, !!ED.id) : '';
     const rows = list.map((c) => {
-      const t = taxOf(c), ca = isCa(c);
-      const pills = [c.cancelled ? '<span class="pill p-flag">Cancelled</span>' : '', ca ? `<span class="pill sd-ca">Cash advance${c.officerId ? ' · ' + esc(offName(c.officerId)) : ''}</span>` : '',
-        !c.cancelled && t.amount ? `<span class="pill p-stock">${c.tax?.rate ? `${c.tax.rate}%${c.tax.one ? ' + 1%' : ''}` : 'Tax'}</span>` : '', inBook(c.checkNo) ? '' : '<span class="pill p-part">Not in a checkbook</span>'].filter(Boolean).join(' ');
-      return `<tr class="${c.id === ED.id ? 'cd-on' : ''}"><td>${esc(fmtDate(c.date))}</td><td class="mono">${esc(c.checkNo)}</td><td>${esc(c.ref || '')}</td><td>${esc(c.payee || '')}</td><td>${esc(c.particulars || '')}</td>
-        <td>${c.cancelled ? '' : (c.lines || []).map((l) => `<span class="mono">${esc(l.code)}</span> <small class="dim">${esc(l.name || names[l.code] || '')}</small>${(c.lines || []).length > 1 ? ` <small>₱${money(l.gross)}</small>` : ''}`).join('<br>')}</td>
-        <td class="r">${c.cancelled ? '' : money(grossOf(c))}</td><td class="r">${t.amount ? money(t.amount) : ''}</td><td class="r">${c.cancelled ? '' : money(checkAmountOf(c))}</td><td>${pills}</td><td><small>${esc(c.note || '')}</small></td>
-        <td>${enc ? `<button class="btn sm" type="button" data-sdedit="${esc(c.id)}">Edit</button>` : ''}</td></tr>`;
+      const t = taxOf(c), ca = isCa(c), ls = c.lines || [];
+      const tags = [c.cancelled ? '<span class="pill p-flag">Cancelled</span>' : '', ca ? `<span class="pill sd-ca">Cash advance${c.officerId ? ' · ' + esc(offName(c.officerId)) : ' · no officer'}</span>` : '',
+        inBook(c.checkNo) ? '' : '<span class="pill p-part">Not in a checkbook</span>'].filter(Boolean).join(' ');
+      return `<tr class="${c.id === ED.id ? 'cd-on' : ''}"><td>${esc(fmtDate(c.date))}</td><td class="mono">${esc(c.checkNo)}</td><td>${esc(c.ref || '')}</td><td>${esc(c.payee || '')}</td><td>${esc(c.cancelled ? 'Cancelled' : c.particulars || '')}</td>
+        <td class="r">${c.cancelled ? '' : money(checkAmountOf(c))}</td><td class="r">${c.cancelled ? '' : money(t.amount)}</td>
+        <td>${ls.map((l) => `<span class="mono">${esc(l.code)}</span> <small class="dim">${esc(l.name || names[l.code] || '')}</small>`).join('<br>')}</td>
+        <td class="r">${ls.map((l) => money(l.gross)).join('<br>')}</td><td>${c.cancelled ? '' : isTaxable(c) ? `Yes${vatText(c) ? ` <small class="dim">${vatText(c)}</small>` : ''}` : 'No'}</td>
+        <td class="sd-notec">${enc ? `<button type="button" class="sd-note" data-note="${esc(c.id)}" title="Auditor's note">${c.note ? esc(c.note) : '<span class="dim">+ note</span>'}</button>` : esc(c.note || '')}</td>
+        <td>${tags}</td><td>${enc ? `<button class="btn sm" type="button" data-sdedit="${esc(c.id)}">Edit</button>` : ''}</td></tr>`;
     }).join('');
     inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
         ${enc ? '<button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-xls">Export to Excel</button></div>
-      ${list.length ? `<div class="af-tbl"><table class="af-reg sd-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">Reference No.</th><th scope="col">Payee</th><th scope="col">Particulars</th><th scope="col">Account</th><th scope="col" class="r">Gross</th><th scope="col" class="r">Tax</th><th scope="col" class="r">Check Amount</th><th scope="col"></th><th scope="col">Auditor's Note</th><th scope="col"></th></tr></thead>
-        <tbody>${rows}</tbody><tfoot><tr class="cd-foot"><td colspan="6">Total, ${esc(monthLabel(m))}</td><td class="r">${money(totals.g)}</td><td class="r">${money(totals.t)}</td><td class="r">${money(totals.a)}</td><td colspan="3"></td></tr></tfoot></table></div>`
+      ${list.length ? `<div class="af-tbl"><table class="af-reg sd-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">DV / Payroll</th><th scope="col">Payee</th><th scope="col">Particulars</th><th scope="col" class="r">Check Amount</th><th scope="col" class="r">Tax</th><th scope="col">Account</th><th scope="col" class="r">Gross Amount</th><th scope="col">Taxable</th><th scope="col">Auditor's Note</th><th scope="col"></th><th scope="col"></th></tr></thead>
+        <tbody>${rows}</tbody><tfoot><tr class="cd-foot"><td colspan="5">Total, ${esc(monthLabel(m))}</td><td class="r">${money(totals.a)}</td><td class="r">${money(totals.t)}</td><td></td><td class="r">${money(totals.g)}</td><td colspan="4"></td></tr></tfoot></table></div>`
         : `<div class="empty"><b>No check encoded for ${esc(monthLabel(m))}.</b></div>`}</div>`;
   } else if (tab === 'tax') {
-    const tl = list.filter((c) => taxOf(c).amount);
+    const tl = list.filter(isTaxable);
     inner = `<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Tax Register · ${esc(monthLabel(m))}</h3><span class="pill">${tl.length}</span><button class="btn sm" type="button" id="sd-txls">Export to Excel</button></div>
-      ${tl.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Check No.</th><th scope="col">Date</th><th scope="col">Payee</th><th scope="col" class="r">Gross</th><th scope="col" class="r">Tax Base</th><th scope="col" class="r">5% or 3%</th><th scope="col" class="r">1%</th><th scope="col" class="r">Tax Amount</th></tr></thead>
-        <tbody>${tl.map((c) => { const t = taxOf(c); return `<tr><td class="mono">${esc(c.checkNo)}</td><td>${esc(fmtDate(c.date))}</td><td>${esc(c.payee || '')}</td><td class="r">${money(grossOf(c))}</td><td class="r">${t.base ? money(t.base) : ''}</td><td class="r">${t.main ? `${money(t.main)} <small class="dim">(${c.tax.rate}%)</small>` : ''}</td><td class="r">${t.one ? money(t.one) : ''}</td><td class="r">${money(t.amount)}</td></tr>`; }).join('')}</tbody>
-        <tfoot><tr class="cd-foot"><td colspan="5">Total</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).main, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).one, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).amount, 0)))}</td></tr></tfoot></table></div>`
-        : '<div class="empty"><b>No check with tax this month.</b></div>'}</div>`;
+      ${tl.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Check No.</th><th scope="col">Date</th><th scope="col">Payee</th><th scope="col">VAT / Non-VAT</th><th scope="col" class="r">Gross Amount</th><th scope="col" class="r">Tax Base</th><th scope="col" class="r">5% or 3%</th><th scope="col" class="r">1%</th><th scope="col" class="r">Tax Amount</th><th scope="col"></th></tr></thead>
+        <tbody>${tl.map((c) => { const t = taxOf(c); return `<tr><td class="mono">${esc(c.checkNo)}</td><td>${esc(fmtDate(c.date))}</td><td>${esc(c.payee || '')}</td><td>${vatText(c) || '<span class="pill p-part">Choose</span>'}</td><td class="r">${money(grossOf(c))}</td><td class="r">${t.base ? money(t.base) : ''}</td><td class="r">${money(t.main)}</td><td class="r">${money(t.one)}</td><td class="r"><b>${money(t.amount)}</b></td>
+          <td>${enc ? `<button class="btn sm" type="button" data-sdtax="${esc(c.id)}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
+        <tfoot><tr class="cd-foot"><td colspan="6">Total</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).main, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).one, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).amount, 0)))}</td><td></td></tr></tfoot></table></div>`
+        : '<div class="empty"><b>No taxable check this month.</b></div>'}</div>`;
   } else {
     inner = `<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Report of Checks Issued · ${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span><button class="btn sm" type="button" id="sd-print">Print</button><button class="btn sm" type="button" id="sd-rxls">Export to Excel</button></div>
       <div id="cer-print" class="rp-doc"><div class="rp-page"><h2 class="rp-title">REPORT OF CHECKS ISSUED</h2>
@@ -126,109 +130,174 @@ async function journalView(ctx) {
     wireTop();
     $$('[data-tab]').forEach((b) => { b.onclick = () => go({ tab: b.dataset.tab }); });
     const xRows = () => list.map((c) => ({ Date: fmtDate(c.date), 'Check No.': c.checkNo, 'Reference No.': c.ref || '', Payee: c.payee || '', Particulars: c.cancelled ? 'Cancelled' : c.particulars || '',
-      Accounts: (c.lines || []).map((l) => `${l.code} ${l.name || names[l.code] || ''}`).join('; '), Gross: c.cancelled ? 0 : grossOf(c), Tax: taxOf(c).amount, 'Check Amount': checkAmountOf(c), "Auditor's Note": c.note || '' }));
+      'Check Amount': checkAmountOf(c), 'Tax Amount': taxOf(c).amount, 'Account Code': (c.lines || []).map((l) => l.code).join('; '), 'Account Name': (c.lines || []).map((l) => l.name || names[l.code] || '').join('; '),
+      'Gross Amount': c.cancelled ? 0 : grossOf(c), Taxable: c.cancelled ? '' : isTaxable(c) ? 'YES' : 'NO', "Auditor's Note": c.note || '' }));
     const fileBase = `${agencyName(refs, lgu)} ${acct.accountNo || ''} ${m}`;
     if ($('#sd-xls')) $('#sd-xls').onclick = () => exportXlsx(`Check Disbursements Journal ${fileBase}.xlsx`, 'CkDJ', xRows());
-    if ($('#sd-txls')) $('#sd-txls').onclick = () => exportXlsx(`Tax Register ${fileBase}.xlsx`, 'Tax Register', list.filter((c) => taxOf(c).amount).map((c) => { const t = taxOf(c); return { 'Check No.': c.checkNo, Date: fmtDate(c.date), Payee: c.payee || '', Gross: grossOf(c), 'Tax Base': t.base || '', '5% or 3%': t.main || '', Rate: c.tax?.rate ? c.tax.rate + '%' : '', '1%': t.one || '', 'Tax Amount': t.amount }; }));
+    if ($('#sd-txls')) $('#sd-txls').onclick = () => exportXlsx(`Tax Register ${fileBase}.xlsx`, 'Tax Register', list.filter(isTaxable).map((c) => { const t = taxOf(c); return { 'Check No.': c.checkNo, Date: fmtDate(c.date), Payee: c.payee || '', 'VAT / Non-VAT': vatText(c), 'Gross Amount': grossOf(c), 'Tax Base': t.base || '', '5% or 3%': t.main, '1%': t.one, 'Tax Amount': t.amount }; }));
     if ($('#sd-rxls')) $('#sd-rxls').onclick = () => exportXlsx(`RCI ${fileBase}.xlsx`, 'RCI', list.map((c) => ({ Date: fmtDate(c.date), 'Check No.': c.checkNo, 'DV / Payroll No.': c.cancelled ? '' : c.ref || '', Payee: c.cancelled ? 'Cancelled' : c.payee || '', 'Nature of Payment': c.cancelled ? '' : c.particulars || '', Amount: checkAmountOf(c) })));
     if ($('#sd-print')) $('#sd-print').onclick = () => { document.body.classList.add('af-printing', 'rp-printing'); window.print(); document.body.classList.remove('af-printing', 'rp-printing'); };
-    $$('[data-sdedit]').forEach((b) => { b.onclick = () => { const c = mine.find((x) => x.id === b.dataset.sdedit); ED.id = c.id; ED.d = JSON.parse(JSON.stringify({ tax: { rate: 0, one: false, amount: '' }, lines: [blankLine()], ...c })); if (!ED.d.lines.length) ED.d.lines = [blankLine()]; ctx.rerender(); setTimeout(() => { const f = $('#sd-form'); if (f) f.scrollIntoView({ block: 'start' }); }, 0); }; });
+    $$('[data-sdedit]').forEach((b) => { b.onclick = () => { const c = mine.find((x) => x.id === b.dataset.sdedit); ED.id = c.id; ED.d = JSON.parse(JSON.stringify({ ...blankCheck('', ''), ...c })); if (c.cancelled) ED.d.particulars = 'Cancelled'; if (!ED.d.lines.length) ED.d.lines = [blankLine()]; ctx.rerender(); setTimeout(() => { const f = $('#sd-form'); if (f) f.scrollIntoView({ block: 'start' }); }, 0); }; });
+    // Auditor's note: typed in the table.
+    $$('[data-note]').forEach((b) => { b.onclick = async () => {
+      const c = mine.find((x) => x.id === b.dataset.note); let val = null;
+      await modal({ title: `Auditor's Note · Check No. ${c.checkNo}`, body: `<div class="field"><label for="sd-nt">Note</label><input class="input" id="sd-nt" value="${esc(c.note || '')}"></div>`,
+        onOpen: (bg) => { $('#sd-nt', bg).onkeydown = (e) => { if (e.key === 'Enter') $('.mf .btn.primary', bg).click(); }; },
+        buttons: [{ label: 'Cancel', value: null }, { label: 'Save', cls: 'primary', value: 'ok', check: (bg) => { val = $('#sd-nt', bg).value.trim(); return true; } }] });
+      if (val === null) return; const { id, ...rec } = c; await store.save('src_ckdj', id, { ...rec, note: val }, by(refs)); toast('Note saved.', 'ok');
+    }; });
+    // Tax Register: edit the tax of a check.
+    $$('[data-sdtax]').forEach((b) => { b.onclick = async () => {
+      const c = mine.find((x) => x.id === b.dataset.sdtax); const t = await taxModal(c); if (!t) return;
+      const { id, ...rec } = c; await store.save('src_ckdj', id, { ...rec, tax: t }, by(refs)); toast(`Tax of Check No. ${c.checkNo} saved.`, 'ok');
+    }; });
     if ($('#sd-imp')) $('#sd-imp').onclick = () => importJournal({ refs, lgu, acct, mine, coa, names });
-    if (enc && tab === 'ckdj') wireEntry({ refs, lgu, acct, mine, coa, names, officers, rerender: ctx.rerender });
+    if (enc && tab === 'ckdj') wireEntry({ refs, lgu, acct, mine, coa, names, rerender: ctx.rerender });
   };
   return { body, wire };
 }
 
-/* ---------- the entry form ---------- */
+/* ---------- the tax window (Tax Register) ---------- */
+// VAT or Non-VAT sets the base; the 5% or 3% and the 1% are computed and may be typed over (rounding).
+async function taxModal(c) {
+  const t0 = c.tax || {}, g = grossOf(c);
+  let out = null;
+  const comp = (vat) => { const base = vat ? r2(g / 1.12) : g; return { base, main: r2(base * (vat ? 5 : 3) / 100), one: r2(base / 100) }; };
+  const cur = taxOf(c);
+  await modal({ title: `Tax · Check No. ${c.checkNo || ''}${c.payee ? ' · ' + c.payee : ''}`, body: `
+    <div class="sd-taxw"><div class="field"><span class="cd-lbl">Payee is</span><div class="sd-vat"><label class="cer-tick"><input type="radio" name="sd-vat" value="1" ${t0.vat === true ? 'checked' : ''}> VAT</label><label class="cer-tick"><input type="radio" name="sd-vat" value="0" ${t0.vat === false ? 'checked' : ''}> Non-VAT</label></div></div>
+      <div class="field"><span class="cd-lbl">Gross Amount</span><div class="input cd-ro r">${money(g)}</div></div>
+      <div class="field"><span class="cd-lbl">Tax Base</span><div class="input cd-ro r" id="tw-base">${cur.base ? money(cur.base) : '—'}</div></div>
+      <div class="field"><label for="tw-main" id="tw-ml">${t0.vat === false ? '3%' : '5%'}</label><input class="input r" id="tw-main" inputmode="decimal" value="${t0.vat === true || t0.vat === false || cur.main ? money(cur.main) : ''}"></div>
+      <div class="field"><label for="tw-one">1%</label><input class="input r" id="tw-one" inputmode="decimal" value="${t0.vat === true || t0.vat === false || cur.one ? money(cur.one) : ''}"></div>
+      <div class="field"><span class="cd-lbl">Tax Amount</span><div class="input cd-ro r" id="tw-tot">${money(cur.amount)}</div></div></div>
+    <p class="af-note">VAT: base = gross ÷ 1.12, 5%. Non-VAT: base = gross, 3%. Both with 1%. Type over an amount to match the voucher.</p>`,
+    onOpen: (bg) => {
+      const tot = () => { $('#tw-tot', bg).textContent = money(r2((num($('#tw-main', bg).value) || 0) + (num($('#tw-one', bg).value) || 0))); };
+      $$('[name="sd-vat"]', bg).forEach((r) => { r.onchange = () => { const v = r.value === '1', x = comp(v); $('#tw-base', bg).textContent = money(x.base); $('#tw-ml', bg).textContent = v ? '5%' : '3%'; $('#tw-main', bg).value = money(x.main); $('#tw-one', bg).value = money(x.one); tot(); }; });
+      ['#tw-main', '#tw-one'].forEach((k) => { $(k, bg).oninput = tot; });
+    },
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Save Tax', cls: 'primary', value: 'ok', check: (bg) => {
+      const sel = $('[name="sd-vat"]:checked', bg); if (!sel) return bad('Choose VAT or Non-VAT.');
+      const vat = sel.value === '1', x = comp(vat), main = num($('#tw-main', bg).value), one = num($('#tw-one', bg).value);
+      if (main === null || one === null) return bad('Enter the amounts.');
+      // Only typed-over amounts are kept as typed; the rest follow the gross amount.
+      out = { taxable: true, vat, main: main === x.main ? null : main, one: one === x.one ? null : one };
+      if (r2(main + one) > g) return bad('The tax is more than the gross amount.');
+      return true;
+    } }] });
+  return out;
+}
+
+/* ---------- the entry line ---------- */
+const blankCheck = (date, checkNo) => ({ date, checkNo, ref: '', payee: '', particulars: '', lines: [blankLine()], tax: { taxable: false }, cancelled: false, officerId: '', note: '' });
+const isCancelText = (s) => /^\s*cancell?ed\s*$/i.test(s || '');
+const nextNo = (no) => { const m = /^(.*?)(\d+)$/.exec(String(no || '')); if (!m) return ''; const n = String(+m[2] + 1).padStart(m[2].length, '0'); return m[1] + n; };
+
 function entryHtml(d, officers, editing) {
-  const t = d.tax || {};
-  const lineRow = (l, i) => `<tr data-ln="${i}"><td><input class="input mono sd-code" list="sd-coa" value="${esc(l.code)}" placeholder="Type code or title" aria-label="Account code"></td>
-      <td class="sd-name">${esc(l.name || '')}</td><td><input class="input r sd-gross" inputmode="decimal" value="${l.gross === '' || l.gross === undefined ? '' : esc(money(l.gross))}" aria-label="Gross amount"></td>
-      <td>${d.lines.length > 1 ? `<button class="btn sm sd-xl" type="button" aria-label="Remove line">✕</button>` : ''}</td></tr>`;
-  return `<div class="panel sd-pan" id="sd-form"><div class="cd-orhead"><h3 class="cer-h3">${editing ? `Edit Check No. ${esc(d.checkNo)}` : 'New Check'}</h3></div>
-    <div class="sd-g5">
-      <div class="field"><label for="sd-date">Date</label><input class="input" type="date" id="sd-date" value="${esc(d.date)}"></div>
-      <div class="field"><label for="sd-no">Check No.</label><input class="input mono" id="sd-no" value="${esc(d.checkNo)}"></div>
-      <div class="field"><label for="sd-ref">Reference No.</label><input class="input" id="sd-ref" value="${esc(d.ref)}" placeholder="DV / Payroll No."></div>
-      <div class="field"><label for="sd-payee">Payee</label><input class="input" id="sd-payee" value="${esc(d.payee)}"></div>
-      <div class="field"><label for="sd-part">Particulars</label><input class="input" id="sd-part" value="${esc(d.particulars)}"></div></div>
-    <label class="cer-tick sd-cx"><input type="checkbox" id="sd-cancel" ${d.cancelled ? 'checked' : ''}> Cancelled</label>
-    <div id="sd-amts" ${d.cancelled ? 'hidden' : ''}>
-      <div class="af-tbl"><table class="af-reg cd-edit sd-lines"><thead><tr><th scope="col">Account Code</th><th scope="col">Account Name</th><th scope="col" class="r">Gross Amount</th><th scope="col"></th></tr></thead>
-        <tbody>${d.lines.map(lineRow).join('')}</tbody></table></div>
-      <div class="cd-actions sd-left"><button class="btn sm" type="button" id="sd-addln">+ Account line</button></div>
-      <div class="sd-g5">
-        <div class="field"><label for="sd-rate">Tax</label><select class="input" id="sd-rate"><option value="0" ${!t.rate && !num(t.amount) ? 'selected' : ''}>None</option><option value="5" ${t.rate === 5 ? 'selected' : ''}>5% · VAT (gross ÷ 1.12)</option><option value="3" ${t.rate === 3 ? 'selected' : ''}>3% · Non-VAT (gross)</option><option value="x" ${!t.rate && num(t.amount) ? 'selected' : ''}>Type the amount</option></select></div>
-        <label class="cer-tick sd-one" ${t.rate ? '' : 'hidden'}><input type="checkbox" id="sd-one" ${t.one ? 'checked' : ''}> 1%</label>
-        <div class="field"><label for="sd-tax">Tax Amount</label><input class="input r" id="sd-tax" inputmode="decimal" value="" ${!t.rate && num(t.amount) ? '' : 'readonly'}></div>
-        <div class="field"><label>Check Amount</label><div class="input cd-ro r" id="sd-chk"></div></div>
-        <div class="field" id="sd-offbox" hidden><label for="sd-off">Officer (cash advance)</label><select class="input" id="sd-off"><option value="">— Officer —</option>${officers.map((o) => `<option value="${esc(o.id)}" ${o.id === d.officerId ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div></div></div>
-    <div class="field sd-note"><label for="sd-note">Auditor's Note</label><input class="input" id="sd-note" value="${esc(d.note || '')}"></div>
-    <div class="cd-actions">${editing ? '<button class="btn" type="button" id="sd-del">Delete</button><button class="btn" type="button" id="sd-new">Cancel</button>' : '<button class="btn" type="button" id="sd-new">Clear</button>'}<button class="btn primary" type="button" id="sd-save">${editing ? 'Save Changes' : 'Save Check'}</button></div></div>`;
+  const ln = (l, i) => `<div class="sd-ln" data-ln="${i}">
+      <input class="input mono sd-code" list="sd-coa" value="${esc(l.code)}" placeholder="Code or title" aria-label="Account" title="${esc(l.name || '')}">
+      <input class="input r sd-gross" inputmode="decimal" value="${l.gross === '' || l.gross === undefined ? '' : esc(money(l.gross))}" aria-label="Gross amount">
+      ${i ? '<button class="btn sm sd-xl" type="button" aria-label="Remove account">✕</button>' : ''}</div>`;
+  const tx = d.tax || {};
+  return `<div class="panel sd-pan" id="sd-form">${editing ? `<div class="cd-orhead"><h3 class="cer-h3">Edit Check No. ${esc(d.checkNo)}</h3><button class="btn sm" type="button" id="sd-del">Delete</button><button class="btn sm" type="button" id="sd-new">Cancel</button></div>` : ''}
+    <div class="sd-line">
+      <div class="sd-f sd-w-date"><label for="sd-date">Date</label><input class="input" type="date" id="sd-date" value="${esc(d.date)}"></div>
+      <div class="sd-f sd-w-no"><label for="sd-no">Check No.</label><input class="input mono" id="sd-no" value="${esc(d.checkNo)}"></div>
+      <div class="sd-f sd-w-ref"><label for="sd-ref">DV / Payroll</label><input class="input" id="sd-ref" value="${esc(d.ref)}"></div>
+      <div class="sd-f sd-w-txt"><label for="sd-payee">Payee</label><input class="input" id="sd-payee" value="${esc(d.payee)}"></div>
+      <div class="sd-f sd-w-txt"><label for="sd-part">Particulars</label><input class="input" id="sd-part" value="${esc(d.particulars)}" placeholder="or Cancelled"></div>
+      <div class="sd-f sd-w-amt"><label>Check Amount</label><div class="input cd-ro r" id="sd-chk"></div></div>
+      <div class="sd-f sd-w-tax"><label for="sd-tax">Tax</label><button type="button" class="input cd-ro r sd-taxbtn" id="sd-tax" title="Tax Register">0.00</button></div>
+      <div class="sd-f sd-w-acct"><div class="sd-acch"><label>Account</label><label class="r">Gross Amount</label><span></span></div>
+        <div class="sd-accts">${d.lines.map(ln).join('')}<button type="button" class="sd-add" id="sd-addln">+ another account</button></div></div>
+      <div class="sd-f sd-w-yn"><label for="sd-taxable">Taxable</label><select class="input" id="sd-taxable"><option value="0" ${tx.taxable ? '' : 'selected'}>No</option><option value="1" ${tx.taxable ? 'selected' : ''}>Yes</option></select></div>
+      <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="sd-save">${editing ? 'Save' : 'Enter'}</button></div>
+    </div>
+    <div class="sd-offrow" id="sd-offbox" hidden><label for="sd-off">Cash advance of</label><select class="input" id="sd-off"><option value="">— Officer —</option>${officers.map((o) => `<option value="${esc(o.id)}" ${o.id === d.officerId ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div>
+  </div>`;
 }
 
 function wireEntry(c) {
   const { refs, lgu, acct, mine, coa, names, rerender } = c;
   const d = ED.d;
-  const form = $('#sd-form'); if (!form) return;
+  if (!$('#sd-form')) return;
   if (!$('#sd-coa')) { const dl = document.createElement('datalist'); dl.id = 'sd-coa'; dl.innerHTML = coa.accounts.map(([k, t]) => `<option value="${esc(k)}">${esc(t)}</option>`).join(''); document.body.appendChild(dl); }
   // A typed code or title becomes the code; the name follows the Chart of Accounts.
-  const toCode = (v) => { const t = String(v || '').trim(); if (names[t]) return t; const hit = coa.accounts.find(([k, n]) => n.toLowerCase() === t.toLowerCase()); return hit ? hit[0] : t; };
+  const toCode = (v) => { const t = String(v || '').trim(); if (names[t]) return t; const hit = coa.accounts.find(([, n]) => n.toLowerCase() === t.toLowerCase()); return hit ? hit[0] : t; };
   const read = () => {
     d.date = $('#sd-date').value; d.checkNo = $('#sd-no').value.trim(); d.ref = $('#sd-ref').value.trim(); d.payee = $('#sd-payee').value.trim(); d.particulars = $('#sd-part').value.trim();
-    d.cancelled = $('#sd-cancel').checked; d.note = $('#sd-note').value.trim(); d.officerId = $('#sd-off').value;
-    d.lines = $$('.sd-lines tbody tr').map((tr) => { const code = toCode($('.sd-code', tr).value); return { code, name: names[code] || '', gross: num($('.sd-gross', tr).value) ?? '' }; });
-    const rate = $('#sd-rate').value;
-    d.tax = rate === 'x' ? { rate: 0, one: false, amount: num($('#sd-tax').value) || 0 } : { rate: +rate, one: +rate ? $('#sd-one').checked : false, amount: 0 };
+    d.cancelled = isCancelText(d.particulars); d.officerId = $('#sd-off').value;
+    const g0 = grossOf(d);
+    d.lines = $$('.sd-ln').map((el) => { const code = toCode($('.sd-code', el).value); return { code, name: names[code] || '', gross: num($('.sd-gross', el).value) ?? '' }; });
+    const taxable = $('#sd-taxable').value === '1';
+    if (!taxable) d.tax = { taxable: false };
+    else { d.tax = { ...d.tax, taxable: true }; if (grossOf(d) !== g0) { d.tax.main = null; d.tax.one = null; } }   // a new gross: the tax is computed again
   };
   const paint = () => {
     read();
-    $$('.sd-lines tbody tr').forEach((tr, i) => { $('.sd-name', tr).textContent = d.lines[i].name || (d.lines[i].code ? 'Not in the Chart of Accounts' : ''); });
-    $('#sd-amts').hidden = d.cancelled;
-    $('.sd-one').hidden = !d.tax.rate;
-    const t = taxOf(d);
-    if ($('#sd-rate').value !== 'x') $('#sd-tax').value = t.amount ? money(t.amount) : '';
-    $('#sd-tax').readOnly = $('#sd-rate').value !== 'x';
-    $('#sd-chk').textContent = money(checkAmountOf(d));
-    $('#sd-offbox').hidden = !d.lines.some((l) => CA_CODES.includes(l.code));
+    $$('.sd-ln').forEach((el, i) => { const l = d.lines[i]; $('.sd-code', el).title = l.name || (l.code ? 'Not in the Chart of Accounts' : ''); $('.sd-code', el).classList.toggle('sd-bad', !!l.code && !l.name); });
+    const off = d.cancelled;
+    ['#sd-ref', '#sd-payee', '#sd-taxable'].forEach((k) => { $(k).disabled = off; });
+    $$('.sd-ln input, #sd-addln').forEach((el) => { el.disabled = off; });
+    $('#sd-form').classList.toggle('sd-cancelled', off);
+    $('#sd-tax').textContent = money(taxOf(d).amount) || '0.00';
+    $('#sd-tax').classList.toggle('sd-need', !off && d.tax.taxable && d.tax.vat !== true && d.tax.vat !== false);
+    $('#sd-chk').textContent = off ? '0.00' : money(checkAmountOf(d));
+    $('#sd-offbox').hidden = off || !d.lines.some((l) => CA_CODES.includes(l.code));
   };
-  const wireLines = () => {
-    $$('.sd-lines input').forEach((el) => { el.oninput = paint; el.onchange = () => { if (el.classList.contains('sd-code')) el.value = toCode(el.value); paint(); }; });
-    $$('.sd-xl').forEach((b) => { b.onclick = () => { read(); d.lines.splice(+b.closest('tr').dataset.ln, 1); rerender(); }; });
+  const openTax = async () => { read(); if (!grossOf(d)) { bad('Enter the gross amount first.'); $('#sd-taxable').value = '0'; paint(); return false; }
+    const t = await taxModal(d); if (t) d.tax = t; else if (d.tax.vat !== true && d.tax.vat !== false) { d.tax = { taxable: false }; $('#sd-taxable').value = '0'; } paint(); return !!t; };
+  const save = async () => {
+    read();
+    if (!d.date) return bad('Enter the date.');
+    if (!chkNo(d.checkNo)) return bad('Enter the check No.');
+    const dup = mine.find((x) => x.id !== ED.id && chkNo(x.checkNo) === chkNo(d.checkNo));
+    if (dup) return bad(`Check No. ${d.checkNo} is already in the journal (${fmtDate(dup.date)}).`);
+    let lines = d.lines.filter((l) => l.code || l.gross !== '');
+    if (!d.cancelled) {
+      if (!lines.length) return bad('Enter the account and the gross amount.');
+      if (lines.some((l) => !l.code)) return bad('Enter the account of each line.');
+      if (lines.some((l) => !names[l.code])) return bad(`${lines.find((l) => !names[l.code]).code} is not in the Chart of Accounts.`);
+      if (lines.some((l) => !(+l.gross > 0))) return bad('Enter the gross amount of each account.');
+      if (d.tax.taxable && d.tax.vat !== true && d.tax.vat !== false && !taxOf(d).amount) { if (!(await openTax())) return; }
+      if (checkAmountOf({ ...d, lines }) < 0) return bad('The tax is more than the gross amount.');
+      if (lines.some((l) => CA_CODES.includes(l.code)) && !d.officerId) return bad('Choose the officer of the cash advance.');
+    } else lines = [];
+    const rec = { lguId: lgu.id, acctId: acct.id, date: d.date, checkNo: d.checkNo, ref: d.cancelled ? '' : d.ref, payee: d.cancelled ? '' : d.payee, particulars: d.cancelled ? 'Cancelled' : d.particulars,
+      lines: lines.map((l) => ({ code: l.code, name: names[l.code], gross: r2(l.gross) })), tax: d.cancelled ? { taxable: false } : d.tax, cancelled: d.cancelled,
+      officerId: lines.some((l) => CA_CODES.includes(l.code)) ? d.officerId : '', note: d.note || '' };
+    const id = ED.id || newId('ckdj'), wasNew = !ED.id;
+    // Next check: same date, the next check No.
+    ED.id = ''; ED.d = wasNew ? blankCheck(rec.date, nextNo(rec.checkNo)) : null;
+    await store.save('src_ckdj', id, rec, by(refs));
+    toast(`Check No. ${rec.checkNo} saved.`, 'ok');
+    const mm = rec.date.slice(0, 7); if (mm !== (new URLSearchParams(location.hash.split('?')[1] || '').get('m') || today().slice(0, 7))) go({ m: mm });
+    setTimeout(() => { const el = $('#sd-ref'); if (el) el.focus(); }, 60);
   };
-  wireLines();
-  ['#sd-date', '#sd-no', '#sd-ref', '#sd-payee', '#sd-part', '#sd-note', '#sd-tax'].forEach((k) => { $(k).oninput = paint; });
-  ['#sd-cancel', '#sd-rate', '#sd-one', '#sd-off'].forEach((k) => { $(k).onchange = paint; });
+  $$('.sd-ln input').forEach((el) => { el.oninput = paint; el.onchange = () => { if (el.classList.contains('sd-code')) el.value = toCode(el.value); paint(); }; });
+  $$('.sd-xl').forEach((b) => { b.onclick = () => { read(); d.lines.splice(+b.closest('.sd-ln').dataset.ln, 1); rerender(); }; });
+  ['#sd-date', '#sd-no', '#sd-ref', '#sd-payee', '#sd-part'].forEach((k) => { $(k).oninput = paint; });
+  $('#sd-off').onchange = paint;
+  $('#sd-taxable').onchange = async () => { paint(); if ($('#sd-taxable').value === '1' && d.tax.vat !== true && d.tax.vat !== false) await openTax(); };
+  $('#sd-tax').onclick = () => { if ($('#sd-taxable').value === '1') openTax(); };
   $('#sd-addln').onclick = () => { read(); d.lines.push(blankLine()); rerender(); setTimeout(() => { const all = $$('.sd-code'); if (all.length) all[all.length - 1].focus(); }, 0); };
-  $('#sd-new').onclick = () => { ED.id = ''; ED.d = null; rerender(); };
+  if ($('#sd-new')) $('#sd-new').onclick = () => { ED.id = ''; ED.d = null; rerender(); };
   if ($('#sd-del')) $('#sd-del').onclick = async () => {
     const ok = await modal({ title: 'Delete this check?', body: `<p style="margin:0">Delete Check No. <b>${esc(d.checkNo)}</b> from the journal?</p>`, buttons: [{ label: 'Cancel', value: false }, { label: 'Delete', cls: 'danger', value: true }] });
     if (!ok) return;
     const cur = mine.find((x) => x.id === ED.id); const { id, ...rec } = cur;
     await store.save('src_ckdj', id, rec, by(refs), { deleted: true }); ED.id = ''; ED.d = null; toast('Check deleted.', 'ok');
   };
-  $('#sd-save').onclick = async () => {
-    read();
-    if (!d.date) return bad('Enter the date.');
-    if (!chkNo(d.checkNo)) return bad('Enter the check No.');
-    const dup = mine.concat().find((x) => x.id !== ED.id && chkNo(x.checkNo) === chkNo(d.checkNo));
-    if (dup) return bad(`Check No. ${d.checkNo} is already in the journal (${fmtDate(dup.date)}).`);
-    let lines = d.lines.filter((l) => l.code || l.gross !== '');
-    if (!d.cancelled) {
-      if (!lines.length) return bad('Enter the account code and the gross amount.');
-      if (lines.some((l) => !l.code)) return bad('Enter the account code of each line.');
-      if (lines.some((l) => !names[l.code])) return bad(`${lines.find((l) => !names[l.code]).code} is not in the Chart of Accounts.`);
-      if (lines.some((l) => !(+l.gross > 0))) return bad('Enter the gross amount of each line.');
-      if (checkAmountOf({ ...d, lines }) < 0) return bad('The tax is more than the gross amount.');
-      if (lines.some((l) => CA_CODES.includes(l.code)) && !d.officerId) return bad('Choose the officer who received the cash advance.');
-    } else lines = [];
-    const rec = { lguId: lgu.id, acctId: acct.id, date: d.date, checkNo: d.checkNo, ref: d.ref, payee: d.payee, particulars: d.particulars, lines: lines.map((l) => ({ code: l.code, name: names[l.code], gross: r2(l.gross) })),
-      tax: d.cancelled ? { rate: 0, one: false, amount: 0 } : d.tax, cancelled: d.cancelled, officerId: lines.some((l) => CA_CODES.includes(l.code)) ? d.officerId : '', note: d.note };
-    const id = ED.id || newId('ckdj');
-    ED.id = ''; ED.d = null;
-    await store.save('src_ckdj', id, rec, by(refs));
-    toast(`Check No. ${rec.checkNo} saved.`, 'ok');
-    const mm = rec.date.slice(0, 7); if (mm !== (new URLSearchParams(location.hash.split('?')[1] || '').get('m') || today().slice(0, 7))) go({ m: mm });
+  $('#sd-save').onclick = save;
+  // Enter moves to the next box; on the gross amount, Taxable or the button it saves.
+  const order = () => ['#sd-date', '#sd-no', '#sd-ref', '#sd-payee', '#sd-part', ...$$('.sd-ln').flatMap((el, i) => [`.sd-ln[data-ln="${i}"] .sd-code`, `.sd-ln[data-ln="${i}"] .sd-gross`]), '#sd-taxable'].map((k) => $(k)).filter((el) => el && !el.disabled);
+  $('#sd-form').onkeydown = (e) => {
+    if (e.key !== 'Enter' || e.target.tagName === 'BUTTON') return;
+    e.preventDefault();
+    const els = order(), i = els.indexOf(e.target);
+    if (e.target.id === 'sd-taxable' || (e.target.id === 'sd-part' && isCancelText(e.target.value)) || i < 0 || i === els.length - 1) { save(); return; }
+    els[i + 1].focus();
   };
   paint();
 }
@@ -241,7 +310,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
   const read = async (file) => {
     const XLSX = await loadXlsx();
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-    const cols = [['date', /^date/i], ['no', /check\s*no/i], ['ref', /reference|dv|payroll/i], ['payee', /payee/i], ['part', /particular/i], ['chk', /check\s*amount/i], ['tax', /tax\s*amount/i], ['code', /account\s*code/i], ['name', /account\s*name/i], ['gross', /gross/i], ['note', /note/i]];
+    const cols = [['date', /^date/i], ['no', /check\s*no/i], ['ref', /reference|dv|payroll/i], ['payee', /payee/i], ['part', /particular/i], ['chk', /check\s*amount/i], ['tax', /tax\s*amount/i], ['code', /account\s*code/i], ['name', /account\s*name/i], ['gross', /gross/i], ['note', /note/i], ['taxyn', /^\s*(tax|taxable)\s*$/i]];
     let sheet = null;
     for (const n of [...wb.SheetNames].sort((a, b) => (/check/i.test(b) ? 1 : 0) - (/check/i.test(a) ? 1 : 0))) {
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
@@ -258,11 +327,12 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
       const line = sheet.header + i + 2, noTxt = String(get(row, 'no')).trim();
       if (!noTxt || /total/i.test(String(get(row, 'date')))) return;
       const n = chkNo(noTxt); if (!n) { problems.push({ line, why: `Check No. "${noTxt}" is not a number.` }); return; }
-      const g = byNo.get(n) || { n, no: noTxt, date: '', ref: '', payee: '', part: '', tax: 0, note: '', lines: [], rows: [] };
+      const g = byNo.get(n) || { n, no: noTxt, date: '', ref: '', payee: '', part: '', tax: 0, taxyn: false, note: '', lines: [], rows: [] };
       g.rows.push(line);
       const date = excelDate(XLSX, get(row, 'date')); if (date && !g.date) g.date = date;
       ['ref', 'payee', 'part', 'note'].forEach((k) => { const v = String(get(row, k) ?? '').trim(); if (v && !g[k]) g[k] = v; });
       g.tax = r2(g.tax + (num(get(row, 'tax')) || 0));
+      if (/^y/i.test(String(get(row, 'taxyn') ?? '').trim())) g.taxyn = true;
       const code = String(get(row, 'code') ?? '').trim(), gross = num(get(row, 'gross')) ?? (num(get(row, 'chk')) === null ? null : r2(num(get(row, 'chk')) + (num(get(row, 'tax')) || 0)));
       if (code || gross) g.lines.push({ code, name: names[code] || String(get(row, 'name') || ''), gross: gross || 0 });
       byNo.set(n, g);
@@ -293,7 +363,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
   if (v !== 'go') return;
   for (const g of plan.add) {
     await store.save('src_ckdj', newId('ckdj'), { lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.ref, payee: g.payee, particulars: g.part, lines: g.cancelled ? [] : g.lines.map((l) => ({ code: l.code, name: l.name, gross: r2(l.gross) })),
-      tax: { rate: 0, one: false, amount: g.cancelled ? 0 : g.tax }, cancelled: g.cancelled, officerId: '', note: g.note }, by(refs), { quiet: true });
+      tax: g.cancelled || !(g.tax || g.taxyn) ? { taxable: false } : { taxable: true, vat: null, main: g.tax, one: 0 }, cancelled: g.cancelled, officerId: '', note: g.note }, by(refs), { quiet: true });
   }
   const { emitChange } = await import('../../js/store.js'); emitChange('local');
   toast(`${plan.add.length} check${plan.add.length === 1 ? '' : 's'} imported.`, 'ok');

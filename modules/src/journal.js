@@ -2,9 +2,10 @@
 //
 // Record:
 //   src_ckdj  one check  { lguId, acctId (bank account: cer_settings banks|<lguId>), date, checkNo, ref (DV / payroll No.), payee,
-//                          particulars, lines[{ code, name, gross }], tax: { rate: 5 | 3 | 0, one: bool, amount (typed when
-//                          rate is 0 or imported) }, cancelled, officerId (for a cash advance), note (auditor's note) }
-// Tax: 5% → VAT-registered payee, base = gross ÷ 1.12; 3% → non-VAT, base = gross; the 1% is on the same base.
+//                          particulars, lines[{ code, name, gross }], tax: { taxable, vat (true / false; null when imported),
+//                          main (5% or 3%, typed when rounded; empty = computed), one (1%, same) }, cancelled, officerId (for a
+//                          cash advance), note (auditor's note) }
+// Tax (Tax Register): VAT → base = gross ÷ 1.12, 5%; Non-VAT → base = gross, 3%; the 1% is on the same base.
 // Check amount = gross − tax. A check charged to a cash advance account is a cash advance of officerId.
 import { store } from '../../js/store.js';
 
@@ -21,12 +22,20 @@ export const CA_CODES = ['1-01-01-020', '1-03-03-010', '1-03-03-020'];
 export const grossOf = (c) => r2((c.lines || []).reduce((n, l) => n + (+l.gross || 0), 0));
 export function taxOf(c) {
   const t = c.tax || {}, g = grossOf(c);
-  if (c.cancelled) return { base: 0, main: 0, one: 0, amount: 0 };
-  if (!t.rate) return { base: 0, main: 0, one: 0, amount: r2(t.amount || 0) };
-  const base = t.rate === 5 ? r2(g / 1.12) : g;
-  const main = r2(base * t.rate / 100), one = t.one ? r2(base / 100) : 0;
-  return { base, main, one, amount: r2(main + one) };
+  const none = { base: 0, main: 0, one: 0, amount: 0, vat: null };
+  if (c.cancelled) return none;
+  if (t.taxable) {
+    // Taxable: VAT → base = gross ÷ 1.12, 5%; Non-VAT → base = gross, 3%; plus 1% on the base. Amounts may be typed (rounding).
+    if (t.vat !== true && t.vat !== false) return { ...none, main: r2(t.main || 0), amount: r2((t.main || 0) + (t.one || 0)), one: r2(t.one || 0) };   // imported, VAT not yet set
+    const base = t.vat ? r2(g / 1.12) : g;
+    const main = t.main === null || t.main === undefined || t.main === '' ? r2(base * (t.vat ? 5 : 3) / 100) : r2(t.main);
+    const one = t.one === null || t.one === undefined || t.one === '' ? r2(base / 100) : r2(t.one);
+    return { base, main, one, amount: r2(main + one), vat: t.vat };
+  }
+  if (t.rate) { const base = t.rate === 5 ? r2(g / 1.12) : g; const main = r2(base * t.rate / 100), one = t.one ? r2(base / 100) : 0; return { base, main, one, amount: r2(main + one), vat: t.rate === 5 }; }   // older entries
+  return { ...none, amount: r2(t.amount || 0), main: r2(t.amount || 0) };
 }
+export const isTaxable = (c) => !c.cancelled && (!!(c.tax || {}).taxable || taxOf(c).amount > 0);
 export const checkAmountOf = (c) => (c.cancelled ? 0 : r2(grossOf(c) - taxOf(c).amount));
 export const caGrossOf = (c) => r2((c.lines || []).filter((l) => CA_CODES.includes(l.code)).reduce((n, l) => n + (+l.gross || 0), 0));
 export const isCa = (c) => !c.cancelled && caGrossOf(c) > 0;
