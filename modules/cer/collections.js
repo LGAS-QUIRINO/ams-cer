@@ -296,7 +296,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const DEP = isRem ? 'Remittance' : 'Deposit';
   const depRow = (d = {}) => `<tr class="cd-dep"><td><input class="input" type="date" data-k="date" value="${esc(d.date || '')}" aria-label="Deposit date" ${enc ? '' : 'disabled'}></td>
       <td><input class="input" data-k="ref" value="${esc(d.ref || '')}" list="cd-reflist" placeholder="${isRem ? 'Choose or type the name' : 'Choose or type'}" aria-label="${isRem ? 'Liquidating Officer' : 'Reference'}" ${enc ? '' : 'disabled'}></td>
-      <td><input class="input mono" data-k="no" value="${esc(d.no || '')}" placeholder="Optional" aria-label="${isRem ? 'MTO OR No.' : 'Deposit slip No.'}" ${enc ? '' : 'disabled'}></td>
+      ${isRem ? '' : `<td><input class="input mono" data-k="no" value="${esc(d.no || '')}" placeholder="Optional" aria-label="Deposit slip No." ${enc ? '' : 'disabled'}></td>`}
       <td><input class="input r" data-k="amount" inputmode="decimal" value="${d.amount !== undefined && d.amount !== '' ? esc(money(d.amount)) : ''}" aria-label="Amount" ${enc ? '' : 'disabled'}></td>
       <td>${enc ? '<button class="btn sm cd-x" type="button" aria-label="Remove deposit">✕</button>' : ''}</td></tr>`;
   const agree = !cur.pending && cur.rec.hardTotal !== null && cur.rec.hardTotal !== undefined && cur.rec.hardTotal !== '' ? (Math.abs(+cur.rec.hardTotal - cur.coll) < 0.005 ? '<span class="pill p-done">Agrees with hard copy</span>' : `<span class="pill p-stock">Hard copy ₱${money(cur.rec.hardTotal)}</span>`) : '';
@@ -313,7 +313,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <tbody>${shownDeps.map((d) => `<tr data-pickdep="${esc(d.g.id)}" tabindex="0" class="${d.g.id === selId ? 'cd-on' : ''}"><td>${esc(fmtDate(d.date))}</td><td class="mono">${esc(depRefText(d, d.kind === 'SCR'))}</td><td class="r">${money(+d.amount || 0)}</td><td>${esc(d.g.pending ? `Not yet in an ${d.kind}` : repName(d.g.rec, d.kind))}</td><td>${esc(d.fund)}</td></tr>`).join('')}</tbody>
       <tfoot><tr class="cd-foot"><td colspan="2">Total</td><td class="r">${money(r2(shownDeps.reduce((n, d) => n + (+d.amount || 0), 0)))}</td><td colspan="2"></td></tr></tfoot></table></div>`
       : `<div class="empty"><b>No ${isRem ? 'remittance' : 'deposit'} encoded yet.</b></div>`}</div>`;
-  const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : 'Deposit Date'}</th><th scope="col">${isRem ? 'Liquidating Officer' : 'Reference'}</th><th scope="col">${isRem ? 'MTO OR No.' : 'No.'}</th><th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
+  const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : 'Deposit Date'}</th><th scope="col">${isRem ? 'Liquidating Officer' : 'Reference'}</th>${isRem ? '' : '<th scope="col">No.</th>'}<th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
       <tbody id="cd-deps">${(cur.rec?.deposits || []).map(depRow).join('')}</tbody></table></div>
     <datalist id="cd-reflist">${(isRem ? loNames(refs, f, lgu) : depRefs(f, audit.lguId)).map((v) => `<option value="${esc(v)}">`).join('')}</datalist>
     ${enc ? `<div class="cd-actions"><button class="btn sm" type="button" id="cd-adddep">+ Add ${DEP}</button><button class="btn primary" type="button" id="cd-savedep">Save ${DEP}s</button></div>` : ''}
@@ -574,7 +574,7 @@ function remRowHtml(c) {
 function depRowHtml(rem) {
   return `<tr class="cd-dep"><td><input class="input" type="date" data-k="date" aria-label="${rem ? 'Date received by MTO' : 'Deposit date'}"></td>
     <td><input class="input" data-k="ref" list="cd-reflist" placeholder="${rem ? 'Choose or type the name' : 'Choose or type'}" aria-label="${rem ? 'Liquidating Officer' : 'Reference'}"></td>
-    <td><input class="input mono" data-k="no" placeholder="Optional" aria-label="${rem ? 'MTO OR No.' : 'Deposit slip No.'}"></td>
+    ${rem ? '' : '<td><input class="input mono" data-k="no" placeholder="Optional" aria-label="Deposit slip No."></td>'}
     <td><input class="input r" data-k="amount" inputmode="decimal" aria-label="Amount"></td>
     <td><button class="btn sm cd-x" type="button" aria-label="Remove deposit">✕</button></td></tr>`;
 }
