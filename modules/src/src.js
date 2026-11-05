@@ -9,7 +9,8 @@ import { moduleFrame } from '../../js/frame.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from '../cer/cer.js';
 import { exportXlsx, loadXlsx, excelDate } from '../cer/forms.js';
 import { accountsModal, DEFAULT_FUNDS } from '../cer/banks.js';
-import { printRci, xlsxRci, pdfRci, docxRci } from './rciout.js';
+import { rciSpec, outButtons, wireOut } from './rciout.js';
+import { liqView } from './liq.js';
 import { loadCoa, loadJournal, CA_CODES, grossOf, taxOf, checkAmountOf, isCa, isTaxable, chkNo, hasEntry, tallies, hasAmount } from './journal.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
@@ -54,7 +55,7 @@ async function journalView(ctx) {
   const acct = accounts.find((x) => x.id === q.get('acct')) || accounts[0] || null;
   const m = /^\d{4}-\d{2}$/.test(q.get('m') || '') && +q.get('m').slice(0, 4) > 1990 ? q.get('m') : today().slice(0, 7);
   const yNow = +today().slice(0, 4), years = []; for (let y = yNow + 1; y >= yNow - 6; y--) years.push(y);
-  const tab = ['ckdj', 'tax', 'rci'].includes(q.get('tab')) ? q.get('tab') : 'rci';
+  const tab = ['ckdj', 'tax', 'rci', 'liq'].includes(q.get('tab')) ? q.get('tab') : 'rci';
   const top = `<div class="panel sd-top"><div class="field sd-office"><label for="sd-lgu">Office</label><input class="input" id="sd-lgu" list="sd-lgus" value="${esc(officeName(lgu))}" placeholder="Type the barangay or municipality" autocomplete="off">
         <datalist id="sd-lgus">${lgus.map((l) => `<option value="${esc(officeName(l))}">`).join('')}</datalist></div>
       <div class="field sd-acctf"><label for="sd-acct">Bank Account</label><select class="input" id="sd-acct">${accounts.length ? accounts.map((x) => `<option value="${esc(x.id)}" ${acct && x.id === acct.id ? 'selected' : ''}>${esc(acctLabel(x))}</option>`).join('') : '<option value="">No bank account yet</option>'}</select></div>
@@ -80,7 +81,7 @@ async function journalView(ctx) {
   const inBook = (no) => { const n = chkNo(no); return !!n && chkBooks.some((b) => b.from <= n && n <= b.to); };
   const mine = jr.filter((c) => c.lguId === lgu.id && c.acctId === acct.id);
   const list = mine.filter((c) => String(c.date || '').startsWith(m)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || chkNo(a.checkNo) - chkNo(b.checkNo));
-  const tabs = `<div class="sd-tabs" role="tablist">${[['rci', 'Report of Checks Issued'], ['ckdj', 'Check Disbursements Journal'], ['tax', 'Tax Register']].map(([k, t]) => `<button type="button" role="tab" class="sd-tab ${k === tab ? 'on' : ''}" data-tab="${k}" aria-selected="${k === tab}">${t}</button>`).join('')}</div>`;
+  const tabs = `<div class="sd-tabs" role="tablist">${[['rci', 'Report of Checks Issued'], ['ckdj', 'Check Disbursements Journal'], ['tax', 'Tax Register'], ['liq', 'Liquidation Journal']].map(([k, t]) => `<button type="button" role="tab" class="sd-tab ${k === tab ? 'on' : ''}" data-tab="${k}" aria-selected="${k === tab}">${t}</button>`).join('')}</div>`;
   const totals = { g: r2(list.reduce((n, c) => n + (c.cancelled ? 0 : grossOf(c)), 0)), t: r2(list.reduce((n, c) => n + taxOf(c).amount, 0)), a: r2(list.reduce((n, c) => n + checkAmountOf(c), 0)) };
   const vatText = (c) => { const v = taxOf(c).vat; return v === true ? 'VAT' : v === false ? 'Non-VAT' : ''; };
   // The entry being typed: per tab (the RCI line, or the CkDJ line), a new check or the one being edited.
@@ -91,12 +92,15 @@ async function journalView(ctx) {
   const flagsOf = (c) => [inBook(c.checkNo) ? '' : 'Not in a checkbook', !c.cancelled && !hasEntry(c) ? 'No entry yet' : '', !c.cancelled && hasEntry(c) && !tallies(c) ? `Does not tally: gross − tax = ₱${money(r2(grossOf(c) - taxOf(c).amount))}` : '',
     isCa(c) && !c.officerId ? 'Cash advance: no officer' : '', ...(c.lines || []).filter((l) => l.old).map((l) => `Old code ${l.old} (${l.oldName}): choose the new account`)].filter(Boolean);
 
-  let inner = '';
-  if (tab === 'rci') {
+  let inner = '', lqWire = null;
+  if (tab === 'liq') {
+    const v = await liqView({ refs, lgu, acct, accounts, m, coa, names, jr, books: chkBooks, enc, monthLabel, acctLabel, rerender: ctx.rerender });
+    inner = v.inner; lqWire = v.wire;
+  } else if (tab === 'rci') {
     // Step 1 (or after the CkDJ): the check as issued; its amount is the check amount.
     const form = enc ? rciHtml(ED.d, !!ED.id, m) : '';
     inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Report of Checks Issued · ${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
-        ${enc ? '<a href="#" class="cd-link" id="sd-rtpl">RCI Template</a><button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-print">Print</button><details class="sd-exp"><summary class="btn sm">Export ▾</summary><div class="sd-menu"><button type="button" data-rout="xlsx">Excel</button><button type="button" data-rout="pdf">PDF</button><button type="button" data-rout="docx">Word</button></div></details></div>
+        ${enc ? '<a href="#" class="cd-link" id="sd-rtpl">RCI Template</a><button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}${outButtons('rc')}</div>
       <div id="cer-print" class="rp-doc"><div class="rp-page"><h2 class="rp-title">REPORT OF CHECKS ISSUED</h2>
         <p class="c"><b>${esc(agencyName(refs, lgu))}</b><br>${esc(acctLabel(acct))}<br>${esc(monthLabel(m))}</p>
         <table class="rp-t"><thead><tr><th>Date</th><th>Check No.</th><th>DV / Payroll No.</th><th>Payee</th><th>Nature of Payment</th><th class="r">Amount</th>${enc ? '<th class="af-noprint"></th>' : ''}</tr></thead>
@@ -141,11 +145,7 @@ async function journalView(ctx) {
     if ($('#sd-txls')) $('#sd-txls').onclick = () => exportXlsx(`Tax Register ${fileBase}.xlsx`, 'Tax Register', list.filter(isTaxable).map((c) => { const t = taxOf(c); return { 'Check No.': c.checkNo, Date: fmtDate(c.date), Payee: c.payee || '', 'VAT / Non-VAT': vatText(c), 'Gross Amount': grossOf(c), 'Tax Base': t.base || '', '5% or 3%': t.main, '1%': t.one, 'Tax Amount': t.amount }; }));
     const rciData = () => ({ office: agencyName(refs, lgu), acct: acctLabel(acct), month: monthLabel(m), total: totals.a,
       rows: list.map((c) => ({ date: fmtDate(c.date), checkNo: c.checkNo || '', ref: c.cancelled ? '' : c.ref || '', payee: c.payee || '', nature: c.particulars || '', amount: checkAmountOf(c), cancelled: !!c.cancelled })) });
-    if ($('#sd-print')) $('#sd-print').onclick = () => printRci(rciData());
-    $$('[data-rout]').forEach((b) => { b.onclick = async () => {
-      b.closest('details').open = false;
-      const k = b.dataset.rout, f = `RCI ${fileBase}.${k}`;
-      try { await (k === 'xlsx' ? xlsxRci : k === 'pdf' ? pdfRci : docxRci)(rciData(), f); } catch (err) { toast(err.message || String(err), 'bad'); } }; });
+    if (tab === 'rci') wireOut('rc', () => rciSpec(rciData()), `RCI ${fileBase}`, (m) => toast(m, 'bad'));
     const startEdit = (id, sel) => { const c = mine.find((x) => x.id === id); ED.id = c.id; ED.d = JSON.parse(JSON.stringify({ ...blankCheck('', ''), ...c })); if (c.cancelled) ED.d.particulars = 'Cancelled'; if (!ED.d.lines.length) ED.d.lines = [blankLine()]; ctx.rerender(); setTimeout(() => { const f = $('#sd-form'); if (f) f.scrollIntoView({ block: 'start' }); const el = sel && $(sel); if (el) el.focus(); }, 0); };
     $$('[data-sdedit]').forEach((b) => { b.onclick = () => startEdit(b.dataset.sdedit, '.sd-code'); });
     $$('[data-rciedit]').forEach((b) => { b.onclick = () => startEdit(b.dataset.rciedit, '#sd-amt'); });
@@ -168,6 +168,7 @@ async function journalView(ctx) {
       try { const XLSX = await loadXlsx(); const ws = XLSX.utils.aoa_to_sheet([['Date', 'Check No.', 'DV / Payroll No.', 'Payee', 'Nature of Payment', 'Amount'], ['10/17/2025', '1894917', 'DV 2025-10-041', 'Juan Dela Cruz', 'Cash advance, Barangay Day', 10000], ['10/18/2025', '1894918', '', '', 'Cancelled', '']]);
         ws['!cols'] = [12, 12, 18, 28, 36, 14].map((w) => ({ wch: w })); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'RCI'); XLSX.writeFile(wb, 'RCI Template.xlsx'); } catch (err) { toast(err.message || String(err), 'bad'); } };
     if (enc && tab === 'ckdj') wireEntry({ refs, lgu, acct, mine, coa, names, m, rerender: ctx.rerender });
+    if (lqWire) lqWire();
     if (enc && tab === 'rci') wireRci({ refs, lgu, acct, mine, m, rerender: ctx.rerender });
   };
   return { body, wire };

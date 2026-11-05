@@ -814,3 +814,12 @@ table.rp-rsa{max-width:640px; margin:14px auto}
 .sd-menu{position:absolute; right:0; top:calc(100% + 4px); z-index:20; background:#fff; border:1px solid var(--line); border-radius:10px; box-shadow:0 6px 18px rgba(11,42,107,.14); padding:4px; min-width:120px; display:flex; flex-direction:column}
 .sd-menu button{background:none; border:0; text-align:left; padding:7px 12px; border-radius:7px; font:inherit; cursor:pointer; color:inherit}
 .sd-menu button:hover, .sd-menu button:focus-visible{background:#eef2fa}
+/* Source Documents · Liquidation Journal */
+.sd-w-typ{width:108px} .sd-w-for{width:190px} .sd-w-cr{width:170px}
+.lq-tbl .lq-deb{white-space:normal; line-height:1.35}
+.lq-tbl .lq-deb small{display:inline}
+.lq-damt{color:var(--dim, #5b6475); font-size:12px; margin-left:4px}
+.af-reg.lq-tbl td{white-space:normal; overflow:visible; vertical-align:top}
+.lq-tbl td:nth-child(4){min-width:200px} .lq-tbl td:nth-child(5){min-width:230px} .lq-tbl td:nth-child(7){min-width:170px}
+.lq-tbl .sd-flag{display:block}
+.af-reg.lq-tbl td small.lq-off{display:block; margin:2px 0 0; font-family:inherit; font-size:11.5px}
