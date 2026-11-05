@@ -777,3 +777,5 @@ table.rp-rsa{max-width:640px; margin:14px auto}
 .sd-note{border:0; background:none; text-align:left; padding:0; cursor:pointer; font:inherit; color:inherit}
 .sd-taxw{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:12px}
 .sd-vat{display:flex; gap:18px; padding-top:8px}
+.sd-flag{display:block; color:#9a5300; font-size:12px; margin-bottom:3px}
+.sd-notec{min-width:150px}

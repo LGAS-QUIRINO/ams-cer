@@ -94,19 +94,19 @@ async function journalView(ctx) {
     const form = enc ? entryHtml(ED.d, officers, !!ED.id) : '';
     const rows = list.map((c) => {
       const t = taxOf(c), ca = isCa(c), ls = c.lines || [];
-      const tags = [c.cancelled ? '<span class="pill p-flag">Cancelled</span>' : '', ca ? `<span class="pill sd-ca">Cash advance${c.officerId ? ' · ' + esc(offName(c.officerId)) : ' · no officer'}</span>` : '',
-        inBook(c.checkNo) ? '' : '<span class="pill p-part">Not in a checkbook</span>'].filter(Boolean).join(' ');
+      // Flags shown in the Auditor's Note column (worked out, not saved).
+      const flags = [inBook(c.checkNo) ? '' : 'Not in a checkbook', ca && !c.officerId ? 'Cash advance: no officer' : ''].filter(Boolean).map((t) => `<span class="sd-flag">${t}</span>`).join('');
       return `<tr class="${c.id === ED.id ? 'cd-on' : ''}"><td>${esc(fmtDate(c.date))}</td><td class="mono">${esc(c.checkNo)}</td><td>${esc(c.ref || '')}</td><td>${esc(c.payee || '')}</td><td>${esc(c.cancelled ? 'Cancelled' : c.particulars || '')}</td>
         <td class="r">${c.cancelled ? '' : money(checkAmountOf(c))}</td><td class="r">${c.cancelled ? '' : money(t.amount)}</td>
         <td>${ls.map((l) => `<span class="mono">${esc(l.code)}</span> <small class="dim">${esc(l.name || names[l.code] || '')}</small>`).join('<br>')}</td>
         <td class="r">${ls.map((l) => money(l.gross)).join('<br>')}</td><td>${c.cancelled ? '' : isTaxable(c) ? `Yes${vatText(c) ? ` <small class="dim">${vatText(c)}</small>` : ''}` : 'No'}</td>
-        <td class="sd-notec">${enc ? `<button type="button" class="sd-note" data-note="${esc(c.id)}" title="Auditor's note">${c.note ? esc(c.note) : '<span class="dim">+ note</span>'}</button>` : esc(c.note || '')}</td>
-        <td>${tags}</td><td>${enc ? `<button class="btn sm" type="button" data-sdedit="${esc(c.id)}">Edit</button>` : ''}</td></tr>`;
+        <td class="sd-notec">${flags}${enc ? `<button type="button" class="sd-note" data-note="${esc(c.id)}" title="Auditor's note">${c.note ? esc(c.note) : '<span class="dim">+ note</span>'}</button>` : esc(c.note || '')}</td>
+        <td>${enc ? `<button class="btn sm" type="button" data-sdedit="${esc(c.id)}">Edit</button>` : ''}</td></tr>`;
     }).join('');
     inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
         ${enc ? '<button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-xls">Export to Excel</button></div>
-      ${list.length ? `<div class="af-tbl"><table class="af-reg sd-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">DV / Payroll</th><th scope="col">Payee</th><th scope="col">Particulars</th><th scope="col" class="r">Check Amount</th><th scope="col" class="r">Tax</th><th scope="col">Account</th><th scope="col" class="r">Gross Amount</th><th scope="col">Taxable</th><th scope="col">Auditor's Note</th><th scope="col"></th><th scope="col"></th></tr></thead>
-        <tbody>${rows}</tbody><tfoot><tr class="cd-foot"><td colspan="5">Total, ${esc(monthLabel(m))}</td><td class="r">${money(totals.a)}</td><td class="r">${money(totals.t)}</td><td></td><td class="r">${money(totals.g)}</td><td colspan="4"></td></tr></tfoot></table></div>`
+      ${list.length ? `<div class="af-tbl"><table class="af-reg sd-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">DV / Payroll</th><th scope="col">Payee</th><th scope="col">Particulars</th><th scope="col" class="r">Check Amount</th><th scope="col" class="r">Tax</th><th scope="col">Account</th><th scope="col" class="r">Gross Amount</th><th scope="col">Taxable</th><th scope="col">Auditor's Note</th><th scope="col"></th></tr></thead>
+        <tbody>${rows}</tbody><tfoot><tr class="cd-foot"><td colspan="5">Total, ${esc(monthLabel(m))}</td><td class="r">${money(totals.a)}</td><td class="r">${money(totals.t)}</td><td></td><td class="r">${money(totals.g)}</td><td colspan="3"></td></tr></tfoot></table></div>`
         : `<div class="empty"><b>No check encoded for ${esc(monthLabel(m))}.</b></div>`}</div>`;
   } else if (tab === 'tax') {
     const tl = list.filter(isTaxable);
