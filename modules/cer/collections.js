@@ -39,7 +39,9 @@ const sum = (list, k) => r2(list.reduce((n, x) => n + (+x[k] || 0), 0));
 const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, ...rest } = x; return rest; };
 const bad = (m) => { toast(m, 'bad'); return false; };
-const DEPSHOW = { v: 'all' };   // deposits register: all of the officer, or the selected report
+const DEPSHOW = { v: 'all' };
+const KSEL = {};   // the report type shown per officer (SCD / RCD or SCR), remembered while the app is open
+const KIND_PICK = { SCD: 'SCD – Collections and Deposits', RCD: 'RCD – Collections and Deposits', SCR: 'SCR – Collections and Remittances' };   // deposits register: all of the officer, or the selected report
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
 
 // Kept between screen refreshes (each save redraws the screen).
@@ -160,6 +162,7 @@ export async function collectionsView(ctx) {
   const wireTop = () => {
     $('#cd-audit').onchange = (e) => go({ a: e.target.value, e: '', r: '', show: '' });
     $('#cd-exam').onchange = (e) => go({ e: e.target.value, r: '', show: '' });
+    const kp = $('#cd-kind'); if (kp) kp.onchange = (e) => go({ k: e.target.value, r: '' });
   };
   if (!exam) return { crumb, body: hello() + topBar() + '<div class="panel"><div class="empty"><b>No accountable officer in this cash examination.</b>Add the officers in Audit Setup.</div></div>', wire: wireTop };
 
@@ -174,13 +177,20 @@ export async function collectionsView(ctx) {
   const active = (c) => c.figs.length || c.pend.nOrs || c.pend.dep || c.pend.remTotal || c.pend.beg;
   const usedKinds = fig.kinds.filter((k) => allForms.some((x) => kindOfForm(lgu, x) === k) || Object.values(fig.chains).some((c) => c.kind === k && active(c)));
   if (!usedKinds.length) usedKinds.push(fig.kinds[0]);
+  // One report type at a time (chosen at the top): SCD / RCD with deposits, or SCR with remittances.
+  const allKinds = usedKinds.slice();
+  const qRep = q.get('r') && fig.byId[q.get('r')];
+  const VK = allKinds.includes(q.get('k')) ? q.get('k') : qRep && allKinds.includes(qRep.kind) ? qRep.kind : allKinds.includes(KSEL[o.id]) ? KSEL[o.id] : allKinds[0];
+  KSEL[o.id] = VK;
+  usedKinds.splice(0, usedKinds.length, VK);
+  const kindPick = allKinds.length > 1 ? `<div class="field"><label for="cd-kind">Report</label><select class="input" id="cd-kind">${allKinds.map((k) => `<option value="${k}" ${k === VK ? 'selected' : ''}>${esc(KIND_PICK[k] || k)}</option>`).join('')}</select></div>` : '';
   // "Not yet reported" of the first fund of each report type, plus any other fund already in use (the rest come with + SCD / + RCD).
   const shownKeys = fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind) && (fig.chains[k].fund === fig.funds[0] || active(fig.chains[k]) || k === q.get('r')?.split('|').slice(2).join('|')));
   const enc = canEncode(refs);
   // The report being worked on: a submitted one, or "Not yet reported" of a fund.
   const realIds = Object.values(fig.chains).flatMap((c) => c.figs.map((g) => g.id));
   let selId = q.get('r');
-  if (!selId || !fig.byId[selId]) selId = fig.chains[shownKeys[0]].pend.id;
+  if (!selId || !fig.byId[selId] || fig.byId[selId].kind !== VK) selId = fig.chains[shownKeys[0]].pend.id;
   const cur = fig.byId[selId];
   const curFund = cur.fund;
   const K = cur.kind;
@@ -341,7 +351,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const nPend = pends.reduce((n, ch) => n + ch.pend.nOrs, 0);
   const subRep = cur.pending ? (nPend ? `${nPend} OR${nPend > 1 ? 's' : ''} not yet in an ${K}` : `${realFigs.length} ${K}${realFigs.length === 1 ? '' : 's'} · none selected`) : (cur.rec.no ? `${esc(repName(cur.rec, K))} · ${esc(fmtDate(cur.rec.date))}` : esc(repName(cur.rec, K)));
   // One compact panel on top: the two choices on one line, the three tabs under them.
-  const body = hello() + topBar('', true) + `
+  const body = hello() + topBar(kindPick, true) + `
     ${tabs([['rep', K, subRep, repBody], ['col', 'Collections', `${cur.nOrs} OR${cur.nOrs === 1 ? '' : 's'} · ₱ ${money(cur.orsTotal)}`, colBody],
       ['dep', isRem ? 'Remittances to MTO' : 'Deposits', `₱ ${money(cur.dep)} ${isRem ? 'remitted' : 'deposited'} · ₱ ${money(cur.end)} ${isRem ? 'unremitted' : 'undeposited'}`, depBody]])}
 `;
