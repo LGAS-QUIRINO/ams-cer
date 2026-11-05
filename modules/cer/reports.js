@@ -230,21 +230,25 @@ function soa(c, which) {
   const cols = A.st.filter((x) => (which === 'ca' ? x.key === 'ca' : x.key !== 'ca'));
   const annex = which === 'ca' ? 'ANNEX D' : 'ANNEX C';
   if (!cols.length) return { html: `<div class="rp-page"><p class="c">${which === 'ca' ? 'No cash advance accountability for this officer.' : 'No collection accountability for this officer.'}</p></div>`, rows: [] };
-  const months = [...new Set(cols.flatMap((x) => A.moves[x.key].list.map((m) => m.date.slice(0, 7))))].sort();
-  const run = Object.fromEntries(cols.map((x) => [x.key, A.moves[x.key].beg]));
-  const lines = months.map((m) => ({ m, v: cols.map((x) => { const ls = A.moves[x.key].list.filter((y) => y.date.startsWith(m)); const d = r2(ls.reduce((n, y) => n + y.debit, 0)), cr = r2(ls.reduce((n, y) => n + y.credit, 0)); run[x.key] = r2(run[x.key] + d - cr); return { d, cr, b: run[x.key] }; }) }));
+  // Entries dated before the last cash exam (counted on purpose) go on the beginning line, not as a month.
+  const preOf = (key) => { const ls = A.moves[key].list.filter((y) => A.from && y.date < A.from); return { d: r2(ls.reduce((n, y) => n + y.debit, 0)), cr: r2(ls.reduce((n, y) => n + y.credit, 0)) }; };
+  const pre = Object.fromEntries(cols.map((x) => [x.key, preOf(x.key)]));
+  const months = [...new Set(cols.flatMap((x) => A.moves[x.key].list.filter((m) => !A.from || m.date >= A.from).map((m) => m.date.slice(0, 7))))].sort();
+  const run = Object.fromEntries(cols.map((x) => [x.key, r2(A.moves[x.key].beg + pre[x.key].d - pre[x.key].cr)]));
+  const nz = (v) => (v ? money(v) : '');
+  const lines = months.map((m) => ({ m, v: cols.map((x) => { const ls = A.moves[x.key].list.filter((y) => y.date.startsWith(m) && (!A.from || y.date >= A.from)); const d = r2(ls.reduce((n, y) => n + y.debit, 0)), cr = r2(ls.reduce((n, y) => n + y.credit, 0)); run[x.key] = r2(run[x.key] + d - cr); return { d, cr, b: run[x.key] }; }) }));
   const multi = cols.length > 1;
   const crName = (x) => (x.key === 'ca' ? 'Liquidations' : x.kind === 'SCR' ? 'Remittances' : 'Deposits');
   const drName = (x) => (x.key === 'ca' ? 'Cash Advances' : 'Collections');
   const tot = (key) => { const ls = A.moves[key].list; return { d: r2(ls.reduce((n, y) => n + y.debit, 0)), cr: r2(ls.reduce((n, y) => n + y.credit, 0)) }; };
-  const all = multi ? { beg: r2(cols.reduce((n, x) => n + A.moves[x.key].beg, 0)) } : null;
+  const all = multi ? { beg: r2(cols.reduce((n, x) => n + A.moves[x.key].beg + pre[x.key].d - pre[x.key].cr, 0)), d: r2(cols.reduce((n, x) => n + pre[x.key].d, 0)), cr: r2(cols.reduce((n, x) => n + pre[x.key].cr, 0)) } : null;
   const html = `<div class="rp-page rp-wide"><div class="rp-top"><span></span><span class="r"><b>${annex}</b></span></div>
     <p class="c">Republic of the Philippines<br><b>${esc(agency)}</b><br>${esc(station)}</p>
     <p class="c"><b>${esc(o.name)}</b><br>${esc(o.designation || '')}</p>
     <h2 class="rp-title">Statement of Accountability${which === 'ca' ? ' – Cash Advances' : ''}</h2><p class="c">${esc(fmtDate(A.from))} to ${esc(fmtDate(A.to))}</p>
     <table class="rp-t"><thead><tr><th rowspan="2">Particulars</th>${cols.map((x) => `<th colspan="3">${esc(x.label)}</th>`).join('')}${multi ? '<th colspan="3">Total</th>' : ''}</tr>
       <tr>${cols.map((x) => `<th class="r">${drName(x)}</th><th class="r">${crName(x)}</th><th class="r">Balance</th>`).join('')}${multi ? '<th class="r">Collections</th><th class="r">Deposits / Remittances</th><th class="r">Balance</th>' : ''}</tr></thead>
-      <tbody><tr><td>Balance, ${esc(fmtDate(A.from))}</td>${cols.map((x) => `<td></td><td></td><td class="r">${money(A.moves[x.key].beg)}</td>`).join('')}${multi ? `<td></td><td></td><td class="r">${money(all.beg)}</td>` : ''}</tr>
+      <tbody><tr><td>Balance, ${esc(fmtDate(A.from))}</td>${cols.map((x) => `<td class="r">${nz(pre[x.key].d)}</td><td class="r">${nz(pre[x.key].cr)}</td><td class="r">${money(run[x.key] === undefined ? A.moves[x.key].beg : r2(A.moves[x.key].beg + pre[x.key].d - pre[x.key].cr))}</td>`).join('')}${multi ? `<td class="r">${nz(all.d)}</td><td class="r">${nz(all.cr)}</td><td class="r">${money(all.beg)}</td>` : ''}</tr>
       ${lines.map((l) => `<tr><td>${MONTHS[+l.m.slice(5) - 1]} ${l.m.slice(0, 4)}</td>${l.v.map((v) => `<td class="r">${money(v.d)}</td><td class="r">${money(v.cr)}</td><td class="r">${amt(v.b)}</td>`).join('')}${multi ? `<td class="r">${money(r2(l.v.reduce((n, v) => n + v.d, 0)))}</td><td class="r">${money(r2(l.v.reduce((n, v) => n + v.cr, 0)))}</td><td class="r">${amt(r2(l.v.reduce((n, v) => n + v.b, 0)))}</td>` : ''}</tr>`).join('')}
       <tr class="tot"><td>Balance, ${esc(fmtDate(A.to))}</td>${cols.map((x) => { const t = tot(x.key); return `<td class="r">${money(t.d)}</td><td class="r">${money(t.cr)}</td><td class="r">${amt(x.balance)}</td>`; }).join('')}${multi ? `<td class="r">${money(r2(cols.reduce((n, x) => n + tot(x.key).d, 0)))}</td><td class="r">${money(r2(cols.reduce((n, x) => n + tot(x.key).cr, 0)))}</td><td class="r">${amt(r2(cols.reduce((n, x) => n + x.balance, 0)))}</td>` : ''}</tr></tbody></table>
     <div class="rp-signs">${sign('Prepared by', prep)}${sign('Reviewed by', rev)}</div></div>`;

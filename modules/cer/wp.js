@@ -303,8 +303,11 @@ export async function downloadReport(c, ver) {
   set(ws, 'D132', T.beg); set(ws, 'G132', T.rec); set(ws, 'J132', T.iss); set(ws, 'M132', T.end); set(ws, 'P132', T.cnt); set(ws, 'S132', T.diff);
   set(ws, 'B139', prep.name); set(ws, 'B140', prep.pos); set(ws, 'N139', o.name); set(ws, 'N140', des);
   // Annex C, Annex D: months within the scope
-  const months = (keys) => [...new Set(keys.flatMap((k) => A.moves[k].list.map((m) => m.date.slice(0, 7))))].sort();
-  const mSum = (k, m) => { const ls = A.moves[k].list.filter((y) => y.date.startsWith(m)); return { d: r2(ls.reduce((s, y) => s + y.debit, 0)), c: r2(ls.reduce((s, y) => s + y.credit, 0)) }; };
+  // Entries dated before the last cash exam (counted on purpose) go on the beginning line, not as a month.
+  const inS = (y) => !A.from || y.date >= A.from;
+  const preOf = (k) => { const ls = A.moves[k].list.filter((y) => !inS(y)); return { d: r2(ls.reduce((s, y) => s + y.debit, 0)), c: r2(ls.reduce((s, y) => s + y.credit, 0)) }; };
+  const months = (keys) => [...new Set(keys.flatMap((k) => A.moves[k].list.filter(inS).map((m) => m.date.slice(0, 7))))].sort();
+  const mSum = (k, m) => { const ls = A.moves[k].list.filter((y) => y.date.startsWith(m) && inS(y)); return { d: r2(ls.reduce((s, y) => s + y.debit, 0)), c: r2(ls.reduce((s, y) => s + y.credit, 0)) }; };
   const mLabel = (m) => `${MONTHS[+m.slice(5) - 1]} ${m.slice(0, 4)}`;
   const heads = (w2, cols) => { set(w2, 'B3', agency.toUpperCase()); set(w2, 'B4', station); set(w2, 'B6', o.name); set(w2, 'B7', des); set(w2, 'B10', `${fmtDate(A.from)} to ${fmtDate(A.to)}`); };
   const colBooks = A.st.filter((x) => x.key !== 'ca');
@@ -315,8 +318,11 @@ export async function downloadReport(c, ver) {
     const bA = colBooks.find((x) => x.key !== 'col-SCR'), bC = colBooks.find((x) => x.key === 'col-SCR');
     if (bA && bA.key === 'col-RCD') set(ws, 'D12', 'Collections');
     const keys = colBooks.map((x) => x.key);
-    const run = { a: bA ? bA.beg : 0, c: bC ? bC.beg : 0 };
-    set(ws, 'C14', fmtDate(A.from)); set(ws, 'F14', run.a); set(ws, 'I14', run.c); set(ws, 'L14', r2(run.a + run.c));
+    const pa = bA ? preOf(bA.key) : { d: 0, c: 0 }, pc = bC ? preOf(bC.key) : { d: 0, c: 0 };
+    const run = { a: bA ? r2(bA.beg + pa.d - pa.c) : 0, c: bC ? r2(bC.beg + pc.d - pc.c) : 0 };
+    const nz = (v) => (v ? v : null);
+    set(ws, 'C14', fmtDate(A.from)); set(ws, 'D14', nz(pa.d)); set(ws, 'E14', nz(pa.c)); set(ws, 'F14', run.a); set(ws, 'G14', nz(pc.d)); set(ws, 'H14', nz(pc.c)); set(ws, 'I14', run.c);
+    set(ws, 'J14', nz(r2(pa.d + pc.d))); set(ws, 'K14', nz(r2(pa.c + pc.c))); set(ws, 'L14', r2(run.a + run.c));
     const ms = months(keys); let rr = 15;
     ms.slice(0, 36).forEach((m) => {
       const a = bA ? mSum(bA.key, m) : { d: 0, c: 0 }, cc = bC ? mSum(bC.key, m) : { d: 0, c: 0 };
@@ -335,7 +341,8 @@ export async function downloadReport(c, ver) {
   if (!caS) wb.removeWorksheet(ws.id);
   else {
     heads(ws);
-    let run = caS.beg; set(ws, 'C13', fmtDate(A.from)); set(ws, 'F13', run);
+    const p0 = preOf('ca'); let run = r2(caS.beg + p0.d - p0.c);
+    set(ws, 'C13', fmtDate(A.from)); if (p0.d) set(ws, 'D13', p0.d); if (p0.c) set(ws, 'E13', p0.c); set(ws, 'F13', run);
     let rr = 14;
     months(['ca']).slice(0, 36).forEach((m) => { const a = mSum('ca', m); run = r2(run + a.d - a.c); set(ws, `B${rr}`, mLabel(m)); set(ws, `D${rr}`, a.d); set(ws, `E${rr}`, a.c); set(ws, `F${rr}`, run); rr++; });
     hideRows(ws, rr, 49);
