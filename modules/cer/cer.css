@@ -755,17 +755,19 @@ table.rp-rsa{max-width:640px; margin:14px auto}
 @media (max-width:1000px){.panel.sd-top{grid-template-columns:1fr 1fr}}
 @media (max-width:600px){.panel.sd-top{grid-template-columns:1fr}}
 /* one-line check entry (wraps on narrower screens) */
-.sd-line{display:flex; flex-wrap:wrap; gap:10px 8px; align-items:flex-start}
+.sd-line{display:flex; flex-wrap:wrap; gap:10px 6px; align-items:flex-start}
+.sd-line .input{padding:7px 8px; font-size:13.5px; min-width:0}
 .sd-f{display:flex; flex-direction:column; gap:4px; min-width:0}
-.sd-f > label, .sd-acch label{font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--dim, #5b6475); white-space:nowrap}
-.sd-w-date{width:132px} .sd-w-no{width:100px} .sd-w-ref{width:110px} .sd-w-txt{flex:1 1 130px} .sd-w-amt{width:112px} .sd-w-tax{width:96px}
-.sd-w-acct{flex:2 1 300px} .sd-w-yn{width:72px} .sd-w-btn{width:74px}
-.sd-acch{display:grid; grid-template-columns:1fr 110px 30px; gap:6px}
+.sd-f > label, .sd-acch label{font-size:10.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--dim, #5b6475); white-space:nowrap}
+.sd-w-date{width:124px} .sd-w-no{width:86px} .sd-w-ref{width:92px} .sd-w-txt{flex:1 1 100px} .sd-w-amt{width:96px} .sd-w-tax{width:82px}
+.sd-w-acct{flex:2 1 230px} .sd-w-yn{width:62px} .sd-w-btn{width:64px}
+.sd-w-btn .btn{padding-left:0; padding-right:0; width:100%}
+.sd-acch{display:grid; grid-template-columns:1fr 92px 24px; gap:6px}
 .sd-accts{display:flex; flex-direction:column; gap:6px}
-.sd-ln{display:grid; grid-template-columns:1fr 110px 30px; gap:6px}
+.sd-ln{display:grid; grid-template-columns:1fr 92px 24px; gap:6px}
 .sd-add{border:0; background:none; color:var(--blue, #1f5fd1); font-weight:600; font-size:12.5px; text-align:left; padding:0 2px; cursor:pointer}
 .sd-add:disabled{opacity:.4; cursor:default}
-.sd-taxbtn{cursor:pointer; font:inherit; font-size:14px; width:100%}
+.sd-taxbtn{cursor:pointer; font:inherit; font-size:13.5px; width:100%}
 .sd-taxbtn.sd-need{border-color:#e09a2c; background:#fff7e8}
 .sd-code.sd-bad{border-color:#e05a4c; background:#fff5f4}
 .sd-offrow{display:flex; gap:10px; align-items:center; margin-top:10px}
