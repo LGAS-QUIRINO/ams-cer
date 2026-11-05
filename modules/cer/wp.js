@@ -7,6 +7,7 @@ import { store } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, fmtDate, money, num } from './cer.js';
 import { kindOfForm, depRefText } from './collections.js';
+import { accountsOf, caFund, begByFund, restFund, fundOrder } from './funds.js';
 import { saafRows, unusedFormsOf, countRanges, FORM_SHORT } from './forms.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -58,7 +59,25 @@ export function wpLines(c, paper, ver) {
     l.ga = ga; l.gb = gb; l.k = r2((l.d - l.cd) - (l.c - l.cc));
   });
   const sum = (k) => r2(lines.reduce((n, l) => n + l[k], 0));
-  return { paper, book, beg, lines, tot: { d: sum('d'), c: sum('c'), cd: sum('cd'), cc: sum('cc'), k: sum('k') }, end: ga, endCb: gb, edited: lines.filter((l) => l.edited).length };
+  // Cash advances: grouped by fund (the fund of each check's checkbook), each with its own beginning and running balance.
+  let groups = null;
+  if (paper === 'a2a') {
+    const fx = { booklets: f.booklets, accounts: accountsOf(f.settings, A.lgu.id) };
+    const mine = advs.filter((a) => a.officerId === o.id);
+    const begs = begByFund(exam, advs, fx, beg);
+    const fundOfLine = (l) => { if (l.key.startsWith('ca|')) return caFund(mine.find((a) => `ca|${a.id}` === l.key) || {}, fx);
+      const lq = liqs.find((x) => `lq|${x.id}` === l.key); const a = lq && mine.find((x) => x.id === lq.advanceId);
+      return a ? caFund(a, fx) : restFund(exam, fx); };
+    lines.forEach((l) => { l.fund = fundOfLine(l); });
+    const names = [...new Set([...begs.keys(), ...lines.map((l) => l.fund)])].sort(fundOrder(fx));
+    groups = names.map((fund) => {
+      const ls = lines.filter((l) => l.fund === fund), b0 = begs.get(fund) || 0; let a1 = b0, b1 = b0;
+      ls.forEach((l) => { a1 = r2(a1 + l.d - l.c); b1 = r2(b1 + l.cd - l.cc); l.ga = a1; l.gb = b1; });
+      const t = (k) => r2(ls.reduce((n, l) => n + l[k], 0));
+      return { fund, beg: b0, lines: ls, tot: { d: t('d'), c: t('c'), cd: t('cd'), cc: t('cc'), k: t('k') }, end: a1, endCb: b1 };
+    });
+  }
+  return { paper, book, beg, lines, groups, tot: { d: sum('d'), c: sum('c'), cd: sum('cd'), cc: sum('cc'), k: sum('k') }, end: ga, endCb: gb, edited: lines.filter((l) => l.edited).length };
 }
 
 /* ---------- Annex E, F, G: Reconciliation Statements of Accountability ---------- */
@@ -93,9 +112,11 @@ export function wpHtml(c, paper, ver, edit) {
     <p class="c">${esc(c.o.name)} · ${esc(c.o.designation || '')} · ${esc(agency)}, ${esc(station)}</p>
     <table class="rp-t wp-t"><thead><tr><th rowspan="2">Date</th><th rowspan="2">Particulars</th><th rowspan="2">${title[2]}</th><th colspan="3">Per Audit</th><th colspan="3">Per CashBook</th><th rowspan="2" class="r">Reconciling amount</th></tr>
       <tr><th class="r">${title[3]}</th><th class="r">${title[4]}</th><th class="r">Balance</th><th class="r">${title[3]}</th><th class="r">${title[4]}</th><th class="r">Balance</th></tr></thead>
-      <tbody><tr><td>${esc(fmtDate(A.from))}</td><td>Beginning Balance</td><td></td><td></td><td></td><td class="r">${amt(w.beg)}</td><td></td><td></td><td class="r">${amt(w.beg)}</td><td class="r">-</td></tr>
-      ${w.lines.map((l) => `<tr${l.edited ? ' class="wp-diff"' : ''}><td>${esc(fmtDate(l.date))}</td><td>${esc(l.part)}</td><td class="mono">${esc(l.no)}</td><td class="r">${amt(l.d)}</td><td class="r">${amt(l.c)}</td><td class="r">${amt(l.ga)}</td>
+      <tbody>${(w.groups && w.groups.length > 1 ? w.groups : [{ fund: '', beg: w.beg, lines: w.lines }]).map((g) => `${g.fund ? `<tr class="rp-form"><td colspan="10"><b>${esc(g.fund)}</b></td></tr>` : ''}
+      <tr><td>${esc(fmtDate(A.from))}</td><td>Beginning Balance</td><td></td><td></td><td></td><td class="r">${amt(g.beg)}</td><td></td><td></td><td class="r">${amt(g.beg)}</td><td class="r">-</td></tr>
+      ${g.lines.map((l) => `<tr${l.edited ? ' class="wp-diff"' : ''}><td>${esc(fmtDate(l.date))}</td><td>${esc(l.part)}</td><td class="mono">${esc(l.no)}</td><td class="r">${amt(l.d)}</td><td class="r">${amt(l.c)}</td><td class="r">${amt(l.ga)}</td>
         <td class="r">${cell(l, 'd', l.cd)}</td><td class="r">${cell(l, 'c', l.cc)}</td><td class="r">${amt(l.gb)}</td><td class="r">${amt(l.k)}</td></tr>`).join('')}
+      ${g.fund ? `<tr class="rp-sub"><td></td><td><i>Subtotal, ${esc(g.fund)}</i></td><td></td><td class="r">${amt(g.tot.d)}</td><td class="r">${amt(g.tot.c)}</td><td class="r">${amt(g.end)}</td><td class="r">${amt(g.tot.cd)}</td><td class="r">${amt(g.tot.cc)}</td><td class="r">${amt(g.endCb)}</td><td class="r">${amt(g.tot.k)}</td></tr>` : ''}`).join('')}
       <tr class="tot"><td></td><td>Total</td><td></td><td class="r">${amt(w.tot.d)}</td><td class="r">${amt(w.tot.c)}</td><td class="r">${amt(w.end)}</td><td class="r">${amt(w.tot.cd)}</td><td class="r">${amt(w.tot.cc)}</td><td class="r">${amt(w.endCb)}</td><td class="r">${amt(w.tot.k)}</td></tr></tbody></table>
     <div class="rp-signs">${sign('Prepared by', prep)}${sign('Reviewed by', rev)}</div></div>`;
 }
@@ -374,7 +395,15 @@ export async function downloadWp(c, ver, bank) {
     set(ws, sc, scope);
     set(ws, 'B9', D(A.from)); ws.getCell('B9').numFmt = 'mm/dd/yyyy'; set(ws, 'C9', 'Beginning Balance'); set(ws, 'G9', w.beg); set(ws, 'J9', w.beg); set(ws, 'K9', 0);
     let r = first;
-    w.lines.slice(0, last - first + 1).forEach((l) => {
+    // More than one fund: a heading, a beginning and a subtotal line per fund.
+    const bold = (cell) => { const st = JSON.parse(JSON.stringify(ws.getCell(cell).style || {})); st.font = { ...(st.font || {}), bold: true }; ws.getCell(cell).style = st; };
+    const grouped = w.groups && w.groups.length > 1;
+    if (grouped) { set(ws, 'C9', 'Beginning Balance (all funds)'); }
+    const rowsOut = grouped ? w.groups.flatMap((g) => [{ head: g.fund }, { begOf: g }, ...g.lines, { subOf: g }]) : w.lines;
+    rowsOut.slice(0, last - first + 1).forEach((l) => {
+      if (l.head) { set(ws, `C${r}`, l.head); bold(`C${r}`); r++; return; }
+      if (l.begOf) { set(ws, `B${r}`, D(A.from)); ws.getCell(`B${r}`).numFmt = 'mm/dd/yyyy'; set(ws, `C${r}`, 'Beginning Balance'); set(ws, `G${r}`, l.begOf.beg); set(ws, `J${r}`, l.begOf.beg); set(ws, `K${r}`, 0); r++; return; }
+      if (l.subOf) { const g = l.subOf; set(ws, `C${r}`, `Subtotal, ${g.fund}`); bold(`C${r}`); set(ws, `E${r}`, g.tot.d || null); set(ws, `F${r}`, g.tot.c || null); set(ws, `G${r}`, g.end); set(ws, `H${r}`, g.tot.cd || null); set(ws, `I${r}`, g.tot.cc || null); set(ws, `J${r}`, g.endCb); set(ws, `K${r}`, g.tot.k); r++; return; }
       set(ws, `B${r}`, D(l.date)); ws.getCell(`B${r}`).numFmt = 'mm/dd/yyyy'; set(ws, `C${r}`, l.part); set(ws, `D${r}`, l.no ? (Number.isFinite(+l.no) ? +l.no : l.no) : null);
       set(ws, `E${r}`, l.d || null); set(ws, `F${r}`, l.c || null); set(ws, `G${r}`, l.ga); set(ws, `H${r}`, l.cd || null); set(ws, `I${r}`, l.cc || null); set(ws, `J${r}`, l.gb); set(ws, `K${r}`, l.k);
       r++;

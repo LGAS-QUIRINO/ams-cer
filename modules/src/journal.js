@@ -54,7 +54,7 @@ export async function listAdvances() {
   const typedKeys = new Set(typed.filter((r) => !r.deleted).map((r) => key(r.data.lguId, r.data.checkNo)));
   const out = typed.map((r) => (jrKeys.has(key(r.data.lguId, r.data.checkNo)) ? { ...r, data: { ...r.data, inJournal: true } } : r));
   jrCa.filter((c) => !typedKeys.has(key(c.lguId, c.checkNo))).forEach((c) => out.push({ id: `ckdj|${c.id}`,
-    data: { lguId: c.lguId, officerId: c.officerId, date: c.date, checkNo: c.checkNo, particulars: c.particulars || c.payee || '', amount: caGrossOf(c), fromJournal: c.id } }));
+    data: { lguId: c.lguId, officerId: c.officerId, date: c.date, checkNo: c.checkNo, particulars: c.particulars || c.payee || '', amount: caGrossOf(c), fromJournal: c.id, acctId: c.acctId } }));
   return out;
 }
 // store.list, with the journal's cash advances added to cer_cashadv.

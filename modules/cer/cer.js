@@ -6,7 +6,7 @@
 //   cer_officers  one accountable officer of an auditee           { lguId, name, designation }
 //   cer_audits    one cash examination = auditee + cash count date { lguId, countDate, preparedBy, reviewedBy }
 //   cer_exams     one officer's exam record inside a cash examination
-//                 { auditId, officerId, functions[], forms[], bond{maxCash, amount, riskNo, from, to}, lastExamDate, lastExamSource,
+//                 { auditId, officerId, functions[], forms[], bond{maxCash, amount, riskNo, from, to}, lastExamDate, lastExamSource, caRestFund (fund of the beginning cash advance not itemized),
 //                   balances{ key: { amount, source } }, endBalances{} (filled later by the examination) }
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
@@ -286,7 +286,7 @@ function listHtml(refs, cer) {
 function blankExam(lgu) {
   const brgy = isBrgy(lgu);
   return { examId: '', officerId: '', functions: brgy ? ['collecting', 'disbursing'] : [], forms: brgy ? ['af51b', 'ctci'] : [],
-    bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '' }, lastExamDate: '', balances: {}, depositRule: 'next' };
+    bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '' }, lastExamDate: '', balances: {}, depositRule: 'next', caRestFund: '' };
 }
 function stateFrom(refs, cer, q) {
   const audit = cer.audits.find((x) => x.id === q.get('a')) || null;
@@ -301,7 +301,7 @@ function stateFrom(refs, cer, q) {
   };
   if (exam) {
     Object.assign(st, { examId: exam.id, officerId: exam.officerId, functions: [...(exam.functions || [])], forms: [...new Set((exam.forms || []).map((k) => fixBrgyForm(lgu, k)))],
-      bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '', depositRule: exam.depositRule || 'next',
+      bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '', depositRule: exam.depositRule || 'next', caRestFund: exam.caRestFund || '',
       balances: Object.fromEntries(Object.entries(exam.balances || {}).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, (() => { const x = v && v.lump !== undefined ? v.lump : v && v.amount; return x !== null && x !== undefined ? money(x) : ''; })()])) });
     ['maxCash', 'amount'].forEach((k) => { if (st.bond[k] !== '' && st.bond[k] !== null) st.bond[k] = money(st.bond[k]); });
   }
@@ -400,6 +400,7 @@ function officerHtml(refs, cer, st, edit) {
   const lgu = refs.lgu[st.lguId];
   if (!lgu) return '<p class="cer-wait">Choose the auditee first. Its accountable officers are listed here.</p>';
   const dis = edit ? '' : 'disabled';
+  const bankAccts = (FX && FX.settings && FX.settings['banks|' + st.lguId]?.list) || [];
   const offs = cer.officers.filter((o) => o.lguId === st.lguId).sort((a, b) => a.name.localeCompare(b.name));
   const o = cer.officers.find((x) => x.id === st.officerId);
   const prev = prevExam(cer, st.officerId, st.countDate, st.examId);
@@ -462,7 +463,8 @@ function officerHtml(refs, cer, st, edit) {
           const carried = prev && prev.endBalances && prev.endBalances[r.key] !== undefined && prev.endBalances[r.key] !== null;
           const val = carried ? money(prev.endBalances[r.key]) : (st.balances[r.key] ?? '');
           const bl = BEG_CA[r.key] ? `<div class="cer-begline"><span data-begline="${r.key}">${begLine(st, r.key, carried ? prev.endBalances[r.key] : num(st.balances[r.key]))}</span>
-            <button class="btn sm" type="button" data-begchk="${r.key}" data-edit="${edit ? 1 : 0}">${edit ? 'Beginning checks' : 'View checks'}</button></div>` : '';
+            <button class="btn sm" type="button" data-begchk="${r.key}" data-edit="${edit ? 1 : 0}">${edit ? 'Beginning checks' : 'View checks'}</button>
+            ${r.key === 'ca' && bankAccts.length > 1 ? `<label class="cer-restfund">Not itemized · Fund <select class="input af-sm" data-restfund ${dis}>${bankAccts.map((x) => `<option ${x.fund === (st.caRestFund || bankAccts[0].fund) ? 'selected' : ''}>${esc(x.fund)}</option>`).join('')}</select></label>` : ''}</div>` : '';
           return `<tr><td><b>${esc(r.label)}</b>${bl}</td><td class="dim">${esc(r.fn)}</td>
             <td class="r"><label class="sr-only" for="bal-${r.key}">${esc(r.label)} balance</label><input class="input amt" id="bal-${r.key}" data-bal="${r.key}" inputmode="decimal" value="${esc(val)}" ${carried ? 'readonly disabled' : dis}></td>
             <td>${carried ? '<span class="pill ok">Carried from last exam</span>' : `<span class="pill blue">${lastFromPrev ? 'Typed' : 'Typed (first exam)'}</span>`}</td></tr>`;
@@ -471,7 +473,12 @@ function officerHtml(refs, cer, st, edit) {
       : `<p class="cer-wait">${(st.functions || []).length === 1 && st.functions[0] === 'custodian' ? 'Custodian accountability is kept in Accountable Forms by quantity, not in pesos.' : 'Tick the officer\'s functions to list the balances.'}</p>`}
       ${(st.functions || []).includes('custodian') && rows.length ? '<span class="hint">Custodian accountability is kept in Accountable Forms by quantity, not in pesos.</span>' : ''}`, opens.has('bal'))}
 
-    ${acc('forms', 'Beginning Inventory of Accountable Forms', h.forms, begBody, opens.has('forms'))}`;
+    ${acc('forms', 'Beginning Inventory of Accountable Forms', h.forms, begBody, opens.has('forms'))}
+    ${acc('banks', 'Bank Accounts', [bankAccts.length ? `${bankAccts.length} account${bankAccts.length > 1 ? 's' : ''}: ${bankAccts.map((x) => x.fund).join(', ')}` : 'None yet', bankAccts.length ? 'ok' : 'need'], `
+      ${bankAccts.length ? `<div class="cer-tbl"><table class="cer-bal"><thead><tr><th scope="col">Bank</th><th scope="col">Account No.</th><th scope="col">Fund</th></tr></thead>
+        <tbody>${bankAccts.map((x) => `<tr><td>${esc(x.bank || '')}</td><td class="mono">${esc(x.accountNo || '')}</td><td>${esc(x.fund || '')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="cer-wait">No bank account yet.</p>'}
+      <div class="btn-row"><button class="btn sm" type="button" id="cer-banks" ${st.lguId ? '' : 'disabled'}>${edit ? 'Edit Bank Accounts' : 'View Bank Accounts'}</button></div>
+      <span class="hint">One account per fund (e.g. General Fund, 5% BDRRM). The same list is used by Bank Statements, the Cashbook and Source Documents.</span>`, opens.has('banks'))}`;
 }
 const scopeText = (from, to) => (from && to ? `${esc(fmtDate(from))} to ${esc(fmtDate(to))}` : '<span class="dim">Set the last cash exam and the count date</span>');
 const warnHtml = (st) => bondChecks(st).map((w) => `<div class="cer-alert ${w.kind}" role="status">
@@ -500,6 +507,8 @@ function wireSetup(refs, cer, q, rerender) {
       await FM.addBeginningForms(refs, FX, FM.registerOf(refs, st.lguId), o, lastExam);
     };
     $$('[data-begchk]').forEach((b) => { b.onclick = () => begChecksModal(refs, cer, st, b.dataset.begchk, b.dataset.edit === '1'); });
+    $$('[data-restfund]').forEach((sel) => { sel.onchange = () => { st.caRestFund = sel.value; touch(); }; });
+    { const bb = $('#cer-banks'); if (bb) bb.onclick = async () => { const B = await import('./banks.js'); const list = (FX && FX.settings && FX.settings['banks|' + st.lguId]?.list) || []; const funds = (FX && FX.settings && FX.settings['funds|' + st.lguId]?.list) || B.DEFAULT_FUNDS; B.accountsModal(refs, st.lguId, list, funds, isAuditor(refs) || hasRole(refs, 'staff')); }; }
     $$('tr[data-begbk]').forEach((tr) => { const go = () => FM.openBooklet(refs, FX, tr.dataset.begbk); tr.onclick = go; tr.onkeydown = (e) => { if (e.key === 'Enter') go(); }; });
   };
   wireAcc(); wireBeg();
@@ -720,7 +729,7 @@ async function saveSetup(refs, cer, st) {
   const examId = st.examId || newId('cere');
   const oldExam = cer.exams.find((e) => e.id === examId);
   await store.save('cer_exams', examId, { auditId, officerId: st.officerId, functions: st.functions, forms: st.functions.includes('collecting') ? st.forms : [],
-    bond, lastExamDate, lastExamSource: prev ? 'system' : 'typed', balances, depositRule: st.depositRule || 'next', endBalances: oldExam ? (oldExam.endBalances || {}) : {} }, by(refs));
+    bond, lastExamDate, lastExamSource: prev ? 'system' : 'typed', balances, depositRule: st.depositRule || 'next', caRestFund: st.caRestFund || '', endBalances: oldExam ? (oldExam.endBalances || {}) : {} }, by(refs));
   DRAFT = null;
   toast('Audit Setup saved.', 'ok');
   location.hash = `#/cer/setup?a=${auditId}&o=${examId}`;

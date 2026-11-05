@@ -16,6 +16,7 @@
 //                  lineOf{ <item key>: line i } (which imported line each item matched; unmatched lines count as bank credits / debits),
 //                  noAuto[] (item keys unticked by hand: never matched again automatically) }
 import { listT, bankChecksOf, checkAmountOf, chkNo } from '../src/journal.js';
+import { caAcct } from './funds.js';
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
@@ -133,7 +134,9 @@ export async function banksView(ctx) {
     items.push({ key, old, kind: 'dep', date: d.date, ref: depRefText(d), amount: +d.amount || 0,
       from: `${r.pending ? 'Not yet reported' : repName(r)} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });
   }));
-  advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0,
+  // Cash advance checks of this account only (the fund of the check's checkbook; not identified → the first account).
+  const fxB = { booklets: books0.map(flat), accounts }; const caOfAcct = (a) => { const ac = caAcct(a, fxB); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; };
+  advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg && caOfAcct(a)).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0,
     from: `Cash advance · ${officers.find((o) => o.id === a.officerId)?.name || ''}` }));
   // Checks in the Check Disbursements Journal of this account (cash advances come with Cash Advances above).
   const jrChecks = bankChecksOf(jr0.map(flat), acct.id), jrNos = new Set(jrChecks.map((c) => chkNo(c.checkNo)));
@@ -291,7 +294,15 @@ export async function banksView(ctx) {
   const figs = `<div class="ca-figs"><span>Balance per Bank <b>${hasEnd ? '₱ ' + money(rec.ending) : '—'}</b><small>as of ${esc(fmtDate(rec.asOf || asOf))}</small></span>
       <span>Deposits in Transit <b>₱ ${money(dit)}</b></span><span>Outstanding Checks <b>₱ ${money(oc)}</b></span>
       <span class="ca-unliq">Reconciliation <b>${diff === null ? '—' : Math.abs(diff) < 0.005 ? '<span style="color:var(--ok)">Agrees</span>' : `<span class="warn">₱ ${money(diff)}</span>`}</b><small>${diff === null ? 'type the cashbook balance (tab 3)' : 'adjusted bank − adjusted book'}</small></span></div>`;
-  const body = hello(btnAccts) + top(true) + figs + tabs([
+  // One chip per bank account: statement imported? checks in the Check Disbursements Journal for the period?
+  const jrAll = jr0.map(flat);
+  const chips = `<div class="bk-chips">${accounts.map((x) => {
+    const r0 = recs0.map(flat).find((r) => r.id === `${audit.id}|${x.id}`), hasSt = !!(r0 && ((r0.lines || []).length || r0.lineParts));
+    const nCk = jrAll.filter((c) => c.acctId === x.id && c.lguId === audit.lguId && c.date && (!cov.from || c.date >= cov.from) && c.date <= cov.to).length;
+    return `<a class="bk-chip ${x.id === acct.id ? 'on' : ''}" href="#/cer/banks?a=${esc(audit.id)}&acct=${esc(x.id)}"><b>${esc(acctLabel(x))}</b>
+      <span class="${hasSt ? 'ok' : 'no'}">${hasSt ? '✓ Statement imported' : '✗ No statement yet'}</span><span class="${nCk ? 'ok' : 'no'}">${nCk ? `✓ CkDJ ${nCk} check${nCk > 1 ? 's' : ''}` : '✗ No CkDJ yet'}</span></a>`;
+  }).join('')}</div>`;
+  const body = hello(btnAccts) + top(true) + chips + figs + tabs([
     ['st', 'Bank Statement', esc(imported ? `${lns.length} lines · ${unmatched.length} not in the books` : hasEnd ? `${rec.source || ''} · ending ₱${money(rec.ending)}` : 'Import the soft copy'), stBody],
     ['dc', 'Deposits and Checks', `${nFound} of ${list.length} found in the bank`, dcBody],
     ['rc', 'Reconciliation', diff === null ? 'Type the cashbook balance' : Math.abs(diff) < 0.005 ? 'Agrees' : `Difference ₱${money(diff)}`, rcBody]]);
@@ -530,10 +541,12 @@ export async function bankFindings(audit, refs) {
     const recsAll = recs0.map(flat), rec0 = recsAll.find((r) => r.id === `${audit.id}|${acct.id}`);
     const rec = rec0 ? inCov(withLines(rec0, recsAll), covOf(audit, exams0.map(flat))) : rec0;
     const name = acctLabel(acct);
+    { const cv = covOf(audit, exams0.map(flat)); const nCk = jr0.map(flat).filter((c) => c.acctId === acct.id && c.lguId === audit.lguId && c.date && (!cv.from || c.date >= cv.from) && c.date <= cv.to).length;
+      if (!nCk) add(`bkck|${acct.id}`, `${name}: no checks in the Check Disbursements Journal for the period (Source Documents).`); }
     if (!rec) { add(`bk0|${acct.id}`, `${name}: no bank statement or reconciliation yet.`); continue; }
     const items = [];
     reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => depItems(r).forEach(({ d, key, old }) => items.push({ key, old, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0 })));
-    advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
+    advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg && (() => { const ac = caAcct(a, { booklets: books0.map(flat), accounts }); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; })()).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
     const jrChecks = bankChecksOf(jr0.map(flat), acct.id), jrNos = new Set(jrChecks.map((c) => chkNo(c.checkNo)));
     jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c) }));
     (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0 }));
