@@ -206,7 +206,7 @@ async function taxModal(c) {
 }
 
 /* ---------- shared bits of the two entry lines ---------- */
-const blankCheck = (date, checkNo) => ({ coa: 2, date, checkNo, ref: '', payee: '', particulars: '', amount: '', lines: [blankLine()], tax: { taxable: false }, cancelled: false, officerId: '', note: '' });
+const blankCheck = (date, checkNo) => ({ coa: 3, date, checkNo, ref: '', payee: '', particulars: '', amount: '', lines: [blankLine()], tax: { taxable: false }, cancelled: false, officerId: '', note: '' });
 const isCancelText = (s) => /^\s*cancell?ed\s*$/i.test(s || '');
 const nextNo = (no) => { const m = /^(.*?)(\d+)$/.exec(String(no || '')); if (!m) return ''; const n = String(+m[2] + 1).padStart(m[2].length, '0'); return m[1] + n; };
 const lastDayOf = (m) => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
@@ -352,7 +352,7 @@ function wireEntry(c) {
       if (lines.some((l) => CA_CODES.includes(l.code)) && !d.officerId) return bad('Choose the officer of the cash advance.');
     } else lines = [];
     const cur = ED.id ? mine.find((x) => x.id === ED.id) : null;
-    const rec = { ...(cur ? (({ id, ...r }) => r)(cur) : {}), coa: 2, lguId: lgu.id, acctId: acct.id, date: d.date, checkNo: d.checkNo, ref: d.cancelled ? '' : d.ref, payee: d.cancelled ? '' : d.payee, particulars: d.cancelled ? 'Cancelled' : d.particulars,
+    const rec = { ...(cur ? (({ id, ...r }) => r)(cur) : {}), coa: 3, lguId: lgu.id, acctId: acct.id, date: d.date, checkNo: d.checkNo, ref: d.cancelled ? '' : d.ref, payee: d.cancelled ? '' : d.payee, particulars: d.cancelled ? 'Cancelled' : d.particulars,
       lines: lines.map((l) => ({ code: l.code, name: names[l.code], gross: r2(l.gross) })), tax: d.cancelled ? { taxable: false } : d.tax, cancelled: d.cancelled,
       officerId: lines.some((l) => CA_CODES.includes(l.code)) ? d.officerId : '', note: d.note || (cur && cur.note) || '' };
     // Encoded here first: the check amount is gross − tax (it shows in the RCI); from the RCI: it stays as typed there.
@@ -450,9 +450,9 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
     buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; } if (!plan.add.length && !plan.upd.length) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
   if (v !== 'go') return;
   for (const g of plan.add) {
-    if (plan.rci) { await store.save('src_ckdj', newId('ckdj'), { coa: 2, lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.cancelled ? '' : g.ref, payee: g.cancelled ? '' : g.payee, particulars: g.cancelled ? 'Cancelled' : g.part,
+    if (plan.rci) { await store.save('src_ckdj', newId('ckdj'), { coa: 3, lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.cancelled ? '' : g.ref, payee: g.cancelled ? '' : g.payee, particulars: g.cancelled ? 'Cancelled' : g.part,
       amount: g.cancelled ? 0 : g.amount, amountSrc: 'rci', lines: [], tax: { taxable: false }, cancelled: g.cancelled, officerId: '', note: g.note || '' }, by(refs), { quiet: true }); continue; }
-    await store.save('src_ckdj', newId('ckdj'), { coa: 2, lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.ref, payee: g.payee, particulars: g.part, lines: g.cancelled ? [] : g.lines.map((l) => ({ code: l.code, name: l.name, gross: r2(l.gross) })),
+    await store.save('src_ckdj', newId('ckdj'), { coa: 3, lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.ref, payee: g.payee, particulars: g.part, lines: g.cancelled ? [] : g.lines.map((l) => ({ code: l.code, name: l.name, gross: r2(l.gross) })),
       tax: g.cancelled || !(g.tax || g.taxyn) ? { taxable: false } : { taxable: true, vat: null, main: g.tax, one: 0 }, cancelled: g.cancelled, officerId: '', note: g.note }, by(refs), { quiet: true });
   }
   for (const { cur, fill } of plan.upd) { const { id, ...rec } = cur; await store.save('src_ckdj', id, { ...rec, ...fill }, by(refs), { quiet: true }); }

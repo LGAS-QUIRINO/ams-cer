@@ -21,7 +21,7 @@ const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, ...rest } = x; return rest; };
 const bad = (m) => { toast(m, 'bad'); return false; };
 const CASH = '1-01-01-010';
-const ADV_DEFAULT = '1-03-05-010';
+const ADV_DEFAULT = '1-03-03-020';
 const LQ = { key: '', id: '', d: null };   // the liquidation in the entry line (kept across redraws)
 const blank = (type = 'liq', date = '') => ({ type, date, ref: '', advanceId: '', lines: [{ code: '', amount: '' }], credit: '' });
 const lastDayOf = (m) => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();

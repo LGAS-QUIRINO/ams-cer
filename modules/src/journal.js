@@ -1,7 +1,7 @@
 // Source Documents · Check Disbursements Journal: the data, shared with Cash Examination.
 //
 // Record:
-//   src_ckdj  one check  { coa: 2 (revised chart codes), lguId, acctId (bank account: cer_settings banks|<lguId>), date, checkNo, ref (DV / payroll No.), payee, amount
+//   src_ckdj  one check  { coa: 3, lguId, acctId (bank account: cer_settings banks|<lguId>), date, checkNo, ref (DV / payroll No.), payee, amount
 //                          (check amount, from the Report of Checks Issued, encoded first),
 //                          particulars, lines[{ code, name, gross }], tax: { taxable, vat (true / false; null when imported),
 //                          main (5% or 3%, typed when rounded; empty = computed), one (1%, same) }, cancelled, officerId (for a
@@ -18,18 +18,15 @@ export async function loadCoa() {
   if (!COA) COA = await (await fetch('lib/coa-barangay.json')).json();
   return COA;
 }
-// Revised Chart of Accounts for LGUs (Annex A). Cash advances: Petty Cash and the four Advances accounts.
-export const CA_CODES = ['1-01-01-020', '1-03-05-010', '1-03-05-020', '1-03-05-030', '1-03-05-040'];
-// Checks encoded before the revised chart (no coa: 2) have the old barangay codes: changed to the new code of the same
-// account (coa.old: old code → [new code or null, old title]). An old account with no new one keeps its amount, with old
-// (the old code) and no code, for the auditor to choose the new account.
+// Chart of Accounts: the Barangay Manual first; accounts not in the Manual from the Revised Chart of Accounts for LGUs
+// (COA Circular, Annex A). Cash advances: Petty Cash, the Manual's two Advances accounts and the Circular's 1-03-05 accounts.
+export const CA_CODES = ['1-01-01-020', '1-03-03-010', '1-03-03-020', '1-03-05-010', '1-03-05-020', '1-03-05-030', '1-03-05-040'];
+// Checks saved with coa: 2 (5 Nov 2026, when Manual codes were briefly changed to the Circular's) get their Manual codes back
+// (coa.rev: Circular code → Manual code). Saved from now on with coa: 3. Checks without coa keep their codes as typed.
 export function upgrade(c, coa) {
-  if (!c || c.coa === 2) return c;
-  const lines = (c.lines || []).map((l) => {
-    const m = l.code && coa.old[l.code]; if (!m) return l;
-    return m[0] ? { ...l, code: m[0], name: '' } : { code: '', name: '', gross: l.gross, old: l.code, oldName: m[1] };
-  });
-  return { ...c, lines, coa: 2 };
+  if (!c || c.coa !== 2) return c;
+  const lines = (c.lines || []).map((l) => (l.code && coa.rev[l.code] ? { ...l, code: coa.rev[l.code], name: '' } : l));
+  return { ...c, lines, coa: 3 };
 }
 
 export const grossOf = (c) => r2((c.lines || []).reduce((n, l) => n + (+l.gross || 0), 0));
