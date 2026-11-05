@@ -91,7 +91,7 @@ async function journalView(ctx) {
     if (ED.key !== key) Object.assign(ED, { key, id: '', d: null });
     if (ED.id && !mine.some((c) => c.id === ED.id)) Object.assign(ED, { id: '', d: null });
     if (!ED.d) ED.d = blankCheck('', '');
-    const form = enc ? entryHtml(ED.d, officers, !!ED.id) : '';
+    const form = enc ? entryHtml(ED.d, officers, !!ED.id, m) : '';
     const rows = list.map((c) => {
       const t = taxOf(c), ca = isCa(c), ls = c.lines || [];
       // Flags shown in the Auditor's Note column (worked out, not saved).
@@ -152,7 +152,7 @@ async function journalView(ctx) {
       const { id, ...rec } = c; await store.save('src_ckdj', id, { ...rec, tax: t }, by(refs)); toast(`Tax of Check No. ${c.checkNo} saved.`, 'ok');
     }; });
     if ($('#sd-imp')) $('#sd-imp').onclick = () => importJournal({ refs, lgu, acct, mine, coa, names });
-    if (enc && tab === 'ckdj') wireEntry({ refs, lgu, acct, mine, coa, names, rerender: ctx.rerender });
+    if (enc && tab === 'ckdj') wireEntry({ refs, lgu, acct, mine, coa, names, m, rerender: ctx.rerender });
   };
   return { body, wire };
 }
@@ -194,7 +194,7 @@ const blankCheck = (date, checkNo) => ({ date, checkNo, ref: '', payee: '', part
 const isCancelText = (s) => /^\s*cancell?ed\s*$/i.test(s || '');
 const nextNo = (no) => { const m = /^(.*?)(\d+)$/.exec(String(no || '')); if (!m) return ''; const n = String(+m[2] + 1).padStart(m[2].length, '0'); return m[1] + n; };
 
-function entryHtml(d, officers, editing) {
+function entryHtml(d, officers, editing, m) {
   const ln = (l, i) => `<div class="sd-ln" data-ln="${i}">
       <input class="input mono sd-code" list="sd-coa" value="${esc(l.code)}" placeholder="Code or title" aria-label="Account" title="${esc(l.name || '')}">
       <input class="input r sd-gross" inputmode="decimal" value="${l.gross === '' || l.gross === undefined ? '' : esc(money(l.gross))}" aria-label="Gross amount">
@@ -202,7 +202,7 @@ function entryHtml(d, officers, editing) {
   const tx = d.tax || {};
   return `<div class="panel sd-pan" id="sd-form">${editing ? `<div class="cd-orhead"><h3 class="cer-h3">Edit Check No. ${esc(d.checkNo)}</h3><button class="btn sm" type="button" id="sd-del">Delete</button><button class="btn sm" type="button" id="sd-new">Cancel</button></div>` : ''}
     <div class="sd-line">
-      <div class="sd-f sd-w-date"><label for="sd-date">Date</label><input class="input" type="date" id="sd-date" value="${esc(d.date)}"></div>
+      <div class="sd-f sd-w-day"><label for="sd-date">Day</label><input class="input r" id="sd-date" inputmode="numeric" maxlength="2" value="${d.date ? +d.date.slice(8, 10) : ''}" title="${esc(monthLabel(m))}" aria-label="Day of ${esc(monthLabel(m))}"></div>
       <div class="sd-f sd-w-no"><label for="sd-no">Check No.</label><input class="input mono" id="sd-no" value="${esc(d.checkNo)}"></div>
       <div class="sd-f sd-w-ref"><label for="sd-ref">DV / Payroll</label><input class="input" id="sd-ref" value="${esc(d.ref)}"></div>
       <div class="sd-f sd-w-txt"><label for="sd-payee">Payee</label><input class="input" id="sd-payee" value="${esc(d.payee)}"></div>
@@ -219,14 +219,17 @@ function entryHtml(d, officers, editing) {
 }
 
 function wireEntry(c) {
-  const { refs, lgu, acct, mine, coa, names, rerender } = c;
+  const { refs, lgu, acct, mine, coa, names, m, rerender } = c;
+  // The day only: the month and year are the ones chosen at the top.
+  const lastDay = new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
+  const dateOf = (v) => { const n = parseInt(String(v || '').trim(), 10); return n >= 1 && n <= lastDay ? `${m}-${String(n).padStart(2, '0')}` : ''; };
   const d = ED.d;
   if (!$('#sd-form')) return;
   if (!$('#sd-coa')) { const dl = document.createElement('datalist'); dl.id = 'sd-coa'; dl.innerHTML = coa.accounts.map(([k, t]) => `<option value="${esc(k)}">${esc(t)}</option>`).join(''); document.body.appendChild(dl); }
   // A typed code or title becomes the code; the name follows the Chart of Accounts.
   const toCode = (v) => { const t = String(v || '').trim(); if (names[t]) return t; const hit = coa.accounts.find(([, n]) => n.toLowerCase() === t.toLowerCase()); return hit ? hit[0] : t; };
   const read = () => {
-    d.date = $('#sd-date').value; d.checkNo = $('#sd-no').value.trim(); d.ref = $('#sd-ref').value.trim(); d.payee = $('#sd-payee').value.trim(); d.particulars = $('#sd-part').value.trim();
+    d.date = dateOf($('#sd-date').value); d.checkNo = $('#sd-no').value.trim(); d.ref = $('#sd-ref').value.trim(); d.payee = $('#sd-payee').value.trim(); d.particulars = $('#sd-part').value.trim();
     d.cancelled = isCancelText(d.particulars); d.officerId = $('#sd-off').value;
     const g0 = grossOf(d);
     d.lines = $$('.sd-ln').map((el) => { const code = toCode($('.sd-code', el).value); return { code, name: names[code] || '', gross: num($('.sd-gross', el).value) ?? '' }; });
@@ -250,7 +253,7 @@ function wireEntry(c) {
     const t = await taxModal(d); if (t) d.tax = t; else if (d.tax.vat !== true && d.tax.vat !== false) { d.tax = { taxable: false }; $('#sd-taxable').value = '0'; } paint(); return !!t; };
   const save = async () => {
     read();
-    if (!d.date) return bad('Enter the date.');
+    if (!d.date) return bad(`Enter the day (1 to ${lastDay}).`);
     if (!chkNo(d.checkNo)) return bad('Enter the check No.');
     const dup = mine.find((x) => x.id !== ED.id && chkNo(x.checkNo) === chkNo(d.checkNo));
     if (dup) return bad(`Check No. ${d.checkNo} is already in the journal (${fmtDate(dup.date)}).`);

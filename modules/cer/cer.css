@@ -759,7 +759,7 @@ table.rp-rsa{max-width:640px; margin:14px auto}
 .sd-line .input{padding:7px 8px; font-size:13.5px; min-width:0}
 .sd-f{display:flex; flex-direction:column; gap:4px; min-width:0}
 .sd-f > label, .sd-acch label{font-size:10.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--dim, #5b6475); white-space:nowrap}
-.sd-w-date{width:124px} .sd-w-no{width:86px} .sd-w-ref{width:92px} .sd-w-txt{flex:1 1 100px} .sd-w-amt{width:96px} .sd-w-tax{width:82px}
+.sd-w-date{width:124px} .sd-w-day{width:58px} .sd-w-no{width:86px} .sd-w-ref{width:92px} .sd-w-txt{flex:1 1 100px} .sd-w-amt{width:96px} .sd-w-tax{width:82px}
 .sd-w-acct{flex:2 1 230px} .sd-w-yn{width:62px} .sd-w-btn{width:64px}
 .sd-w-btn .btn{padding-left:0; padding-right:0; width:100%}
 .sd-acch{display:grid; grid-template-columns:1fr 92px 24px; gap:6px}
