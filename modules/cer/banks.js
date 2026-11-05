@@ -27,6 +27,21 @@ const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin
 const r2 = (n) => Math.round(n * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, ...rest } = x; return rest; };
+// A deposit's key: its report, date and amount (and the how-manyth such deposit), so editing its reference keeps the match.
+// Keys of older matches (with the reference in them) are moved over; matches of items no longer in the books are dropped.
+function depItems(r) {
+  const seen = {};
+  return (r.deposits || []).map((d) => { const b = `${d.date}|${d.amount}`; seen[b] = (seen[b] || 0) + 1;
+    return { d, key: `dep|${r.id}|${d.date}|${d.amount}|${seen[b]}`, old: `dep|${r.id}|${d.date}|${d.ref}|${d.amount}` }; });
+}
+function tidyFound(rec, items) {
+  const found = { ...(rec.found || {}) }, lineOf = { ...(rec.lineOf || {}) }; let changed = false;
+  items.forEach((x) => { if (x.old && x.old !== x.key && found[x.old] && !found[x.key]) { found[x.key] = found[x.old]; if (x.old in lineOf) lineOf[x.key] = lineOf[x.old]; delete found[x.old]; delete lineOf[x.old]; changed = true; } });
+  const keys = new Set(items.map((x) => x.key));
+  Object.keys(found).forEach((k) => { if (!keys.has(k)) { delete found[k]; delete lineOf[k]; changed = true; } });
+  Object.keys(lineOf).forEach((k) => { if (!found[k]) { delete lineOf[k]; changed = true; } });
+  return { found, lineOf, changed };
+}
 // The statement lines are kept in parts (records <recId>#lines<k> in cer_bankrec): one Google Sheet cell holds 50,000 characters at most.
 const PART = '#lines';
 export const isPart = (r) => String(r.id).includes(PART);
@@ -106,9 +121,8 @@ export async function banksView(ctx) {
   const otherAccts = accounts.filter((x) => x.id !== acct.id).map((x) => `${audit.id}|${x.id}`);
   const foundElsewhere = new Set(recs0.map(flat).filter((r) => otherAccts.includes(r.id)).flatMap((r) => Object.keys(r.found || {})));
   const items = [];
-  tagSameDay(reports0.map(flat)).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => (r.deposits || []).forEach((d) => {
-    const key = `dep|${r.id}|${d.date}|${d.ref}|${d.amount}`;
-    items.push({ key, kind: 'dep', date: d.date, ref: depRefText(d), amount: +d.amount || 0,
+  tagSameDay(reports0.map(flat)).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => depItems(r).forEach(({ d, key, old }) => {
+    items.push({ key, old, kind: 'dep', date: d.date, ref: depRefText(d), amount: +d.amount || 0,
       from: `${r.pending ? 'Not yet reported' : repName(r)} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });
   }));
   advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0,
@@ -117,6 +131,8 @@ export async function banksView(ctx) {
   const jrChecks = bankChecksOf(jr0.map(flat), acct.id), jrNos = new Set(jrChecks.map((c) => chkNo(c.checkNo)));
   jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c), from: `Journal${c.payee ? ' · ' + c.payee : ''}` }));
   (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0, from: `Typed here${c.payee ? ' · ' + c.payee : ''}`, other: c }));
+  // Matches kept in step with the books (a deposit edited or removed).
+  const tidy = tidyFound(rec, items); rec.found = tidy.found; rec.lineOf = tidy.lineOf;
   const list = items.filter((x) => x.date && x.date <= asOf && !foundElsewhere.has(x.key)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.kind.localeCompare(b.kind));
   // Cut-off (Cash Count): the last check written in each checkbook at the count. A check numbered after it, in the same checkbook,
   // was issued after the cut-off: not an outstanding check of this examination.
@@ -129,7 +145,7 @@ export async function banksView(ctx) {
     const found = { ...(rec.found || {}) }, lineOf = { ...(rec.lineOf || {}) };
     const used = new Set(Object.entries(lineOf).filter(([k]) => found[k]).map(([, i]) => i));
     const n = matchItems(list.filter((x) => !found[x.key] && !(rec.noAuto || []).includes(x.key)), lns, found, lineOf, used);
-    return n ? { n, found, lineOf } : null;
+    return n || tidy.changed ? { n, found, lineOf } : null;
   })();
   list.forEach((x) => { x.after = afterCut(x) && !rec.found[x.key]; });
   const result = (x) => {
@@ -324,7 +340,7 @@ function wireBanks(c) {
     if (out) save({ otherChecks: [...(rec.otherChecks || []), out] }, `Check No. ${out.checkNo} added.`);
   };
   $('#bk-import').onclick = () => importStatement(c, save);
-  if (c.auto && !UI.edit) save({ found: c.auto.found, lineOf: c.auto.lineOf }, `${c.auto.n} matched with the uploaded statement.`);
+  if (c.auto && !UI.edit) save({ found: c.auto.found, lineOf: c.auto.lineOf }, c.auto.n ? `${c.auto.n} matched with the uploaded statement.` : '');
 }
 
 /* ---------- import a soft copy ---------- */
@@ -486,13 +502,13 @@ export async function bankFindings(audit) {
     const rec = rec0 ? inCov(withLines(rec0, recsAll), covOf(audit, exams0.map(flat))) : rec0;
     const name = acctLabel(acct);
     if (!rec) { add(`bk0|${acct.id}`, `${name}: no bank statement or reconciliation yet.`); return; }
-    const found = rec.found || {};
     const items = [];
-    reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => (r.deposits || []).forEach((d) => items.push({ key: `dep|${r.id}|${d.date}|${d.ref}|${d.amount}`, kind: 'dep', date: d.date, ref: depRefText(d), amount: +d.amount || 0 })));
+    reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => depItems(r).forEach(({ d, key, old }) => items.push({ key, old, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0 })));
     advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
     const jrChecks = bankChecksOf(jr0.map(flat), acct.id), jrNos = new Set(jrChecks.map((c) => chkNo(c.checkNo)));
     jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c) }));
     (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0 }));
+    const tidy = tidyFound(rec, items); const found = tidy.found; rec.found = tidy.found; rec.lineOf = tidy.lineOf;
     const list = items.filter((x) => x.date && x.date <= asOf);
     const after = (x) => { const n = +chqKey(x.ref); return x.kind === 'chk' && !!n && cuts.some((c) => n >= c.from && n <= c.to && n > c.last); };
     const dits = list.filter((x) => x.kind === 'dep' && !found[x.key]), ocs = list.filter((x) => x.kind === 'chk' && !found[x.key] && !after(x));
