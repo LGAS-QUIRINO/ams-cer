@@ -86,19 +86,25 @@ export async function liqView(c) {
       <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="lq-save">${editing ? 'Save' : 'Enter'}</button></div>
     </div><div class="sd-tally" id="lq-left" hidden></div></div>`;
 
+  // The table on screen = the printout (DEBIT and CREDIT, one row per debit account); Flags and Edit at the right, screen only.
+  const debTotal = sumOf(list.flatMap(debitsOf));
   const rows = list.map((l) => {
-    const deb = debitsOf(l), fl = flagsOf(l), a = advOf(l.advanceId);
-    return `<tr class="${l.id === LQ.id ? 'cd-on' : ''}"><td>${esc(fmtDate(l.date))}</td><td>${l.type === 'refund' ? '<span class="pill p-done">Refund</span>' : 'Liquidation'}</td><td class="mono">${esc(l.ref || '')}</td><td>${esc(liqText(l, a))}</td>
-      <td>${deb.map((x) => `<div class="lq-deb"><span class="mono">${esc(x.code)}</span> <small class="dim">${esc(names[x.code] || x.name || '')}</small>${deb.length > 1 ? ` <span class="lq-damt">${money(x.amount)}</span>` : ''}</div>`).join('')}</td>
-      <td class="r">${money(l.amount)}</td><td>${creditOf(l) ? `<span class="mono">${esc(creditOf(l))}</span> <small class="dim">${esc(names[creditOf(l)] || '')}</small>` : ''}</td><td class="mono">${esc(forTxt(l))}${a && a.officer ? `<small class="dim lq-off">${esc(a.officer)}</small>` : ''}</td>
-      <td class="sd-notec">${fl.map((t) => `<span class="sd-flag">${esc(t)}</span>`).join('')}</td>
-      <td>${enc ? `<button class="btn sm ${fl.includes('No entry yet') ? 'primary' : ''}" type="button" data-lqedit="${esc(l.id)}">${fl.includes('No entry yet') ? 'Fill entry' : 'Edit'}</button>` : ''}</td></tr>`;
+    const deb = debitsOf(l), fl = flagsOf(l), a = advOf(l.advanceId), cr = creditOf(l), n = Math.max(deb.length, 1), on = l.id === LQ.id ? ' class="cd-on"' : '';
+    const rs = n > 1 ? ` rowspan="${n}"` : '';
+    const dc = (x) => (x ? `<td class="lq-code">${esc(x.code)}</td><td>${esc(names[x.code] || x.name || '')}</td><td class="r">${money(x.amount)}</td>` : '<td></td><td></td><td></td>');
+    const first = `<tr${on}><td${rs}>${esc(fmtDate(l.date))}</td><td${rs}>${l.type === 'refund' ? 'Refund' : 'Liquidation'}</td><td${rs}>${esc(l.ref || '')}</td><td${rs}>${esc(liqText(l, a))}</td>${dc(deb[0])}
+      <td${rs} class="lq-code">${esc(cr)}</td><td${rs}>${esc(names[cr] || '')}</td><td${rs} class="r">${money(l.amount)}</td><td${rs}>${esc(forTxt(l))}${a && a.officer ? `<small class="dim lq-off">${esc(a.officer)}</small>` : ''}</td>
+      <td${rs} class="af-noprint lq-flags">${fl.map((t) => `<span class="sd-flag">${esc(t)}</span>`).join('')}${enc ? `<button class="btn sm ${fl.includes('No entry yet') ? 'primary' : ''}" type="button" data-lqedit="${esc(l.id)}">${fl.includes('No entry yet') ? 'Fill entry' : 'Edit'}</button>` : ''}</td></tr>`;
+    return first + deb.slice(1).map((x) => `<tr${on}>${dc(x)}</tr>`).join('');
   }).join('');
   const inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Liquidation Journal · ${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
       ${enc ? '<a href="#" class="cd-link" id="lq-tpl">Template</a><button class="btn sm" type="button" id="lq-imp">Import from Excel</button>' : ''}${outButtons('lq')}</div>
-    ${list.length ? `<div class="af-tbl sd-scroll"><table class="af-reg sd-tbl lq-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Type</th><th scope="col">LR No. / OR No.</th><th scope="col">Particulars</th><th scope="col">Debit Account(s)</th><th scope="col" class="r">Amount</th><th scope="col">Credit Account</th><th scope="col">For Check No.</th><th scope="col">Flags</th><th scope="col"></th></tr></thead>
-      <tbody>${rows}</tbody><tfoot><tr class="cd-foot"><td colspan="5">Total, ${esc(monthLabel(m))}</td><td class="r">${money(total)}</td><td colspan="4"></td></tr></tfoot></table></div>`
-      : `<div class="empty"><b>No liquidation for ${esc(monthLabel(m))}.</b></div>`}
+    <div class="rp-doc"><div class="rp-page rp-wide lq-page"><h2 class="rp-title">LIQUIDATION JOURNAL</h2>
+      <p class="c"><b>${esc(agencyName(refs, lgu))}</b><br>${esc(acctLabel(acct))}<br>${esc(monthLabel(m))}</p>
+      <table class="rp-t lq-t"><colgroup>${[8, 7, 6.5, 12.5, 7.5, 11, 7.5, 7.5, 10, 7.5, 6.5, 8.5].map((w) => `<col style="width:${w}%">`).join('')}</colgroup><thead><tr><th rowspan="2">Date</th><th rowspan="2">Type</th><th rowspan="2">LR No. / OR No.</th><th rowspan="2">Particulars</th><th colspan="3" class="lq-g">DEBIT</th><th colspan="3" class="lq-g">CREDIT</th><th rowspan="2">For Check No.</th><th rowspan="2" class="af-noprint">Flags</th></tr>
+        <tr><th>Account Code</th><th>Account Name</th><th>Amount</th><th>Account Code</th><th>Account Name</th><th>Amount</th></tr></thead>
+      <tbody>${list.length ? rows : '<tr><td colspan="12" class="c">No liquidation this month.</td></tr>'}
+        <tr class="tot"><td colspan="4">Total</td><td></td><td></td><td class="r">${money(debTotal)}</td><td></td><td></td><td class="r">${money(total)}</td><td></td><td class="af-noprint"></td></tr></tbody></table></div></div>
     <p class="af-note">The same liquidations as in Cash Examination, Cash Advances. Listed under the bank account of the cash advance check, by the date of the liquidation.</p></div>`;
 
   const spec = () => ({ title: 'Liquidation Journal', sheet: 'Liquidation Journal', office: agencyName(refs, lgu), acct: acctLabel(acct), month: monthLabel(m), empty: 'No liquidation this month.',

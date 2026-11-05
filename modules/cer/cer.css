@@ -823,3 +823,20 @@ table.rp-rsa{max-width:640px; margin:14px auto}
 .lq-tbl td:nth-child(4){min-width:200px} .lq-tbl td:nth-child(5){min-width:230px} .lq-tbl td:nth-child(7){min-width:170px}
 .lq-tbl .sd-flag{display:block}
 .af-reg.lq-tbl td small.lq-off{display:block; margin:2px 0 0; font-family:inherit; font-size:11.5px}
+/* Liquidation Journal on screen: the printout layout */
+.lq-page{font-size:12px}
+.lq-t th.lq-g{font-weight:400; letter-spacing:.04em}
+.lq-t td{font-size:12px}
+.lq-t td.lq-flags{min-width:150px; background:#fbfcfe}
+.lq-t td.lq-flags .sd-flag{display:block; margin-bottom:4px}
+.lq-t small.lq-off{display:block; color:#5b6475; font-size:11px}
+.lq-t tr.cd-on td{background:#fff8e6}
+.rp-doc .lq-page{padding:24px 20px}
+.lq-t td.lq-code{white-space:nowrap}
+.lq-t td:nth-child(4){min-width:150px}
+.lq-t td.lq-flags{min-width:120px; max-width:150px}
+.lq-t th, .lq-t td{padding:4px 5px}
+.lq-t{table-layout:fixed} .lq-t td, .lq-t th{overflow-wrap:anywhere} .lq-t td.lq-code{overflow-wrap:normal; font-size:11.5px}
+.lq-t td:nth-child(4){min-width:0} .lq-t td.lq-flags{min-width:0; max-width:none}
+.lq-t tbody td:first-child{white-space:nowrap; overflow-wrap:normal} .lq-t td small.lq-off, .lq-t td.lq-flags{overflow-wrap:normal}
+.lq-t td small.lq-off{font-size:10px; overflow-wrap:anywhere}
