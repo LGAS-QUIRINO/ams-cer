@@ -503,15 +503,18 @@ function loadXlsx() {
 /* ---------- bank accounts of the auditee ---------- */
 export async function accountsModal(refs, lguId, accounts, funds, enc) {
   const list = accounts.map((x) => ({ ...x }));
+  // Fund: pick from the list or type a new one (e.g. 5% BDRRM).
+  const fundChoices = [...new Set(['General Fund', '5% BDRRM', '20% Development Fund', ...funds, ...accounts.map((x) => x.fund).filter(Boolean)])];
   const v = await modal({ title: `Bank Accounts · ${agencyName(refs, refs.lgu[lguId])}`, wide: true,
     body: `<p class="hint" style="margin:0">Each bank account of the auditee and its fund. Barangays usually have one account per fund; the LGU may have several.</p>
       <div class="af-tbl"><table class="af-reg cd-edit"><thead><tr><th scope="col">Bank</th><th scope="col">Account No.</th><th scope="col">Fund</th><th scope="col"></th></tr></thead><tbody id="ba-rows"></tbody></table></div>
+      <datalist id="ba-funds">${fundChoices.map((f) => `<option value="${esc(f)}">`).join('')}</datalist>
       ${enc ? '<button class="btn sm" type="button" id="ba-add">+ Add Account</button>' : ''}`,
     onOpen: (bg) => {
       const draw = () => {
         $('#ba-rows', bg).innerHTML = list.map((x, i) => `<tr data-i="${i}"><td><input class="input" data-k="bank" value="${esc(x.bank || '')}" placeholder="e.g. Land Bank, Maddela" aria-label="Bank" ${enc ? '' : 'disabled'}></td>
           <td><input class="input mono" data-k="accountNo" value="${esc(x.accountNo || '')}" aria-label="Account No." ${enc ? '' : 'disabled'}></td>
-          <td><select class="input" data-k="fund" aria-label="Fund" ${enc ? '' : 'disabled'}>${funds.map((f) => `<option ${f === x.fund ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select></td>
+          <td><input class="input" data-k="fund" list="ba-funds" value="${esc(x.fund || '')}" placeholder="Choose or type" aria-label="Fund" ${enc ? '' : 'disabled'}></td>
           <td>${enc ? '<button class="btn sm cd-x" type="button" aria-label="Remove account">✕</button>' : ''}</td></tr>`).join('');
         $$('tr[data-i]', bg).forEach((tr) => {
           $$('[data-k]', tr).forEach((el) => { el.oninput = el.onchange = () => { list[+tr.dataset.i][el.dataset.k] = el.value; }; });
@@ -524,7 +527,7 @@ export async function accountsModal(refs, lguId, accounts, funds, enc) {
     },
     buttons: enc ? [{ label: 'Cancel', value: null }, { label: 'Save Accounts', cls: 'primary', value: 'save' }] : [{ label: 'Close', cls: 'primary', value: null }] });
   if (v !== 'save') return;
-  const clean = list.filter((x) => x.bank || x.accountNo).map((x) => ({ id: x.id || newId('ba'), bank: String(x.bank || '').trim(), accountNo: String(x.accountNo || '').trim(), fund: x.fund || funds[0] }));
+  const clean = list.filter((x) => x.bank || x.accountNo).map((x) => ({ id: x.id || newId('ba'), bank: String(x.bank || '').trim(), accountNo: String(x.accountNo || '').trim(), fund: String(x.fund || '').trim() || funds[0] }));
   await store.save('cer_settings', 'banks|' + lguId, { list: clean }, by(refs));
   toast('Bank accounts saved.', 'ok');
 }
