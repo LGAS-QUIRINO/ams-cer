@@ -135,10 +135,10 @@ async function journalView(ctx) {
   } else {
     const tl = list.filter(isTaxable);
     inner = `<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Tax Register · ${esc(monthLabel(m))}</h3><span class="pill">${tl.length}</span><button class="btn sm" type="button" id="sd-txls">Export to Excel</button></div>
-      ${tl.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Check No.</th><th scope="col">Date</th><th scope="col">Payee</th><th scope="col">VAT / Non-VAT</th><th scope="col" class="r">Gross Amount</th><th scope="col" class="r">Tax Base</th><th scope="col" class="r">5% or 3%</th><th scope="col" class="r">1%</th><th scope="col" class="r">Tax Amount</th><th scope="col"></th></tr></thead>
-        <tbody>${tl.map((c) => { const t = taxOf(c); return `<tr><td class="mono">${esc(c.checkNo)}</td><td>${esc(fmtDate(c.date))}</td><td>${esc(c.payee || '')}</td><td>${vatText(c) || '<span class="pill p-part">Choose</span>'}</td><td class="r">${money(grossOf(c))}</td><td class="r">${t.base ? money(t.base) : ''}</td><td class="r">${money(t.main)}</td><td class="r">${money(t.one)}</td><td class="r"><b>${money(t.amount)}</b></td>
+      ${tl.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Check No.</th><th scope="col">Date</th><th scope="col">Payee</th><th scope="col">VAT / Non-VAT</th><th scope="col">Goods / Services</th><th scope="col" class="r">Gross Amount</th><th scope="col" class="r">Tax Base</th><th scope="col" class="r">Business Tax (5% / 3%)</th><th scope="col" class="r">EWT (1% / 2%)</th><th scope="col" class="r">Tax Amount</th><th scope="col"></th></tr></thead>
+        <tbody>${tl.map((c) => { const t = taxOf(c); return `<tr><td class="mono">${esc(c.checkNo)}</td><td>${esc(fmtDate(c.date))}</td><td>${esc(c.payee || '')}</td><td>${vatText(c) || '<span class="pill p-part">Choose</span>'}</td><td>${t.svc ? 'Services' : 'Goods'}</td><td class="r">${money(grossOf(c))}</td><td class="r">${t.base ? money(t.base) : ''}</td><td class="r">${money(t.main)}</td><td class="r">${money(t.one)}</td><td class="r"><b>${money(t.amount)}</b></td>
           <td>${enc ? `<button class="btn sm" type="button" data-sdtax="${esc(c.id)}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
-        <tfoot><tr class="cd-foot"><td colspan="6">Total</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).main, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).one, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).amount, 0)))}</td><td></td></tr></tfoot></table></div>`
+        <tfoot><tr class="cd-foot"><td colspan="7">Total</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).main, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).one, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).amount, 0)))}</td><td></td></tr></tfoot></table></div>`
         : '<div class="empty"><b>No taxable check this month.</b></div>'}</div>`;
   }
   const body = top + tabs + inner;
@@ -151,7 +151,7 @@ async function journalView(ctx) {
       'Gross Amount': c.cancelled ? 0 : grossOf(c), Taxable: c.cancelled || !hasEntry(c) ? '' : isTaxable(c) ? 'YES' : 'NO', "Auditor's Note": c.note || '' }));
     const fileBase = `${agencyName(refs, lgu)} ${acct.accountNo || ''} ${m}`;
     if ($('#sd-xls')) $('#sd-xls').onclick = () => exportXlsx(`Check Disbursements Journal ${fileBase}.xlsx`, 'CkDJ', xRows());
-    if ($('#sd-txls')) $('#sd-txls').onclick = () => exportXlsx(`Tax Register ${fileBase}.xlsx`, 'Tax Register', list.filter(isTaxable).map((c) => { const t = taxOf(c); return { 'Check No.': c.checkNo, Date: fmtDate(c.date), Payee: c.payee || '', 'VAT / Non-VAT': vatText(c), 'Gross Amount': grossOf(c), 'Tax Base': t.base || '', '5% or 3%': t.main, '1%': t.one, 'Tax Amount': t.amount }; }));
+    if ($('#sd-txls')) $('#sd-txls').onclick = () => exportXlsx(`Tax Register ${fileBase}.xlsx`, 'Tax Register', list.filter(isTaxable).map((c) => { const t = taxOf(c); return { 'Check No.': c.checkNo, Date: fmtDate(c.date), Payee: c.payee || '', 'VAT / Non-VAT': vatText(c), 'Goods / Services': t.svc ? 'Services' : 'Goods', 'Gross Amount': grossOf(c), 'Tax Base': t.base || '', 'Business Tax (5% / 3%)': t.main, 'EWT (1% / 2%)': t.one, 'Tax Amount': t.amount }; }));
     const rciData = () => ({ office: agencyName(refs, lgu), acct: acctLabel(acct), month: monthLabel(m), total: totals.a,
       rows: list.map((c) => ({ date: fmtDate(c.date), checkNo: c.checkNo || '', ref: c.cancelled ? '' : c.ref || '', payee: c.payee || '', nature: c.particulars || '', amount: checkAmountOf(c), cancelled: !!c.cancelled })) });
     if (tab === 'rci') wireOut('rc', () => rciSpec(rciData()), `RCI ${fileBase}`, (m) => toast(m, 'bad'));
@@ -186,30 +186,36 @@ async function journalView(ctx) {
 }
 
 /* ---------- the tax window (Tax Register) ---------- */
-// VAT or Non-VAT sets the base; the 5% or 3% and the 1% are computed and may be typed over (rounding).
+// VAT or Non-VAT sets the base (gross ÷ 1.12, or gross) and the business tax (5% creditable VAT, or 3% percentage tax);
+// Goods or Services sets the EWT (1% or 2%) on the same base. Both are computed and may be typed over (rounding).
 async function taxModal(c) {
   const t0 = c.tax || {}, g = grossOf(c);
   let out = null;
-  const comp = (vat) => { const base = vat ? r2(g / 1.12) : g; return { base, main: r2(base * (vat ? 5 : 3) / 100), one: r2(base / 100) }; };
-  const cur = taxOf(c);
+  const comp = (vat, svc) => { const base = vat ? r2(g / 1.12) : g; return { base, main: r2(base * (vat ? 5 : 3) / 100), one: r2(base * (svc ? 2 : 1) / 100) }; };
+  const cur = taxOf(c), set = t0.vat === true || t0.vat === false;
+  const mainL = (vat) => (vat === false ? 'Percentage Tax 3%' : 'VAT 5%'), oneL = (svc) => (svc ? 'EWT 2%' : 'EWT 1%');
   await modal({ title: `Tax · Check No. ${c.checkNo || ''}${c.payee ? ' · ' + c.payee : ''}`, body: `
     <div class="sd-taxw"><div class="field"><span class="cd-lbl">Payee is</span><div class="sd-vat"><label class="cer-tick"><input type="radio" name="sd-vat" value="1" ${t0.vat === true ? 'checked' : ''}> VAT</label><label class="cer-tick"><input type="radio" name="sd-vat" value="0" ${t0.vat === false ? 'checked' : ''}> Non-VAT</label></div></div>
+      <div class="field"><span class="cd-lbl">Payment for</span><div class="sd-vat"><label class="cer-tick"><input type="radio" name="sd-svc" value="0" ${t0.svc ? '' : 'checked'}> Goods</label><label class="cer-tick"><input type="radio" name="sd-svc" value="1" ${t0.svc ? 'checked' : ''}> Services</label></div></div>
       <div class="field"><span class="cd-lbl">Gross Amount</span><div class="input cd-ro r">${money(g)}</div></div>
       <div class="field"><span class="cd-lbl">Tax Base</span><div class="input cd-ro r" id="tw-base">${cur.base ? money(cur.base) : '—'}</div></div>
-      <div class="field"><label for="tw-main" id="tw-ml">${t0.vat === false ? '3%' : '5%'}</label><input class="input r" id="tw-main" inputmode="decimal" value="${t0.vat === true || t0.vat === false || cur.main ? money(cur.main) : ''}"></div>
-      <div class="field"><label for="tw-one">1%</label><input class="input r" id="tw-one" inputmode="decimal" value="${t0.vat === true || t0.vat === false || cur.one ? money(cur.one) : ''}"></div>
+      <div class="field"><label for="tw-main" id="tw-ml">${mainL(t0.vat)}</label><input class="input r" id="tw-main" inputmode="decimal" value="${set || cur.main ? money(cur.main) : ''}"></div>
+      <div class="field"><label for="tw-one" id="tw-ol">${oneL(t0.svc)}</label><input class="input r" id="tw-one" inputmode="decimal" value="${set || cur.one ? money(cur.one) : ''}"></div>
       <div class="field"><span class="cd-lbl">Tax Amount</span><div class="input cd-ro r" id="tw-tot">${money(cur.amount)}</div></div></div>
-    <p class="af-note">VAT: base = gross ÷ 1.12, 5%. Non-VAT: base = gross, 3%. Both with 1%. Type over an amount to match the voucher.</p>`,
+    <p class="af-note">VAT payee: base = gross ÷ 1.12, VAT 5%. Non-VAT: base = gross, percentage tax 3%. Plus the EWT on the same base: goods 1%, services 2%. Type over an amount to match the voucher.</p>`,
     onOpen: (bg) => {
       const tot = () => { $('#tw-tot', bg).textContent = money(r2((num($('#tw-main', bg).value) || 0) + (num($('#tw-one', bg).value) || 0))); };
-      $$('[name="sd-vat"]', bg).forEach((r) => { r.onchange = () => { const v = r.value === '1', x = comp(v); $('#tw-base', bg).textContent = money(x.base); $('#tw-ml', bg).textContent = v ? '5%' : '3%'; $('#tw-main', bg).value = money(x.main); $('#tw-one', bg).value = money(x.one); tot(); }; });
+      const pick = () => { const v = $('[name="sd-vat"]:checked', bg), sv = $('[name="sd-svc"]:checked', bg)?.value === '1';
+        $('#tw-ol', bg).textContent = oneL(sv); if (!v) return; const vat = v.value === '1', x = comp(vat, sv);
+        $('#tw-base', bg).textContent = money(x.base); $('#tw-ml', bg).textContent = mainL(vat); $('#tw-main', bg).value = money(x.main); $('#tw-one', bg).value = money(x.one); tot(); };
+      $$('[name="sd-vat"], [name="sd-svc"]', bg).forEach((r) => { r.onchange = pick; });
       ['#tw-main', '#tw-one'].forEach((k) => { $(k, bg).oninput = tot; });
     },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Save Tax', cls: 'primary', value: 'ok', check: (bg) => {
       const sel = $('[name="sd-vat"]:checked', bg); if (!sel) return bad('Choose VAT or Non-VAT.');
-      const vat = sel.value === '1', x = comp(vat), main = num($('#tw-main', bg).value), one = num($('#tw-one', bg).value);
+      const vat = sel.value === '1', svc = $('[name="sd-svc"]:checked', bg)?.value === '1', x = comp(vat, svc), main = num($('#tw-main', bg).value), one = num($('#tw-one', bg).value);
       if (main === null || one === null) return bad('Enter the amounts.');
-      out = { taxable: true, vat, main: main === x.main ? null : main, one: one === x.one ? null : one };
+      out = { taxable: true, vat, svc, main: main === x.main ? null : main, one: one === x.one ? null : one };
       if (r2(main + one) > g) return bad('The tax is more than the gross amount.');
       return true;
     } }] });

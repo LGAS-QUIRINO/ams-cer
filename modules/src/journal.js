@@ -6,7 +6,8 @@
 //                          particulars, lines[{ code, name, gross }], tax: { taxable, vat (true / false; null when imported),
 //                          main (5% or 3%, typed when rounded; empty = computed), one (1%, same) }, cancelled, officerId (for a
 //                          cash advance), note (auditor's note) }
-// Tax (Tax Register): VAT → base = gross ÷ 1.12, 5%; Non-VAT → base = gross, 3%; the 1% is on the same base.
+// Tax (Tax Register): VAT → base = gross ÷ 1.12, 5% creditable VAT; Non-VAT → base = gross, 3% percentage tax; plus the EWT
+// on the same base: goods 1%, services 2% (tax.svc). Amounts may be typed (rounding).
 // Check amount = gross − tax. A check charged to a cash advance account is a cash advance of officerId.
 import { store } from '../../js/store.js';
 
@@ -39,8 +40,9 @@ export function taxOf(c) {
     if (t.vat !== true && t.vat !== false) return { ...none, main: r2(t.main || 0), amount: r2((t.main || 0) + (t.one || 0)), one: r2(t.one || 0) };   // imported, VAT not yet set
     const base = t.vat ? r2(g / 1.12) : g;
     const main = t.main === null || t.main === undefined || t.main === '' ? r2(base * (t.vat ? 5 : 3) / 100) : r2(t.main);
-    const one = t.one === null || t.one === undefined || t.one === '' ? r2(base / 100) : r2(t.one);
-    return { base, main, one, amount: r2(main + one), vat: t.vat };
+    const pct = t.svc ? 2 : 1;   // EWT (creditable income tax): goods 1%, services 2%
+    const one = t.one === null || t.one === undefined || t.one === '' ? r2(base * pct / 100) : r2(t.one);
+    return { base, main, one, amount: r2(main + one), vat: t.vat, svc: !!t.svc };
   }
   if (t.rate) { const base = t.rate === 5 ? r2(g / 1.12) : g; const main = r2(base * t.rate / 100), one = t.one ? r2(base / 100) : 0; return { base, main, one, amount: r2(main + one), vat: t.rate === 5 }; }   // older entries
   return { ...none, amount: r2(t.amount || 0), main: r2(t.amount || 0) };
