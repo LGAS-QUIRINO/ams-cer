@@ -9,6 +9,7 @@ import { moduleFrame } from '../../js/frame.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from '../cer/cer.js';
 import { exportXlsx, loadXlsx, excelDate } from '../cer/forms.js';
 import { accountsModal, DEFAULT_FUNDS } from '../cer/banks.js';
+import { printRci, xlsxRci, pdfRci, docxRci } from './rciout.js';
 import { loadCoa, loadJournal, CA_CODES, grossOf, taxOf, checkAmountOf, isCa, isTaxable, chkNo, hasEntry, tallies, hasAmount } from './journal.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
@@ -95,7 +96,7 @@ async function journalView(ctx) {
     // Step 1 (or after the CkDJ): the check as issued; its amount is the check amount.
     const form = enc ? rciHtml(ED.d, !!ED.id, m) : '';
     inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Report of Checks Issued · ${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
-        ${enc ? '<a href="#" class="cd-link" id="sd-rtpl">RCI Template</a><button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-print">Print</button><button class="btn sm" type="button" id="sd-rxls">Export to Excel</button></div>
+        ${enc ? '<a href="#" class="cd-link" id="sd-rtpl">RCI Template</a><button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-print">Print</button><details class="sd-exp"><summary class="btn sm">Export ▾</summary><div class="sd-menu"><button type="button" data-rout="xlsx">Excel</button><button type="button" data-rout="pdf">PDF</button><button type="button" data-rout="docx">Word</button></div></details></div>
       <div id="cer-print" class="rp-doc"><div class="rp-page"><h2 class="rp-title">REPORT OF CHECKS ISSUED</h2>
         <p class="c"><b>${esc(agencyName(refs, lgu))}</b><br>${esc(acctLabel(acct))}<br>${esc(monthLabel(m))}</p>
         <table class="rp-t"><thead><tr><th>Date</th><th>Check No.</th><th>DV / Payroll No.</th><th>Payee</th><th>Nature of Payment</th><th class="r">Amount</th>${enc ? '<th class="af-noprint"></th>' : ''}</tr></thead>
@@ -138,8 +139,13 @@ async function journalView(ctx) {
     const fileBase = `${agencyName(refs, lgu)} ${acct.accountNo || ''} ${m}`;
     if ($('#sd-xls')) $('#sd-xls').onclick = () => exportXlsx(`Check Disbursements Journal ${fileBase}.xlsx`, 'CkDJ', xRows());
     if ($('#sd-txls')) $('#sd-txls').onclick = () => exportXlsx(`Tax Register ${fileBase}.xlsx`, 'Tax Register', list.filter(isTaxable).map((c) => { const t = taxOf(c); return { 'Check No.': c.checkNo, Date: fmtDate(c.date), Payee: c.payee || '', 'VAT / Non-VAT': vatText(c), 'Gross Amount': grossOf(c), 'Tax Base': t.base || '', '5% or 3%': t.main, '1%': t.one, 'Tax Amount': t.amount }; }));
-    if ($('#sd-rxls')) $('#sd-rxls').onclick = () => exportXlsx(`RCI ${fileBase}.xlsx`, 'RCI', list.map((c) => ({ Date: fmtDate(c.date), 'Check No.': c.checkNo, 'DV / Payroll No.': c.cancelled ? '' : c.ref || '', Payee: c.cancelled ? 'Cancelled' : c.payee || '', 'Nature of Payment': c.cancelled ? '' : c.particulars || '', Amount: checkAmountOf(c) })));
-    if ($('#sd-print')) $('#sd-print').onclick = () => { document.body.classList.add('af-printing', 'rp-printing'); window.print(); document.body.classList.remove('af-printing', 'rp-printing'); };
+    const rciData = () => ({ office: agencyName(refs, lgu), acct: acctLabel(acct), month: monthLabel(m), total: totals.a,
+      rows: list.map((c) => ({ date: fmtDate(c.date), checkNo: c.checkNo || '', ref: c.cancelled ? '' : c.ref || '', payee: c.payee || '', nature: c.particulars || '', amount: checkAmountOf(c), cancelled: !!c.cancelled })) });
+    if ($('#sd-print')) $('#sd-print').onclick = () => printRci(rciData());
+    $$('[data-rout]').forEach((b) => { b.onclick = async () => {
+      b.closest('details').open = false;
+      const k = b.dataset.rout, f = `RCI ${fileBase}.${k}`;
+      try { await (k === 'xlsx' ? xlsxRci : k === 'pdf' ? pdfRci : docxRci)(rciData(), f); } catch (err) { toast(err.message || String(err), 'bad'); } }; });
     const startEdit = (id, sel) => { const c = mine.find((x) => x.id === id); ED.id = c.id; ED.d = JSON.parse(JSON.stringify({ ...blankCheck('', ''), ...c })); if (c.cancelled) ED.d.particulars = 'Cancelled'; if (!ED.d.lines.length) ED.d.lines = [blankLine()]; ctx.rerender(); setTimeout(() => { const f = $('#sd-form'); if (f) f.scrollIntoView({ block: 'start' }); const el = sel && $(sel); if (el) el.focus(); }, 0); };
     $$('[data-sdedit]').forEach((b) => { b.onclick = () => startEdit(b.dataset.sdedit, '.sd-code'); });
     $$('[data-rciedit]').forEach((b) => { b.onclick = () => startEdit(b.dataset.rciedit, '#sd-amt'); });

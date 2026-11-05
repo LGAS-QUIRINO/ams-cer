@@ -807,3 +807,10 @@ table.rp-rsa{max-width:640px; margin:14px auto}
 .sd-tbl tfoot td{position:sticky; bottom:0; background:#eef2fa}
 .af-reg.sd-tbl td small{display:inline; margin-left:4px}
 .sd-tbl td.sd-notec{min-width:190px; max-width:300px}
+/* Source Documents · Export menu (RCI) */
+.sd-exp{position:relative; display:inline-block}
+.sd-exp > summary{list-style:none; cursor:pointer}
+.sd-exp > summary::-webkit-details-marker{display:none}
+.sd-menu{position:absolute; right:0; top:calc(100% + 4px); z-index:20; background:#fff; border:1px solid var(--line); border-radius:10px; box-shadow:0 6px 18px rgba(11,42,107,.14); padding:4px; min-width:120px; display:flex; flex-direction:column}
+.sd-menu button{background:none; border:0; text-align:left; padding:7px 12px; border-radius:7px; font:inherit; cursor:pointer; color:inherit}
+.sd-menu button:hover, .sd-menu button:focus-visible{background:#eef2fa}
