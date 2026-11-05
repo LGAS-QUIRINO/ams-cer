@@ -95,7 +95,7 @@ async function journalView(ctx) {
     // Step 1 (or after the CkDJ): the check as issued; its amount is the check amount.
     const form = enc ? rciHtml(ED.d, !!ED.id, m) : '';
     inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Report of Checks Issued · ${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
-        ${enc ? '<button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-print">Print</button><button class="btn sm" type="button" id="sd-rxls">Export to Excel</button></div>
+        ${enc ? '<a href="#" class="cd-link" id="sd-rtpl">RCI Template</a><button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-print">Print</button><button class="btn sm" type="button" id="sd-rxls">Export to Excel</button></div>
       <div id="cer-print" class="rp-doc"><div class="rp-page"><h2 class="rp-title">REPORT OF CHECKS ISSUED</h2>
         <p class="c"><b>${esc(agencyName(refs, lgu))}</b><br>${esc(acctLabel(acct))}<br>${esc(monthLabel(m))}</p>
         <table class="rp-t"><thead><tr><th>Date</th><th>Check No.</th><th>DV / Payroll No.</th><th>Payee</th><th>Nature of Payment</th><th class="r">Amount</th>${enc ? '<th class="af-noprint"></th>' : ''}</tr></thead>
@@ -158,6 +158,9 @@ async function journalView(ctx) {
       await store.save('src_ckdj', id, next, by(refs)); toast(`Tax of Check No. ${c.checkNo} saved.`, 'ok');
     }; });
     if ($('#sd-imp')) $('#sd-imp').onclick = () => importJournal({ refs, lgu, acct, mine, coa, names });
+    if ($('#sd-rtpl')) $('#sd-rtpl').onclick = async (e) => { e.preventDefault();
+      try { const XLSX = await loadXlsx(); const ws = XLSX.utils.aoa_to_sheet([['Date', 'Check No.', 'DV / Payroll No.', 'Payee', 'Nature of Payment', 'Amount'], ['10/17/2025', '1894917', 'DV 2025-10-041', 'Juan Dela Cruz', 'Cash advance, Barangay Day', 10000], ['10/18/2025', '1894918', '', '', 'Cancelled', '']]);
+        ws['!cols'] = [12, 12, 18, 28, 36, 14].map((w) => ({ wch: w })); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'RCI'); XLSX.writeFile(wb, 'RCI Template.xlsx'); } catch (err) { toast(err.message || String(err), 'bad'); } };
     if (enc && tab === 'ckdj') wireEntry({ refs, lgu, acct, mine, coa, names, m, rerender: ctx.rerender });
     if (enc && tab === 'rci') wireRci({ refs, lgu, acct, mine, m, rerender: ctx.rerender });
   };
@@ -368,7 +371,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
   const read = async (file) => {
     const XLSX = await loadXlsx();
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-    const cols = [['date', /^date/i], ['no', /check\s*no/i], ['ref', /reference|dv|payroll/i], ['payee', /payee/i], ['part', /particular/i], ['chk', /check\s*amount/i], ['tax', /tax\s*amount/i], ['code', /account\s*code/i], ['name', /account\s*name/i], ['gross', /gross/i], ['note', /note/i], ['taxyn', /^\s*(tax|taxable)\s*$/i]];
+    const cols = [['date', /^date/i], ['no', /check\s*no/i], ['ref', /reference|dv|payroll/i], ['payee', /payee/i], ['part', /particular|nature/i], ['chk', /check\s*amount/i], ['amt', /^\s*amount\s*(\(.*\))?\s*$/i], ['tax', /tax\s*amount/i], ['code', /account\s*code/i], ['name', /account\s*name/i], ['gross', /gross/i], ['note', /note/i], ['taxyn', /^\s*(tax|taxable)\s*$/i]];
     let sheet = null;
     for (const n of [...wb.SheetNames].sort((a, b) => (/check/i.test(b) ? 1 : 0) - (/check/i.test(a) ? 1 : 0))) {
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
@@ -380,6 +383,8 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
     }
     if (!sheet) return { error: 'No sheet with the columns Date and Check No. was found. Use the Check Register of the template.' };
     const M = sheet.map, get = (row, k) => (M[k] === undefined ? '' : row[M[k]]);
+    // An RCI file (no account code; Amount = the check amount) or a CkDJ file (account codes and gross amounts).
+    const rci = M.code === undefined && (M.amt !== undefined || M.chk !== undefined);
     const byNo = new Map(), problems = [];
     sheet.rows.slice(sheet.header + 1).forEach((row, i) => {
       const line = sheet.header + i + 2, noTxt = String(get(row, 'no')).trim();
@@ -389,6 +394,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
       g.rows.push(line);
       const date = excelDate(XLSX, get(row, 'date')); if (date && !g.date) g.date = date;
       ['ref', 'payee', 'part', 'note'].forEach((k) => { const v = String(get(row, k) ?? '').trim(); if (v && !g[k]) g[k] = v; });
+      if (rci) { const a = num(get(row, 'amt')) ?? num(get(row, 'chk')); if (a) g.amount = r2((g.amount || 0) + a); byNo.set(n, g); return; }
       g.tax = r2(g.tax + (num(get(row, 'tax')) || 0));
       if (/^y/i.test(String(get(row, 'taxyn') ?? '').trim())) g.taxyn = true;
       const code = String(get(row, 'code') ?? '').trim(), gross = num(get(row, 'gross')) ?? (num(get(row, 'chk')) === null ? null : r2(num(get(row, 'chk')) + (num(get(row, 'tax')) || 0)));
@@ -400,26 +406,29 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
     [...byNo.values()].sort((a, b) => a.n - b.n).forEach((g) => {
       if (!g.date) { problems.push({ line: g.rows[0], why: `Check No. ${g.no}: the date is missing.` }); return; }
       if (taken.has(g.n)) { problems.push({ line: g.rows[0], why: `Check No. ${g.no} is already in the journal.` }); return; }
-      const cancelled = /cancel/i.test(g.part) && !g.lines.some((l) => l.gross);
+      const cancelled = /cancel/i.test(g.part) && !g.lines.some((l) => l.gross) && !g.amount;
+      if (rci && !cancelled && !(g.amount > 0)) { problems.push({ line: g.rows[0], why: `Check No. ${g.no}: the amount is missing.` }); return; }
       const unknown = g.lines.filter((l) => l.code && !names[l.code]).map((l) => l.code);
       add.push({ ...g, cancelled, unknown });
     });
-    return { add, problems };
+    return { add, problems, rci };
   };
   const show = (bg, p) => {
     const box = $('#sj-res', bg);
     if (p.error) { box.innerHTML = `<div class="msg bad">${esc(p.error)}</div>`; return; }
     const cx = p.add.filter((x) => x.cancelled).length, unk = p.add.filter((x) => x.unknown.length).length, ca = p.add.filter((x) => x.lines.some((l) => CA_CODES.includes(l.code))).length;
-    box.innerHTML = `<div class="oi-sum"><b>${p.add.length} check${p.add.length === 1 ? '' : 's'} to add</b>${cx ? `<span>${cx} cancelled</span>` : ''}${ca ? `<span class="warn-t">${ca} cash advance${ca > 1 ? 's' : ''}: choose the officer after the import (Edit)</span>` : ''}${unk ? `<span class="warn-t">${unk} with an account code not in the Chart of Accounts</span>` : ''}</div>
+    box.innerHTML = `<div class="oi-sum"><b>${p.add.length} check${p.add.length === 1 ? '' : 's'} to add${p.rci ? ' (RCI: fill the entries in the CkDJ later)' : ''}</b>${cx ? `<span>${cx} cancelled</span>` : ''}${ca ? `<span class="warn-t">${ca} cash advance${ca > 1 ? 's' : ''}: choose the officer after the import (Edit)</span>` : ''}${unk ? `<span class="warn-t">${unk} with an account code not in the Chart of Accounts</span>` : ''}</div>
       ${p.problems.length ? `<div class="af-probs"><b>Not imported (${p.problems.length})</b>${p.problems.slice(0, 60).map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
   };
   const v = await modal({ title: `Import Check Disbursements · ${acctLabel(acct)}`, wide: true,
-    body: `<p class="af-note">The Check Register sheet of the barangay template: Date, Check No., Reference No., Payee, Particulars, Tax Amount, Account Code, Gross Amount, Auditor's Note. Rows with the same check No. become one check.</p>
+    body: `<p class="af-note">An RCI (Date, Check No., DV / Payroll No., Payee, Nature of Payment, Amount; see the RCI Template) or the Check Register sheet of the barangay template (Date, Check No., Reference No., Payee, Particulars, Tax Amount, Account Code, Gross Amount). Rows with the same check No. become one check; check Nos. already in are skipped.</p>
       <div class="field"><label for="sj-file">Excel file</label><input class="input" type="file" id="sj-file" accept=".xlsx,.xlsm,.xls,.csv"></div><div id="sj-res"></div>`,
     onOpen: (bg) => { $('#sj-file', bg).onchange = async (e) => { const fl = e.target.files[0]; if (!fl) return; $('#sj-res', bg).innerHTML = '<p class="af-note">Reading…</p>'; try { plan = await read(fl); show(bg, plan); } catch (err) { plan = null; $('#sj-res', bg).innerHTML = `<div class="msg bad">${esc(err.message || String(err))}</div>`; } }; },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; } if (!plan.add.length) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
   if (v !== 'go') return;
   for (const g of plan.add) {
+    if (plan.rci) { await store.save('src_ckdj', newId('ckdj'), { lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.cancelled ? '' : g.ref, payee: g.cancelled ? '' : g.payee, particulars: g.cancelled ? 'Cancelled' : g.part,
+      amount: g.cancelled ? 0 : g.amount, amountSrc: 'rci', lines: [], tax: { taxable: false }, cancelled: g.cancelled, officerId: '', note: g.note || '' }, by(refs), { quiet: true }); continue; }
     await store.save('src_ckdj', newId('ckdj'), { lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.ref, payee: g.payee, particulars: g.part, lines: g.cancelled ? [] : g.lines.map((l) => ({ code: l.code, name: l.name, gross: r2(l.gross) })),
       tax: g.cancelled || !(g.tax || g.taxyn) ? { taxable: false } : { taxable: true, vat: null, main: g.tax, one: 0 }, cancelled: g.cancelled, officerId: '', note: g.note }, by(refs), { quiet: true });
   }
