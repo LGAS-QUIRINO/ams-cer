@@ -179,7 +179,7 @@ export async function verifyView(ctx) {
     if (!hit) add(`refund|${l.id}`, 'Cash Advances', `Refund OR No. ${l.ref} of ${fmtDate(l.date)} (₱${money(l.amount)}) is not found in Collections & Deposits.`, '#/cer/collections');
     else if (Math.abs((+hit.amount || 0) - (+l.amount || 0)) > 0.004) add(`refundamt|${l.id}`, 'Cash Advances', `Refund OR No. ${l.ref}: ₱${money(l.amount)} in Cash Advances, ₱${money(hit.amount)} in Collections & Deposits.`, '#/cer/collections');
   });
-  (await bankFindings(audit)).forEach((x) => add(`bank|${x.key}`, 'Bank Statements', x.text, '#/cer/banks?a=' + audit.id));
+  (await bankFindings(audit, refs)).forEach((x) => add(`bank|${x.key}`, 'Bank Statements', x.text, '#/cer/banks?a=' + audit.id));
   // Late deposits per the bank (deposit slip date vs the date the bank credited it) stay under Bank Statements.
 
   const ver = ver0.map(flat).find((v) => v.id === exam.id) || { recon: {}, decisions: {} };

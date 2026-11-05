@@ -179,7 +179,12 @@ export async function banksView(ctx) {
   const credits = r2(unCr + sum(bItems.filter((b) => b.type === 'credit'), (b) => b.amount));
   const debits = r2(unDr + sum(bItems.filter((b) => b.type === 'debit'), (b) => b.amount));
   const hasEnd = rec.ending !== null && rec.ending !== undefined && rec.ending !== '';
+  // Barangays: the Balance per Cashbook comes from the Cashbook (Cash in Bank ending) unless typed here.
+  const typedBook = rec.book !== null && rec.book !== undefined && rec.book !== '';
+  const cbEnd = typedBook ? null : await (await import('./cashbook.js')).cashbookEnding(refs, audit, acct).catch(() => null);
+  if (!typedBook && cbEnd !== null && cbEnd !== undefined) rec.book = cbEnd;
   const hasBook = rec.book !== null && rec.book !== undefined && rec.book !== '';
+  const fromCb = !typedBook && hasBook;
   const adjBank = hasEnd ? r2(+rec.ending + dit - oc) : null;
   const adjBook = hasBook ? r2(+rec.book + credits - debits) : null;
   const diff = adjBank !== null && adjBook !== null ? r2(adjBank - adjBook) : null;
@@ -253,7 +258,7 @@ export async function banksView(ctx) {
 
   // ---- 3 Bank Reconciliation: the cashbook balance is the one thing to type ----
   const rcBody = `<div class="bk-bookrow">
-      <div class="field"><label for="bk-book">Balance per Cashbook (₱)</label><input class="input r" id="bk-book" inputmode="decimal" value="${hasBook ? esc(money(rec.book)) : ''}" ${dis}></div>
+      <div class="field"><label for="bk-book">Balance per Cashbook (₱)</label><input class="input r" id="bk-book" inputmode="decimal" value="${typedBook ? esc(money(rec.book)) : ''}" placeholder="${fromCb ? esc(money(rec.book)) + ' (Cashbook)' : ''}" ${dis}></div>
       ${enc ? '<button class="btn primary" type="button" id="bk-saverc">Save</button>' : ''}<span class="bk-recres">${recPill}</span></div>
     <div class="cd-g2">
       <div class="cd-sum bk-rc"><b class="cd-sumh">Per Bank</b>
@@ -262,7 +267,7 @@ export async function banksView(ctx) {
         <div><span>Less: Outstanding checks</span><span>(${money(oc)})</span></div>
         <div class="cd-sumt"><span>Adjusted bank balance</span><span>${adjBank === null ? '—' : money(adjBank)}</span></div></div>
       <div class="cd-sum bk-rc"><b class="cd-sumh">Per Books</b>
-        <div><span>Balance per cashbook</span><span>${hasBook ? money(rec.book) : '—'}</span></div>
+        <div><span>Balance per cashbook${fromCb ? ' <small class="dim">(from the Cashbook)</small>' : ''}</span><span>${hasBook ? money(rec.book) : '—'}</span></div>
         <div><span>Add: Bank credits not in the books</span><span>${money(credits)}</span></div>
         <div><span>Less: Bank debits not in the books</span><span>(${money(debits)})</span></div>
         <div class="cd-sumt"><span>Adjusted book balance</span><span>${adjBook === null ? '—' : money(adjBook)}</span></div></div>
@@ -503,18 +508,18 @@ export async function accountsModal(refs, lguId, accounts, funds, enc) {
 }
 
 /* ---------- for Verification: the bank accounts of the auditee, as findings ---------- */
-export async function bankFindings(audit) {
+export async function bankFindings(audit, refs) {
   const [settings0, reports0, advs0, recs0, exams0, books0, cut0, jr0] = await Promise.all(['cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj'].map(listT));
   const accounts = (settings0.map(flat).find((x) => x.id === 'banks|' + audit.lguId) || {}).list || [];
   const examIds = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => e.id));
   const cuts = lastChecksOf({ cutoffs: cut0.map(flat), booklets: books0.map(flat) }, examIds);
   const out = [], add = (key, text) => out.push({ key, text });
   const asOf = audit.countDate;
-  accounts.forEach((acct) => {
+  for (const acct of accounts) {
     const recsAll = recs0.map(flat), rec0 = recsAll.find((r) => r.id === `${audit.id}|${acct.id}`);
     const rec = rec0 ? inCov(withLines(rec0, recsAll), covOf(audit, exams0.map(flat))) : rec0;
     const name = acctLabel(acct);
-    if (!rec) { add(`bk0|${acct.id}`, `${name}: no bank statement or reconciliation yet.`); return; }
+    if (!rec) { add(`bk0|${acct.id}`, `${name}: no bank statement or reconciliation yet.`); continue; }
     const items = [];
     reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => depItems(r).forEach(({ d, key, old }) => items.push({ key, old, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0 })));
     advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
@@ -539,9 +544,10 @@ export async function bankFindings(audit) {
     if (un.length) add(`bkun|${acct.id}|${un.length}|${unCr}|${unDr}`, `${name}: ${un.length} bank line${un.length > 1 ? 's' : ''} not in the books (credits ₱${money(unCr)}, debits ₱${money(unDr)}). Interest and service charges are expected; look into the rest (Bank Statements, tab 1, "Not in the books only").`);
     if (dits.length) add(`bkdit|${acct.id}|${dits.length}|${dit}`, `${name}: ${dits.length} deposit${dits.length > 1 ? 's' : ''} in transit, ₱${money(dit)}: ${dits.slice(0, 6).map((x) => `${x.ref || 'deposit'} ${fmtDate(x.date)}`).join(', ')}${dits.length > 6 ? '…' : ''}.`);
     if (ocs.length) add(`bkoc|${acct.id}|${ocs.length}|${oc}`, `${name}: ${ocs.length} outstanding check${ocs.length > 1 ? 's' : ''}, ₱${money(oc)}: ${ocs.slice(0, 6).map((x) => x.ref).join(', ')}${ocs.length > 6 ? '…' : ''}.`);
+    if (rec.book === null || rec.book === undefined || rec.book === '') { const e = await (await import('./cashbook.js')).cashbookEnding(refs, audit, acct).catch(() => null); if (e !== null && e !== undefined) rec.book = e; }
     const hasEnd = rec.ending !== null && rec.ending !== undefined && rec.ending !== '', hasBook = rec.book !== null && rec.book !== undefined && rec.book !== '';
     if (!hasEnd || !hasBook) add(`bkrc0|${acct.id}`, `${name}: bank reconciliation not complete (${!hasEnd ? 'no bank balance' : 'no cashbook balance'}).`);
     else { const d = r2((+rec.ending + dit - oc) - (+rec.book + credits - debits)); if (Math.abs(d) >= 0.005) add(`bkrc|${acct.id}|${d}`, `${name}: adjusted bank and adjusted book balances differ by ₱${money(d)}.`); }
-  });
+  }
   return out;
 }

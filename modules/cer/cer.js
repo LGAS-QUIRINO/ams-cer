@@ -116,7 +116,7 @@ function navItems() {
     { key: 'collections', label: 'Collections & Deposits', icon: 'inbox', href: '#/cer/collections' },
     { key: 'advances', label: 'Cash Advances', icon: 'swap', href: '#/cer/advances' },
     { key: 'banks', label: 'Bank Statements', icon: 'building', href: '#/cer/banks' },
-    { key: 'src', label: 'Check Disbursements', icon: 'book', href: '#/src' },
+    { key: 'cashbook', label: 'Cashbook', icon: 'book', href: '#/cer/cashbook' },
     { section: true, label: 'EXAMINATION' },
     { key: 'verify', label: 'Verification', icon: 'book', href: '#/cer/verify' },
     { key: 'reports', label: 'Reports', icon: 'overview', href: '#/cer/reports' }];
@@ -206,7 +206,7 @@ export async function render(ctx) {
   installGuard();
   const me = refs.me ? refs.me.data : { name: ctx.session.name || ctx.session.email };
   const roleText = [refs.me?.data.position, roleLine(refs)].filter(Boolean).join(' · ');
-  if (parts[0] === 'forms' || parts[0] === 'collections' || parts[0] === 'advances' || parts[0] === 'banks' || parts[0] === 'count' || parts[0] === 'verify' || parts[0] === 'reports') {
+  if (parts[0] === 'forms' || parts[0] === 'collections' || parts[0] === 'advances' || parts[0] === 'banks' || parts[0] === 'count' || parts[0] === 'verify' || parts[0] === 'reports' || parts[0] === 'cashbook') {
     // Accountable Forms (Forms Register, Accountable Officer view, RAAF Reconciliation) and Collections & Deposits.
     DRAFT = null;
     // Opening Collections & Deposits from another screen starts on tab 1 (SCD); redraws on the same screen keep the tab.
@@ -216,7 +216,7 @@ export async function render(ctx) {
     if (parts[0] === 'count' && LASTPART !== 'count') (await import('./count.js')).resetTabs();
     LASTPART = parts[0];
     const { body, crumb, wire } = parts[0] === 'forms' ? await (await import('./forms.js')).formsView(ctx)
-      : parts[0] === 'collections' ? await (await import('./collections.js')).collectionsView(ctx) : parts[0] === 'advances' ? await (await import('./advances.js')).advancesView(ctx) : parts[0] === 'banks' ? await (await import('./banks.js')).banksView(ctx) : parts[0] === 'count' ? await (await import('./count.js')).countView(ctx) : parts[0] === 'verify' ? await (await import('./verify.js')).verifyView(ctx) : await (await import('./reports.js')).reportsView(ctx);
+      : parts[0] === 'collections' ? await (await import('./collections.js')).collectionsView(ctx) : parts[0] === 'advances' ? await (await import('./advances.js')).advancesView(ctx) : parts[0] === 'banks' ? await (await import('./banks.js')).banksView(ctx) : parts[0] === 'count' ? await (await import('./count.js')).countView(ctx) : parts[0] === 'verify' ? await (await import('./verify.js')).verifyView(ctx) : parts[0] === 'cashbook' ? await (await import('./cashbook.js')).cashbookView(ctx) : await (await import('./reports.js')).reportsView(ctx);
     app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: parts[0], crumb, me, roleText, body });
     tidyTop();
     $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });

@@ -165,7 +165,7 @@ export function wireWp(c, paper, ver, refs) {
 
 /* ---------- Excel downloads ---------- */
 let xjs = null;
-function loadExcelJS() {
+export function loadExcelJS() {
   if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
   if (!xjs) xjs = new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'lib/exceljs.min.js'; sc.onload = () => res(window.ExcelJS); sc.onerror = () => { xjs = null; rej(new Error('The Excel writer could not load. Check the internet connection and try again.')); }; document.head.appendChild(sc); });
   return xjs;
