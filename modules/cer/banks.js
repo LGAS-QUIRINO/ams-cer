@@ -15,13 +15,14 @@
 //                  opening (bank balance at the last cash exam), account (account No. read from it), covFrom / covTo (coverage imported),
 //                  lineOf{ <item key>: line i } (which imported line each item matched; unmatched lines count as bank credits / debits),
 //                  noAuto[] (item keys unticked by hand: never matched again automatically) }
+import { listT, bankChecksOf, checkAmountOf, chkNo } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
 import { exportXlsx, lastChecksOf } from './forms.js';
 import { repName, depRefText, tagSameDay } from './collections.js';
 
-const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
+export const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
 const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
 const r2 = (n) => Math.round(n * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -71,7 +72,7 @@ const SOURCES = ['Soft copy (imported)', 'PDF', 'Printed', 'Bank confirmation'];
 
 export async function banksView(ctx) {
   const { refs, q } = ctx;
-  const [audits0, settings0, reports0, advs0, recs0, officers0, exams0, books0, cut0] = await Promise.all(['cer_audits', 'cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_officers', 'cer_exams', 'cer_booklets', 'cer_cutoff'].map((t) => store.list(t)));
+  const [audits0, settings0, reports0, advs0, recs0, officers0, exams0, books0, cut0, jr0] = await Promise.all(['cer_audits', 'cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_officers', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj'].map(listT));
   const audits = audits0.map(flat).filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   const settings = Object.fromEntries(settings0.map((s) => [s.id, s.data]));
   const crumb = 'Bank Statements';
@@ -112,7 +113,10 @@ export async function banksView(ctx) {
   }));
   advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0,
     from: `Cash advance · ${officers.find((o) => o.id === a.officerId)?.name || ''}` }));
-  (rec.otherChecks || []).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0, from: `Typed here${c.payee ? ' · ' + c.payee : ''}`, other: c }));
+  // Checks in the Check Disbursements Journal of this account (cash advances come with Cash Advances above).
+  const jrChecks = bankChecksOf(jr0.map(flat), acct.id), jrNos = new Set(jrChecks.map((c) => chkNo(c.checkNo)));
+  jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c), from: `Journal${c.payee ? ' · ' + c.payee : ''}` }));
+  (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0, from: `Typed here${c.payee ? ' · ' + c.payee : ''}`, other: c }));
   const list = items.filter((x) => x.date && x.date <= asOf && !foundElsewhere.has(x.key)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.kind.localeCompare(b.kind));
   // Cut-off (Cash Count): the last check written in each checkbook at the count. A check numbered after it, in the same checkbook,
   // was issued after the cut-off: not an outstanding check of this examination.
@@ -441,7 +445,7 @@ function loadXlsx() {
 }
 
 /* ---------- bank accounts of the auditee ---------- */
-async function accountsModal(refs, lguId, accounts, funds, enc) {
+export async function accountsModal(refs, lguId, accounts, funds, enc) {
   const list = accounts.map((x) => ({ ...x }));
   const v = await modal({ title: `Bank Accounts · ${agencyName(refs, refs.lgu[lguId])}`, wide: true,
     body: `<p class="hint" style="margin:0">Each bank account of the auditee and its fund. Barangays usually have one account per fund; the LGU may have several.</p>
@@ -471,7 +475,7 @@ async function accountsModal(refs, lguId, accounts, funds, enc) {
 
 /* ---------- for Verification: the bank accounts of the auditee, as findings ---------- */
 export async function bankFindings(audit) {
-  const [settings0, reports0, advs0, recs0, exams0, books0, cut0] = await Promise.all(['cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_exams', 'cer_booklets', 'cer_cutoff'].map((t) => store.list(t)));
+  const [settings0, reports0, advs0, recs0, exams0, books0, cut0, jr0] = await Promise.all(['cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj'].map(listT));
   const accounts = (settings0.map(flat).find((x) => x.id === 'banks|' + audit.lguId) || {}).list || [];
   const examIds = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => e.id));
   const cuts = lastChecksOf({ cutoffs: cut0.map(flat), booklets: books0.map(flat) }, examIds);
@@ -486,7 +490,9 @@ export async function bankFindings(audit) {
     const items = [];
     reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => (r.deposits || []).forEach((d) => items.push({ key: `dep|${r.id}|${d.date}|${d.ref}|${d.amount}`, kind: 'dep', date: d.date, ref: depRefText(d), amount: +d.amount || 0 })));
     advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
-    (rec.otherChecks || []).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0 }));
+    const jrChecks = bankChecksOf(jr0.map(flat), acct.id), jrNos = new Set(jrChecks.map((c) => chkNo(c.checkNo)));
+    jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c) }));
+    (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0 }));
     const list = items.filter((x) => x.date && x.date <= asOf);
     const after = (x) => { const n = +chqKey(x.ref); return x.kind === 'chk' && !!n && cuts.some((c) => n >= c.from && n <= c.to && n > c.last); };
     const dits = list.filter((x) => x.kind === 'dep' && !found[x.key]), ocs = list.filter((x) => x.kind === 'chk' && !found[x.key] && !after(x));

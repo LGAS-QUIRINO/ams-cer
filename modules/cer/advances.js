@@ -9,6 +9,7 @@
 //   cer_cashadv   one cash advance  { lguId, officerId, date, checkNo, particulars, amount }
 //   cer_liquid    one liquidation   { lguId, officerId, date, ref, particulars, amount, advanceId, type: 'liq' | 'refund' (refund: ref = OR No.),
 //                                    countAnyway (ticked: counted in the cash exam although dated outside the scope) }
+import { listT } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
@@ -41,7 +42,7 @@ function figures(advs, liqs) {
 
 export async function advancesView(ctx) {
   const { refs, q } = ctx;
-  const [audits0, exams0, officers0, advs0, liqs0] = await Promise.all(['cer_audits', 'cer_exams', 'cer_officers', 'cer_cashadv', 'cer_liquid'].map((t) => store.list(t)));
+  const [audits0, exams0, officers0, advs0, liqs0] = await Promise.all(['cer_audits', 'cer_exams', 'cer_officers', 'cer_cashadv', 'cer_liquid'].map(listT));
   const audits = audits0.map(flat).filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   const officers = officers0.map(flat);
   const crumb = 'Cash Advances';
@@ -97,8 +98,8 @@ export async function advancesView(ctx) {
         <button class="btn primary" type="button" id="ca-enter">Enter</button></div>
       <div class="ca-tools"><a href="#" class="cd-link" data-tpl="ca">Template</a><button class="btn sm" type="button" data-imp="ca">Import from Excel</button></div>` : ''}
     ${list.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col" class="r">Liquidated (₱)</th><th scope="col" class="r">Balance (₱)</th><th scope="col">Status</th><th scope="col" class="r"></th></tr></thead>
-      <tbody>${sorted.map((a) => `<tr${a.beg ? ' class="cd-begrow"' : ''}><td>${esc(fmtDate(a.date))}</td><td class="mono">${a.rest ? '<span class="dim">—</span>' : `<b>${esc(a.checkNo)}</b>${a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : ''}`}</td><td>${esc(a.particulars || '')}</td><td class="r">${money(a.amount)}</td><td class="r">${money(a.liq)}</td><td class="r"><b>${money(a.bal)}</b></td>
-        <td><span class="pill ${a.st[0]}">${a.st[1]}</span></td><td class="r">${a.beg && !a.rest ? `<a class="btn sm" href="#/cer/setup?a=${esc(audit.id)}&o=${esc(exam.id)}" title="Beginning checks are edited in Audit Setup, Beginning Balances">Setup</a>` : enc && !a.beg ? `<button class="btn sm" type="button" data-eca="${esc(a.id)}" aria-label="Edit check ${esc(a.checkNo)}">Edit</button>` : ''}</td></tr>`).join('')}</tbody>
+      <tbody>${sorted.map((a) => `<tr${a.beg ? ' class="cd-begrow"' : ''}><td>${esc(fmtDate(a.date))}</td><td class="mono">${a.rest ? '<span class="dim">—</span>' : `<b>${esc(a.checkNo)}</b>${a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : ''}${a.fromJournal ? ' <span class="pill sd-ca">Journal</span>' : a.inJournal ? ' <span class="pill p-part" title="Also in the Check Disbursements Journal: delete this one to use the journal">Also in the journal</span>' : ''}`}</td><td>${esc(a.particulars || '')}</td><td class="r">${money(a.amount)}</td><td class="r">${money(a.liq)}</td><td class="r"><b>${money(a.bal)}</b></td>
+        <td><span class="pill ${a.st[0]}">${a.st[1]}</span></td><td class="r">${a.beg && !a.rest ? `<a class="btn sm" href="#/cer/setup?a=${esc(audit.id)}&o=${esc(exam.id)}" title="Beginning checks are edited in Audit Setup, Beginning Balances">Setup</a>` : a.fromJournal ? `<a class="btn sm" href="#/src?l=${esc(a.lguId)}" title="Edited in Source Documents, Check Disbursements Journal">Journal</a>` : enc && !a.beg ? `<button class="btn sm" type="button" data-eca="${esc(a.id)}" aria-label="Edit check ${esc(a.checkNo)}">Edit</button>` : ''}</td></tr>`).join('')}</tbody>
       <tfoot><tr class="cd-foot"><td colspan="3">Total</td><td class="r">${money(r2(beg + totCa))}</td><td class="r">${money(r2(list.reduce((n, a) => n + a.liq, 0)))}</td><td class="r">${money(r2(list.reduce((n, a) => n + a.bal, 0)))}</td><td></td><td></td></tr></tfoot></table></div>`
       : `<div class="empty"><b>No cash advance encoded for this officer yet.</b>${enc ? 'Enter each check issued to the officer as a cash advance.' : ''}</div>`}
     ${noFn ? '<p class="af-note">This officer has no Disbursing, Special Disbursing or Petty Cash Custodian function ticked in Audit Setup.</p>' : ''}`;

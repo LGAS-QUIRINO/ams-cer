@@ -116,6 +116,7 @@ function navItems() {
     { key: 'collections', label: 'Collections & Deposits', icon: 'inbox', href: '#/cer/collections' },
     { key: 'advances', label: 'Cash Advances', icon: 'swap', href: '#/cer/advances' },
     { key: 'banks', label: 'Bank Statements', icon: 'building', href: '#/cer/banks' },
+    { key: 'src', label: 'Check Disbursements', icon: 'book', href: '#/src' },
     { section: true, label: 'EXAMINATION' },
     { key: 'verify', label: 'Verification', icon: 'book', href: '#/cer/verify' },
     { key: 'reports', label: 'Reports', icon: 'overview', href: '#/cer/reports' }];
@@ -227,7 +228,7 @@ export async function render(ctx) {
   const view = 'setup';
   const open = q.get('a') || (q.get('new') ? 'new' : '');
   // Beginning Inventory of Accountable Forms reads the same booklet records as Accountable Forms.
-  if (open) { FM = await import('./forms.js'); FX = await FM.loadForms(); CA = (await store.list('cer_cashadv')).map((r) => ({ id: r.id, ...r.data })); }
+  if (open) { FM = await import('./forms.js'); FX = await FM.loadForms(); CA = (await (await import('../src/journal.js')).listAdvances()).map((r) => ({ id: r.id, ...r.data })); }
   const body = open ? setupHtml(refs, cer, q) : listHtml(refs, cer);
   app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: view, crumb: open ? 'Audit Setup' : 'Audit Setup · Cash Examinations', me, roleText, body });
   tidyTop();

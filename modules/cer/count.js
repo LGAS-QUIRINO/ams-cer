@@ -9,6 +9,7 @@
 //
 // Records:
 //   cer_cashcount  id = examId  { examId, bills{ '1000': pcs, … }, coins, items[{ particulars, appliesTo: 'col'|'ca', presented, allowed }], split{ col, ca } (typed; blank = automatic) }
+import { listT } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
@@ -56,7 +57,7 @@ export function booksOf(refs, f, o, exam, audit, advs, liqs) {
 export async function countView(ctx) {
   const { refs, q } = ctx;
   const f = await loadForms();
-  const [reports, advs0, liqs0, counts0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount'].map((t) => store.list(t)));
+  const [reports, advs0, liqs0, counts0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount'].map(listT));
   f.reports = tagSameDay(reports.map(flat));
   const advs = advs0.map(flat), liqs = liqs0.map(flat);
   const crumb = 'Cash Count (Cut-off)';

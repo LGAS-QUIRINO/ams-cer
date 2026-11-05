@@ -730,3 +730,23 @@ table.rp-rsa{max-width:640px; margin:14px auto}
 .cer-tick{display:flex; align-items:center; gap:8px; font-size:14px; color:inherit; cursor:pointer}
 .cer-tick[hidden]{display:none}
 #el-cntbox{margin-top:12px}
+
+/* Source Documents · Check Disbursements Journal */
+.sd-tabs{display:flex; gap:8px; flex-wrap:wrap; margin:0 0 14px}
+.sd-tab{border:1px solid var(--line, #cfd7e6); border-radius:999px; padding:7px 16px; background:#fff; font-weight:600; cursor:pointer}
+.sd-tab.on{background:var(--navy, #13306b); border-color:var(--navy, #13306b); color:#fff}
+.sd-g5{display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:12px; align-items:end; margin:0 0 12px}
+.sd-cx{margin:0 0 12px}
+.sd-one{margin-bottom:10px}
+.sd-one[hidden], #sd-offbox[hidden], #sd-amts[hidden]{display:none}
+.sd-lines td.sd-name{color:var(--dim, #5b6475); font-size:13px}
+.sd-left{justify-content:flex-start; margin:6px 0 14px}
+.sd-note{margin:4px 0 0}
+.pill.sd-ca{background:#e8f0ff; color:#1d4fb8; border:1px solid #b8ccf3}
+.sd-tbl td{vertical-align:top}
+.panel.sd-pan{padding:16px 20px; margin-bottom:14px}
+.sd-pan .cd-orhead{margin-bottom:12px}
+.sd-tbl th:nth-child(6), .sd-tbl td:nth-child(6){min-width:240px}
+.sd-tbl td:nth-child(4){min-width:140px}
+.sd-pan .cd-orhead{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+.sd-pan .cd-orhead .btn:first-of-type{margin-left:auto}

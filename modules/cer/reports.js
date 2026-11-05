@@ -5,6 +5,7 @@
 //   Annex C  Statement of Accountability – collections, by month (barangays: AF 51 (SCD) and CTC (SCR); LGU: RCD)
 //   Annex D  Statement of Accountability – cash advances, by month
 // Other reports follow.
+import { listT } from '../src/journal.js';
 import { store } from '../../js/store.js';
 import { covOf, inCov, withLines, isPart } from './banks.js';
 import { tagSameDay } from './collections.js';
@@ -42,7 +43,7 @@ export function inWords(x) {
 export async function reportsView(ctx) {
   const { refs, q } = ctx;
   const f = await loadForms();
-  const [reports, advs0, liqs0, counts0, ver0, bank0, bset0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount', 'cer_verify', 'cer_bankrec', 'cer_settings'].map((t) => store.list(t)));
+  const [reports, advs0, liqs0, counts0, ver0, bank0, bset0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount', 'cer_verify', 'cer_bankrec', 'cer_settings'].map(listT));
   f.reports = tagSameDay(reports.map(flat));
   const advs = advs0.map(flat), liqs = liqs0.map(flat), counts = counts0.map(flat);
   const crumb = 'Reports';

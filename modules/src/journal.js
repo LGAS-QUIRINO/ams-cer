@@ -1,0 +1,55 @@
+// Source Documents · Check Disbursements Journal: the data, shared with Cash Examination.
+//
+// Record:
+//   src_ckdj  one check  { lguId, acctId (bank account: cer_settings banks|<lguId>), date, checkNo, ref (DV / payroll No.), payee,
+//                          particulars, lines[{ code, name, gross }], tax: { rate: 5 | 3 | 0, one: bool, amount (typed when
+//                          rate is 0 or imported) }, cancelled, officerId (for a cash advance), note (auditor's note) }
+// Tax: 5% → VAT-registered payee, base = gross ÷ 1.12; 3% → non-VAT, base = gross; the 1% is on the same base.
+// Check amount = gross − tax. A check charged to a cash advance account is a cash advance of officerId.
+import { store } from '../../js/store.js';
+
+const r2 = (n) => Math.round((+n || 0) * 100) / 100;
+const flat = (r) => ({ id: r.id, ...r.data });
+
+let COA = null;
+export async function loadCoa() {
+  if (!COA) COA = await (await fetch('lib/coa-barangay.json')).json();
+  return COA;
+}
+export const CA_CODES = ['1-01-01-020', '1-03-03-010', '1-03-03-020'];
+
+export const grossOf = (c) => r2((c.lines || []).reduce((n, l) => n + (+l.gross || 0), 0));
+export function taxOf(c) {
+  const t = c.tax || {}, g = grossOf(c);
+  if (c.cancelled) return { base: 0, main: 0, one: 0, amount: 0 };
+  if (!t.rate) return { base: 0, main: 0, one: 0, amount: r2(t.amount || 0) };
+  const base = t.rate === 5 ? r2(g / 1.12) : g;
+  const main = r2(base * t.rate / 100), one = t.one ? r2(base / 100) : 0;
+  return { base, main, one, amount: r2(main + one) };
+}
+export const checkAmountOf = (c) => (c.cancelled ? 0 : r2(grossOf(c) - taxOf(c).amount));
+export const caGrossOf = (c) => r2((c.lines || []).filter((l) => CA_CODES.includes(l.code)).reduce((n, l) => n + (+l.gross || 0), 0));
+export const isCa = (c) => !c.cancelled && caGrossOf(c) > 0;
+export const chkNo = (v) => +String(v ?? '').replace(/\D/g, '') || 0;
+
+export async function loadJournal() { return (await store.list('src_ckdj')).map(flat); }
+
+// For Cash Examination: the cash advances typed in Cash Advances plus those from the journal (a check charged to a cash
+// advance account, with its officer). A journal check already typed in Cash Advances is not doubled: the typed one stays
+// and is marked inJournal. Returns records shaped like store.list() ({ id, data }).
+export async function listAdvances() {
+  const [typed, jr] = await Promise.all([store.list('cer_cashadv'), loadJournal()]);
+  const key = (lguId, no) => `${lguId}|${chkNo(no)}`;
+  const jrCa = jr.filter((c) => isCa(c) && c.officerId);
+  const jrKeys = new Set(jrCa.map((c) => key(c.lguId, c.checkNo)));
+  const typedKeys = new Set(typed.filter((r) => !r.deleted).map((r) => key(r.data.lguId, r.data.checkNo)));
+  const out = typed.map((r) => (jrKeys.has(key(r.data.lguId, r.data.checkNo)) ? { ...r, data: { ...r.data, inJournal: true } } : r));
+  jrCa.filter((c) => !typedKeys.has(key(c.lguId, c.checkNo))).forEach((c) => out.push({ id: `ckdj|${c.id}`,
+    data: { lguId: c.lguId, officerId: c.officerId, date: c.date, checkNo: c.checkNo, particulars: c.particulars || c.payee || '', amount: caGrossOf(c), fromJournal: c.id } }));
+  return out;
+}
+// store.list, with the journal's cash advances added to cer_cashadv.
+export const listT = (t) => (t === 'cer_cashadv' ? listAdvances() : store.list(t));
+
+// For Bank Statements: the journal's checks of a bank account that are not cash advances (those come with Cash Advances).
+export const bankChecksOf = (jr, acctId) => jr.filter((c) => c.acctId === acctId && !c.cancelled && !(isCa(c) && c.officerId));

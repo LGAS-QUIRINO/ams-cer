@@ -113,11 +113,16 @@ const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin
 /* ---------- data ---------- */
 export async function loadForms() {
   const cer = await loadCer();
-  const [booklets, checks, raaf, settings, ors, cutoffs] = await Promise.all([store.list('cer_booklets'), store.list('cer_formcheck'), store.list('cer_raaf'), store.list('cer_settings'), store.list('cer_ors'), store.list('cer_cutoff')]);
+  const [booklets, checks, raaf, settings, ors, cutoffs, ckdj] = await Promise.all([store.list('cer_booklets'), store.list('cer_formcheck'), store.list('cer_raaf'), store.list('cer_settings'), store.list('cer_ors'), store.list('cer_cutoff'), store.list('src_ckdj')]);
   const flat = (r) => ({ id: r.id, ...r.data });
   const out = { ...cer, booklets: booklets.map(flat), checks: checks.map(flat), cutoffs: cutoffs.map(flat), raaf: raaf.map(flat), settings: Object.fromEntries(settings.map((s) => [s.id, s.data])), ors: ors.map(flat) };
   // Numbers encoded in Collections & Deposits (issued or cancelled) are used numbers of their booklet.
   const byBk = {}; out.ors.forEach((o) => { if (o.bookletId) (byBk[o.bookletId] = byBk[o.bookletId] || []).push({ n: o.serial, d: o.date }); });
+  // Checks in the Check Disbursements Journal (Source Documents), issued or cancelled, are used numbers of their checkbook.
+  const chks = out.booklets.filter((b) => b.form === 'chk' && !b.noSerial);
+  ckdj.map(flat).forEach((c) => { const n = +String(c.checkNo || '').replace(/\D/g, '') || 0; if (!n) return;
+    const hits = chks.filter((b) => b.from <= n && n <= b.to); const b = hits.find((x) => x.lguId === c.lguId) || hits[0];
+    if (b) (byBk[b.id] = byBk[b.id] || []).push({ n, d: c.date, jr: true }); });
   out.booklets.forEach((b) => { b.orNos = byBk[b.id] || []; });
   return out;
 }
@@ -742,6 +747,7 @@ async function bookletModal(ctx, f, b, offs) {
 /* ---------- one booklet: Edit and Delete ---------- */
 // A booklet can be deleted (encoded by mistake) only while nothing is recorded against it.
 function whyNoDelete(f, b) {
+  if ((b.orNos || []).length && b.form === 'chk') return `This checkbook has ${b.orNos.length} check${b.orNos.length > 1 ? 's' : ''} in the Check Disbursements Journal (Source Documents). Remove those first, or correct the checkbook with Edit.`;
   if ((b.orNos || []).length) return `This booklet has ${b.orNos.length} receipt${b.orNos.length > 1 ? 's' : ''} encoded in Collections & Deposits. Remove those first, or correct the booklet with Edit.`;
   if (f.checks.some((c) => c.bookletId === b.id) || (f.cutoffs || []).some((c) => (c.lines || []).some((l) => l.bookletId === b.id))) return 'This booklet is in the cut-off of a cash examination. Correct it with Edit instead.';
   return '';
@@ -1517,7 +1523,7 @@ export function saafRows(f, officerId, exam, from, to, advs = []) {
       // before the cut-off is entered, the check Nos. of the cash advances (and beginning checks) count as issued.
       const caUsed = b.form === 'chk' && count === null ? mergeRanges(advs.filter((a) => a.officerId === officerId && (!a.date || a.date <= to)).map((a) => parseInt(String(a.checkNo || '').replace(/\D/g, ''), 10))
         .filter((n) => n >= b.from && n <= b.to).map((n) => [n, n])) : [];
-      const end = b.status === 'lost' ? [] : b.form === 'chk' && count !== null ? count : b.form === 'chk' ? subtractRanges([...beg, ...rec], caUsed) : rawUnused(b, to);
+      const end = b.status === 'lost' ? [] : b.form === 'chk' && count !== null ? count : b.form === 'chk' ? subtractRanges(subtractRanges([...beg, ...rec], caUsed), (b.orNos || []).filter((x) => x.d && x.d <= to).map((x) => [x.n, x.n])) : rawUnused(b, to);
       if (!beg.length && !rec.length && !end.length && !(count && count.length)) return;
       const issued = subtractRanges([...beg, ...rec], count || end);
       out.push({ id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, face: faceOf(b), beg, rec, issued, end, count,
