@@ -21,7 +21,7 @@ const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin
 const acctLabel = (x) => `${x.bank || 'Bank'} · ${x.accountNo || '—'} · ${x.fund}`;
 const PC_CODE = '1-01-01-020';
 const SHORT = { af51: 'AF 51', af51b: 'AF 51', ctci: 'CTC', ctcc: 'CTC Corp.' };
-const CA_ONLY = ['1-03-03-010', '1-03-03-020'];
+const CA_ONLY = ['1-03-05-010', '1-03-05-020', '1-03-05-030', '1-03-05-040'];   // Revised Chart of Accounts: the Advances accounts
 const OTHER = { bankCr: 'Bank credit (IRA, interest…)', bankDr: 'Bank debit (bank charges…)', pcv: 'Petty cash payment (PCV)' };
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = '#/cer/cashbook?' + q.toString(); };
 const bad = (m) => { toast(m, 'bad'); return false; };

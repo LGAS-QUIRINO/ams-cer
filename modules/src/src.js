@@ -89,7 +89,7 @@ async function journalView(ctx) {
   if (ED.id && !mine.some((c) => c.id === ED.id)) Object.assign(ED, { id: '', d: null });
   if (!ED.d) ED.d = blankCheck('', '');
   const flagsOf = (c) => [inBook(c.checkNo) ? '' : 'Not in a checkbook', !c.cancelled && !hasEntry(c) ? 'No entry yet' : '', !c.cancelled && hasEntry(c) && !tallies(c) ? `Does not tally: gross − tax = ₱${money(r2(grossOf(c) - taxOf(c).amount))}` : '',
-    isCa(c) && !c.officerId ? 'Cash advance: no officer' : ''].filter(Boolean);
+    isCa(c) && !c.officerId ? 'Cash advance: no officer' : '', ...(c.lines || []).filter((l) => l.old).map((l) => `Old code ${l.old} (${l.oldName}): choose the new account`)].filter(Boolean);
 
   let inner = '';
   if (tab === 'rci') {
@@ -205,7 +205,7 @@ async function taxModal(c) {
 }
 
 /* ---------- shared bits of the two entry lines ---------- */
-const blankCheck = (date, checkNo) => ({ date, checkNo, ref: '', payee: '', particulars: '', amount: '', lines: [blankLine()], tax: { taxable: false }, cancelled: false, officerId: '', note: '' });
+const blankCheck = (date, checkNo) => ({ coa: 2, date, checkNo, ref: '', payee: '', particulars: '', amount: '', lines: [blankLine()], tax: { taxable: false }, cancelled: false, officerId: '', note: '' });
 const isCancelText = (s) => /^\s*cancell?ed\s*$/i.test(s || '');
 const nextNo = (no) => { const m = /^(.*?)(\d+)$/.exec(String(no || '')); if (!m) return ''; const n = String(+m[2] + 1).padStart(m[2].length, '0'); return m[1] + n; };
 const lastDayOf = (m) => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
@@ -284,7 +284,7 @@ function wireRci(c) {
 /* ---------- the CkDJ line: the entry (accounts, gross, tax); the check amount is fixed when it came from the RCI ---------- */
 function entryHtml(d, officers, editing, m) {
   const ln = (l, i) => `<div class="sd-ln" data-ln="${i}">
-      <input class="input mono sd-code" list="sd-coa" value="${esc(l.code)}" placeholder="Code or title" aria-label="Account" title="${esc(l.name || '')}">
+      <input class="input mono sd-code" list="sd-coa" value="${esc(l.code)}" placeholder="${l.old ? `Old ${esc(l.old)}: choose` : 'Code or title'}" aria-label="Account" title="${esc(l.name || (l.old ? `Old code ${l.old} · ${l.oldName}: choose the new account` : ''))}">
       <input class="input r sd-gross" inputmode="decimal" value="${l.gross === '' || l.gross === undefined ? '' : esc(money(l.gross))}" aria-label="Gross amount">
       ${i ? '<button class="btn sm sd-xl" type="button" aria-label="Remove account">✕</button>' : ''}</div>`;
   const tx = d.tax || {};
@@ -315,7 +315,7 @@ function wireEntry(c) {
     d.date = dateIn(m, $('#sd-date').value); d.checkNo = $('#sd-no').value.trim(); d.ref = $('#sd-ref').value.trim(); d.payee = $('#sd-payee').value.trim(); d.particulars = $('#sd-part').value.trim();
     d.cancelled = isCancelText(d.particulars); d.officerId = $('#sd-off').value;
     const g0 = grossOf(d);
-    d.lines = $$('.sd-ln').map((el) => { const code = toCode($('.sd-code', el).value); return { code, name: names[code] || '', gross: num($('.sd-gross', el).value) ?? '' }; });
+    d.lines = $$('.sd-ln').map((el, i) => { const code = toCode($('.sd-code', el).value), was = d.lines[i] || {}; return { code, name: names[code] || '', gross: num($('.sd-gross', el).value) ?? '', ...(!code && was.old ? { old: was.old, oldName: was.oldName } : {}) }; });
     const taxable = $('#sd-taxable').value === '1';
     if (!taxable) d.tax = { taxable: false };
     else { d.tax = { ...d.tax, taxable: true }; if (grossOf(d) !== g0) { d.tax.main = null; d.tax.one = null; } }   // a new gross: the tax is computed again
@@ -351,7 +351,7 @@ function wireEntry(c) {
       if (lines.some((l) => CA_CODES.includes(l.code)) && !d.officerId) return bad('Choose the officer of the cash advance.');
     } else lines = [];
     const cur = ED.id ? mine.find((x) => x.id === ED.id) : null;
-    const rec = { ...(cur ? (({ id, ...r }) => r)(cur) : {}), lguId: lgu.id, acctId: acct.id, date: d.date, checkNo: d.checkNo, ref: d.cancelled ? '' : d.ref, payee: d.cancelled ? '' : d.payee, particulars: d.cancelled ? 'Cancelled' : d.particulars,
+    const rec = { ...(cur ? (({ id, ...r }) => r)(cur) : {}), coa: 2, lguId: lgu.id, acctId: acct.id, date: d.date, checkNo: d.checkNo, ref: d.cancelled ? '' : d.ref, payee: d.cancelled ? '' : d.payee, particulars: d.cancelled ? 'Cancelled' : d.particulars,
       lines: lines.map((l) => ({ code: l.code, name: names[l.code], gross: r2(l.gross) })), tax: d.cancelled ? { taxable: false } : d.tax, cancelled: d.cancelled,
       officerId: lines.some((l) => CA_CODES.includes(l.code)) ? d.officerId : '', note: d.note || (cur && cur.note) || '' };
     // Encoded here first: the check amount is gross − tax (it shows in the RCI); from the RCI: it stays as typed there.
@@ -449,9 +449,9 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
     buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; } if (!plan.add.length && !plan.upd.length) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
   if (v !== 'go') return;
   for (const g of plan.add) {
-    if (plan.rci) { await store.save('src_ckdj', newId('ckdj'), { lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.cancelled ? '' : g.ref, payee: g.cancelled ? '' : g.payee, particulars: g.cancelled ? 'Cancelled' : g.part,
+    if (plan.rci) { await store.save('src_ckdj', newId('ckdj'), { coa: 2, lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.cancelled ? '' : g.ref, payee: g.cancelled ? '' : g.payee, particulars: g.cancelled ? 'Cancelled' : g.part,
       amount: g.cancelled ? 0 : g.amount, amountSrc: 'rci', lines: [], tax: { taxable: false }, cancelled: g.cancelled, officerId: '', note: g.note || '' }, by(refs), { quiet: true }); continue; }
-    await store.save('src_ckdj', newId('ckdj'), { lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.ref, payee: g.payee, particulars: g.part, lines: g.cancelled ? [] : g.lines.map((l) => ({ code: l.code, name: l.name, gross: r2(l.gross) })),
+    await store.save('src_ckdj', newId('ckdj'), { coa: 2, lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.ref, payee: g.payee, particulars: g.part, lines: g.cancelled ? [] : g.lines.map((l) => ({ code: l.code, name: l.name, gross: r2(l.gross) })),
       tax: g.cancelled || !(g.tax || g.taxyn) ? { taxable: false } : { taxable: true, vat: null, main: g.tax, one: 0 }, cancelled: g.cancelled, officerId: '', note: g.note }, by(refs), { quiet: true });
   }
   for (const { cur, fill } of plan.upd) { const { id, ...rec } = cur; await store.save('src_ckdj', id, { ...rec, ...fill }, by(refs), { quiet: true }); }
