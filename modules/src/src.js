@@ -1,7 +1,7 @@
 // AMS · Source Documents (design approved 5 Nov 2026).
 // The auditee's records encoded once, read by Cash Examination (and later Records Management).
-// First record: the Check Disbursements Journal, per LGU and bank account; the Tax Register and the Report of Checks Issued
-// are made from it. Data and tax rules: journal.js.
+// First record: the checks of each bank account, encoded either way: in the Report of Checks Issued (the check amount; the
+// journal entry is filled later) or in the Check Disbursements Journal (the entry; the check amount = gross − tax). Nothing is typed twice. Data and tax rules: journal.js.
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$, today } from '../../js/ui.js';
 import { roleLine } from '../../js/views/admin.js';
@@ -9,7 +9,7 @@ import { moduleFrame } from '../../js/frame.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from '../cer/cer.js';
 import { exportXlsx, loadXlsx, excelDate } from '../cer/forms.js';
 import { accountsModal, DEFAULT_FUNDS } from '../cer/banks.js';
-import { loadCoa, loadJournal, CA_CODES, grossOf, taxOf, checkAmountOf, isCa, isTaxable, chkNo } from './journal.js';
+import { loadCoa, loadJournal, CA_CODES, grossOf, taxOf, checkAmountOf, isCa, isTaxable, chkNo, hasEntry, tallies } from './journal.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -53,7 +53,7 @@ async function journalView(ctx) {
   const acct = accounts.find((x) => x.id === q.get('acct')) || accounts[0] || null;
   const m = /^\d{4}-\d{2}$/.test(q.get('m') || '') && +q.get('m').slice(0, 4) > 1990 ? q.get('m') : today().slice(0, 7);
   const yNow = +today().slice(0, 4), years = []; for (let y = yNow + 1; y >= yNow - 6; y--) years.push(y);
-  const tab = ['ckdj', 'tax', 'rci'].includes(q.get('tab')) ? q.get('tab') : 'ckdj';
+  const tab = ['ckdj', 'tax', 'rci'].includes(q.get('tab')) ? q.get('tab') : 'rci';
   const top = `<div class="panel sd-top"><div class="field sd-office"><label for="sd-lgu">Office</label><input class="input" id="sd-lgu" list="sd-lgus" value="${esc(officeName(lgu))}" placeholder="Type the barangay or municipality" autocomplete="off">
         <datalist id="sd-lgus">${lgus.map((l) => `<option value="${esc(officeName(l))}">`).join('')}</datalist></div>
       <div class="field sd-acctf"><label for="sd-acct">Bank Account</label><select class="input" id="sd-acct">${accounts.length ? accounts.map((x) => `<option value="${esc(x.id)}" ${acct && x.id === acct.id ? 'selected' : ''}>${esc(acctLabel(x))}</option>`).join('') : '<option value="">No bank account yet</option>'}</select></div>
@@ -79,36 +79,46 @@ async function journalView(ctx) {
   const inBook = (no) => { const n = chkNo(no); return !!n && chkBooks.some((b) => b.from <= n && n <= b.to); };
   const mine = jr.filter((c) => c.lguId === lgu.id && c.acctId === acct.id);
   const list = mine.filter((c) => String(c.date || '').startsWith(m)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || chkNo(a.checkNo) - chkNo(b.checkNo));
-  const tabs = `<div class="sd-tabs" role="tablist">${[['ckdj', 'Check Disbursements Journal'], ['tax', 'Tax Register'], ['rci', 'Report of Checks Issued']].map(([k, t]) => `<button type="button" role="tab" class="sd-tab ${k === tab ? 'on' : ''}" data-tab="${k}" aria-selected="${k === tab}">${t}</button>`).join('')}</div>`;
+  const tabs = `<div class="sd-tabs" role="tablist">${[['rci', 'Report of Checks Issued'], ['ckdj', 'Check Disbursements Journal'], ['tax', 'Tax Register']].map(([k, t]) => `<button type="button" role="tab" class="sd-tab ${k === tab ? 'on' : ''}" data-tab="${k}" aria-selected="${k === tab}">${t}</button>`).join('')}</div>`;
   const totals = { g: r2(list.reduce((n, c) => n + (c.cancelled ? 0 : grossOf(c)), 0)), t: r2(list.reduce((n, c) => n + taxOf(c).amount, 0)), a: r2(list.reduce((n, c) => n + checkAmountOf(c), 0)) };
-  const offName = (id) => officers.find((o) => o.id === id)?.name || '';
   const vatText = (c) => { const v = taxOf(c).vat; return v === true ? 'VAT' : v === false ? 'Non-VAT' : ''; };
+  // The entry being typed: per tab (the RCI line, or the CkDJ line), a new check or the one being edited.
+  const key = `${lgu.id}|${acct.id}|${tab}`;
+  if (ED.key !== key) Object.assign(ED, { key, id: '', d: null });
+  if (ED.id && !mine.some((c) => c.id === ED.id)) Object.assign(ED, { id: '', d: null });
+  if (!ED.d) ED.d = blankCheck('', '');
+  const flagsOf = (c) => [inBook(c.checkNo) ? '' : 'Not in a checkbook', !c.cancelled && !hasEntry(c) ? 'No entry yet' : '', !c.cancelled && hasEntry(c) && !tallies(c) ? `Does not tally: gross − tax = ₱${money(r2(grossOf(c) - taxOf(c).amount))}` : '',
+    isCa(c) && !c.officerId ? 'Cash advance: no officer' : ''].filter(Boolean);
 
   let inner = '';
-  if (tab === 'ckdj') {
-    // The entry line: a new check, or the one being edited.
-    const key = `${lgu.id}|${acct.id}`;
-    if (ED.key !== key) Object.assign(ED, { key, id: '', d: null });
-    if (ED.id && !mine.some((c) => c.id === ED.id)) Object.assign(ED, { id: '', d: null });
-    if (!ED.d) ED.d = blankCheck('', '');
+  if (tab === 'rci') {
+    // Step 1 (or after the CkDJ): the check as issued; its amount is the check amount.
+    const form = enc ? rciHtml(ED.d, !!ED.id, m) : '';
+    inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Report of Checks Issued · ${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
+        ${enc ? '<button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-print">Print</button><button class="btn sm" type="button" id="sd-rxls">Export to Excel</button></div>
+      <div id="cer-print" class="rp-doc"><div class="rp-page"><h2 class="rp-title">REPORT OF CHECKS ISSUED</h2>
+        <p class="c"><b>${esc(agencyName(refs, lgu))}</b><br>${esc(acctLabel(acct))}<br>${esc(monthLabel(m))}</p>
+        <table class="rp-t"><thead><tr><th>Date</th><th>Check No.</th><th>DV / Payroll No.</th><th>Payee</th><th>Nature of Payment</th><th class="r">Amount</th>${enc ? '<th class="af-noprint"></th>' : ''}</tr></thead>
+        <tbody>${list.length ? list.map((c) => `<tr class="${c.id === ED.id ? 'cd-on' : ''}"><td>${esc(fmtDate(c.date))}</td><td>${esc(c.checkNo)}</td><td>${c.cancelled ? '' : esc(c.ref || '')}</td>${c.cancelled ? '<td colspan="2">Cancelled</td><td class="r">–</td>' : `<td>${esc(c.payee || '')}</td><td>${esc(c.particulars || '')}</td><td class="r">${money(checkAmountOf(c))}</td>`}${enc ? `<td class="af-noprint"><button class="btn sm" type="button" data-rciedit="${esc(c.id)}">Edit</button></td>` : ''}</tr>`).join('') : `<tr><td colspan="${enc ? 7 : 6}" class="c">No check issued this month.</td></tr>`}
+        <tr class="tot"><td colspan="5">Total</td><td class="r">${money(totals.a)}</td>${enc ? '<td class="af-noprint"></td>' : ''}</tr></tbody></table></div></div></div>`;
+  } else if (tab === 'ckdj') {
+    // Step 2 (or first): the entry of each check — accounts, gross amounts, tax.
     const form = enc ? entryHtml(ED.d, officers, !!ED.id, m) : '';
     const rows = list.map((c) => {
-      const t = taxOf(c), ca = isCa(c), ls = c.lines || [];
-      // Flags shown in the Auditor's Note column (worked out, not saved).
-      const flags = [inBook(c.checkNo) ? '' : 'Not in a checkbook', ca && !c.officerId ? 'Cash advance: no officer' : ''].filter(Boolean).map((t) => `<span class="sd-flag">${t}</span>`).join('');
+      const t = taxOf(c), ls = c.lines || [], fl = flagsOf(c);
       return `<tr class="${c.id === ED.id ? 'cd-on' : ''}"><td>${esc(fmtDate(c.date))}</td><td class="mono">${esc(c.checkNo)}</td><td>${esc(c.ref || '')}</td><td>${esc(c.payee || '')}</td><td>${esc(c.cancelled ? 'Cancelled' : c.particulars || '')}</td>
-        <td class="r">${c.cancelled ? '' : money(checkAmountOf(c))}</td><td class="r">${c.cancelled ? '' : money(t.amount)}</td>
+        <td class="r">${c.cancelled ? '' : money(checkAmountOf(c))}</td><td class="r">${c.cancelled || !hasEntry(c) ? '' : money(t.amount)}</td>
         <td>${ls.map((l) => `<span class="mono">${esc(l.code)}</span> <small class="dim">${esc(l.name || names[l.code] || '')}</small>`).join('<br>')}</td>
-        <td class="r">${ls.map((l) => money(l.gross)).join('<br>')}</td><td>${c.cancelled ? '' : isTaxable(c) ? `Yes${vatText(c) ? ` <small class="dim">${vatText(c)}</small>` : ''}` : 'No'}</td>
-        <td class="sd-notec">${flags}${enc ? `<button type="button" class="sd-note" data-note="${esc(c.id)}" title="Auditor's note">${c.note ? esc(c.note) : '<span class="dim">+ note</span>'}</button>` : esc(c.note || '')}</td>
-        <td>${enc ? `<button class="btn sm" type="button" data-sdedit="${esc(c.id)}">Edit</button>` : ''}</td></tr>`;
+        <td class="r">${ls.map((l) => money(l.gross)).join('<br>')}</td><td>${c.cancelled || !hasEntry(c) ? '' : isTaxable(c) ? `Yes${vatText(c) ? ` <small class="dim">${vatText(c)}</small>` : ''}` : 'No'}</td>
+        <td class="sd-notec">${fl.map((t) => `<span class="sd-flag">${esc(t)}</span>`).join('')}${enc ? `<button type="button" class="sd-note" data-note="${esc(c.id)}" title="Auditor's note">${c.note ? esc(c.note) : '<span class="dim">+ note</span>'}</button>` : esc(c.note || '')}</td>
+        <td>${enc ? `<button class="btn sm ${!c.cancelled && !hasEntry(c) ? 'primary' : ''}" type="button" data-sdedit="${esc(c.id)}">${!c.cancelled && !hasEntry(c) ? 'Fill entry' : 'Edit'}</button>` : ''}</td></tr>`;
     }).join('');
-    inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
+    inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Check Disbursements Journal · ${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
         ${enc ? '<button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-xls">Export to Excel</button></div>
       ${list.length ? `<div class="af-tbl"><table class="af-reg sd-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">DV / Payroll</th><th scope="col">Payee</th><th scope="col">Particulars</th><th scope="col" class="r">Check Amount</th><th scope="col" class="r">Tax</th><th scope="col">Account</th><th scope="col" class="r">Gross Amount</th><th scope="col">Taxable</th><th scope="col">Auditor's Note</th><th scope="col"></th></tr></thead>
         <tbody>${rows}</tbody><tfoot><tr class="cd-foot"><td colspan="5">Total, ${esc(monthLabel(m))}</td><td class="r">${money(totals.a)}</td><td class="r">${money(totals.t)}</td><td></td><td class="r">${money(totals.g)}</td><td colspan="3"></td></tr></tfoot></table></div>`
         : `<div class="empty"><b>No check encoded for ${esc(monthLabel(m))}.</b></div>`}</div>`;
-  } else if (tab === 'tax') {
+  } else {
     const tl = list.filter(isTaxable);
     inner = `<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Tax Register · ${esc(monthLabel(m))}</h3><span class="pill">${tl.length}</span><button class="btn sm" type="button" id="sd-txls">Export to Excel</button></div>
       ${tl.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Check No.</th><th scope="col">Date</th><th scope="col">Payee</th><th scope="col">VAT / Non-VAT</th><th scope="col" class="r">Gross Amount</th><th scope="col" class="r">Tax Base</th><th scope="col" class="r">5% or 3%</th><th scope="col" class="r">1%</th><th scope="col" class="r">Tax Amount</th><th scope="col"></th></tr></thead>
@@ -116,13 +126,6 @@ async function journalView(ctx) {
           <td>${enc ? `<button class="btn sm" type="button" data-sdtax="${esc(c.id)}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
         <tfoot><tr class="cd-foot"><td colspan="6">Total</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).main, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).one, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).amount, 0)))}</td><td></td></tr></tfoot></table></div>`
         : '<div class="empty"><b>No taxable check this month.</b></div>'}</div>`;
-  } else {
-    inner = `<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Report of Checks Issued · ${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span><button class="btn sm" type="button" id="sd-print">Print</button><button class="btn sm" type="button" id="sd-rxls">Export to Excel</button></div>
-      <div id="cer-print" class="rp-doc"><div class="rp-page"><h2 class="rp-title">REPORT OF CHECKS ISSUED</h2>
-        <p class="c"><b>${esc(agencyName(refs, lgu))}</b><br>${esc(acctLabel(acct))}<br>${esc(monthLabel(m))}</p>
-        <table class="rp-t"><thead><tr><th>Date</th><th>Check No.</th><th>DV / Payroll No.</th><th>Payee</th><th>Nature of Payment</th><th class="r">Amount</th></tr></thead>
-        <tbody>${list.length ? list.map((c) => `<tr><td>${esc(fmtDate(c.date))}</td><td>${esc(c.checkNo)}</td><td>${c.cancelled ? '' : esc(c.ref || '')}</td>${c.cancelled ? '<td colspan="2">Cancelled</td><td class="r">–</td>' : `<td>${esc(c.payee || '')}</td><td>${esc(c.particulars || '')}</td><td class="r">${money(checkAmountOf(c))}</td>`}</tr>`).join('') : '<tr><td colspan="6" class="c">No check issued this month.</td></tr>'}
-        <tr class="tot"><td colspan="5">Total</td><td class="r">${money(totals.a)}</td></tr></tbody></table></div></div></div>`;
   }
   const body = top + tabs + inner;
 
@@ -131,13 +134,15 @@ async function journalView(ctx) {
     $$('[data-tab]').forEach((b) => { b.onclick = () => go({ tab: b.dataset.tab }); });
     const xRows = () => list.map((c) => ({ Date: fmtDate(c.date), 'Check No.': c.checkNo, 'Reference No.': c.ref || '', Payee: c.payee || '', Particulars: c.cancelled ? 'Cancelled' : c.particulars || '',
       'Check Amount': checkAmountOf(c), 'Tax Amount': taxOf(c).amount, 'Account Code': (c.lines || []).map((l) => l.code).join('; '), 'Account Name': (c.lines || []).map((l) => l.name || names[l.code] || '').join('; '),
-      'Gross Amount': c.cancelled ? 0 : grossOf(c), Taxable: c.cancelled ? '' : isTaxable(c) ? 'YES' : 'NO', "Auditor's Note": c.note || '' }));
+      'Gross Amount': c.cancelled ? 0 : grossOf(c), Taxable: c.cancelled || !hasEntry(c) ? '' : isTaxable(c) ? 'YES' : 'NO', "Auditor's Note": c.note || '' }));
     const fileBase = `${agencyName(refs, lgu)} ${acct.accountNo || ''} ${m}`;
     if ($('#sd-xls')) $('#sd-xls').onclick = () => exportXlsx(`Check Disbursements Journal ${fileBase}.xlsx`, 'CkDJ', xRows());
     if ($('#sd-txls')) $('#sd-txls').onclick = () => exportXlsx(`Tax Register ${fileBase}.xlsx`, 'Tax Register', list.filter(isTaxable).map((c) => { const t = taxOf(c); return { 'Check No.': c.checkNo, Date: fmtDate(c.date), Payee: c.payee || '', 'VAT / Non-VAT': vatText(c), 'Gross Amount': grossOf(c), 'Tax Base': t.base || '', '5% or 3%': t.main, '1%': t.one, 'Tax Amount': t.amount }; }));
     if ($('#sd-rxls')) $('#sd-rxls').onclick = () => exportXlsx(`RCI ${fileBase}.xlsx`, 'RCI', list.map((c) => ({ Date: fmtDate(c.date), 'Check No.': c.checkNo, 'DV / Payroll No.': c.cancelled ? '' : c.ref || '', Payee: c.cancelled ? 'Cancelled' : c.payee || '', 'Nature of Payment': c.cancelled ? '' : c.particulars || '', Amount: checkAmountOf(c) })));
     if ($('#sd-print')) $('#sd-print').onclick = () => { document.body.classList.add('af-printing', 'rp-printing'); window.print(); document.body.classList.remove('af-printing', 'rp-printing'); };
-    $$('[data-sdedit]').forEach((b) => { b.onclick = () => { const c = mine.find((x) => x.id === b.dataset.sdedit); ED.id = c.id; ED.d = JSON.parse(JSON.stringify({ ...blankCheck('', ''), ...c })); if (c.cancelled) ED.d.particulars = 'Cancelled'; if (!ED.d.lines.length) ED.d.lines = [blankLine()]; ctx.rerender(); setTimeout(() => { const f = $('#sd-form'); if (f) f.scrollIntoView({ block: 'start' }); }, 0); }; });
+    const startEdit = (id, sel) => { const c = mine.find((x) => x.id === id); ED.id = c.id; ED.d = JSON.parse(JSON.stringify({ ...blankCheck('', ''), ...c })); if (c.cancelled) ED.d.particulars = 'Cancelled'; if (!ED.d.lines.length) ED.d.lines = [blankLine()]; ctx.rerender(); setTimeout(() => { const f = $('#sd-form'); if (f) f.scrollIntoView({ block: 'start' }); const el = sel && $(sel); if (el) el.focus(); }, 0); };
+    $$('[data-sdedit]').forEach((b) => { b.onclick = () => startEdit(b.dataset.sdedit, '.sd-code'); });
+    $$('[data-rciedit]').forEach((b) => { b.onclick = () => startEdit(b.dataset.rciedit, '#sd-amt'); });
     // Auditor's note: typed in the table.
     $$('[data-note]').forEach((b) => { b.onclick = async () => {
       const c = mine.find((x) => x.id === b.dataset.note); let val = null;
@@ -149,10 +154,12 @@ async function journalView(ctx) {
     // Tax Register: edit the tax of a check.
     $$('[data-sdtax]').forEach((b) => { b.onclick = async () => {
       const c = mine.find((x) => x.id === b.dataset.sdtax); const t = await taxModal(c); if (!t) return;
-      const { id, ...rec } = c; await store.save('src_ckdj', id, { ...rec, tax: t }, by(refs)); toast(`Tax of Check No. ${c.checkNo} saved.`, 'ok');
+      const { id, ...rec } = c; const next = { ...rec, tax: t }; if (next.amountSrc !== 'rci') next.amount = r2(grossOf(next) - taxOf(next).amount);
+      await store.save('src_ckdj', id, next, by(refs)); toast(`Tax of Check No. ${c.checkNo} saved.`, 'ok');
     }; });
     if ($('#sd-imp')) $('#sd-imp').onclick = () => importJournal({ refs, lgu, acct, mine, coa, names });
     if (enc && tab === 'ckdj') wireEntry({ refs, lgu, acct, mine, coa, names, m, rerender: ctx.rerender });
+    if (enc && tab === 'rci') wireRci({ refs, lgu, acct, mine, m, rerender: ctx.rerender });
   };
   return { body, wire };
 }
@@ -181,7 +188,6 @@ async function taxModal(c) {
       const sel = $('[name="sd-vat"]:checked', bg); if (!sel) return bad('Choose VAT or Non-VAT.');
       const vat = sel.value === '1', x = comp(vat), main = num($('#tw-main', bg).value), one = num($('#tw-one', bg).value);
       if (main === null || one === null) return bad('Enter the amounts.');
-      // Only typed-over amounts are kept as typed; the rest follow the gross amount.
       out = { taxable: true, vat, main: main === x.main ? null : main, one: one === x.one ? null : one };
       if (r2(main + one) > g) return bad('The tax is more than the gross amount.');
       return true;
@@ -189,47 +195,115 @@ async function taxModal(c) {
   return out;
 }
 
-/* ---------- the entry line ---------- */
-const blankCheck = (date, checkNo) => ({ date, checkNo, ref: '', payee: '', particulars: '', lines: [blankLine()], tax: { taxable: false }, cancelled: false, officerId: '', note: '' });
+/* ---------- shared bits of the two entry lines ---------- */
+const blankCheck = (date, checkNo) => ({ date, checkNo, ref: '', payee: '', particulars: '', amount: '', lines: [blankLine()], tax: { taxable: false }, cancelled: false, officerId: '', note: '' });
 const isCancelText = (s) => /^\s*cancell?ed\s*$/i.test(s || '');
 const nextNo = (no) => { const m = /^(.*?)(\d+)$/.exec(String(no || '')); if (!m) return ''; const n = String(+m[2] + 1).padStart(m[2].length, '0'); return m[1] + n; };
+const lastDayOf = (m) => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
+const dateIn = (m, v) => { const n = parseInt(String(v || '').trim(), 10); return n >= 1 && n <= lastDayOf(m) ? `${m}-${String(n).padStart(2, '0')}` : ''; };
+const headHtml = (d, m, natureLabel) => `
+      <div class="sd-f sd-w-day"><label for="sd-date">Day</label><input class="input r" id="sd-date" inputmode="numeric" maxlength="2" value="${d.date ? +d.date.slice(8, 10) : ''}" title="${esc(monthLabel(m))}" aria-label="Day of ${esc(monthLabel(m))}"></div>
+      <div class="sd-f sd-w-no"><label for="sd-no">Check No.</label><input class="input mono" id="sd-no" value="${esc(d.checkNo)}"></div>
+      <div class="sd-f sd-w-ref"><label for="sd-ref">DV / Payroll</label><input class="input" id="sd-ref" value="${esc(d.ref)}"></div>
+      <div class="sd-f sd-w-txt"><label for="sd-payee">Payee</label><input class="input" id="sd-payee" value="${esc(d.payee)}"></div>
+      <div class="sd-f sd-w-txt"><label for="sd-part">${natureLabel}</label><input class="input" id="sd-part" value="${esc(d.particulars)}" placeholder="or Cancelled"></div>`;
+const editHead = (d, editing) => (editing ? `<div class="cd-orhead"><h3 class="cer-h3">Edit Check No. ${esc(d.checkNo)}</h3><button class="btn sm" type="button" id="sd-del">Delete</button><button class="btn sm" type="button" id="sd-new">Cancel</button></div>` : '');
+// Checks the header and the duplicate check No.; returns the error or ''.
+function headError(d, mine, m) {
+  if (!d.date) return `Enter the day (1 to ${lastDayOf(m)}).`;
+  if (!chkNo(d.checkNo)) return 'Enter the check No.';
+  const dup = mine.find((x) => x.id !== ED.id && chkNo(x.checkNo) === chkNo(d.checkNo));
+  return dup ? `Check No. ${d.checkNo} is already in (${fmtDate(dup.date)}).` : '';
+}
+function wireCommon(c, save, order) {
+  const { refs, mine, rerender } = c;
+  if ($('#sd-new')) $('#sd-new').onclick = () => { ED.id = ''; ED.d = null; rerender(); };
+  if ($('#sd-del')) $('#sd-del').onclick = async () => {
+    const ok = await modal({ title: 'Delete this check?', body: `<p style="margin:0">Delete Check No. <b>${esc(ED.d.checkNo)}</b>? It is removed from the RCI and the CkDJ.</p>`, buttons: [{ label: 'Cancel', value: false }, { label: 'Delete', cls: 'danger', value: true }] });
+    if (!ok) return;
+    const cur = mine.find((x) => x.id === ED.id); const { id, ...rec } = cur;
+    await store.save('src_ckdj', id, rec, by(refs), { deleted: true }); ED.id = ''; ED.d = null; toast('Check deleted.', 'ok');
+  };
+  $('#sd-save').onclick = save;
+  // Enter moves to the next box; on the last box it saves.
+  $('#sd-form').onkeydown = (e) => {
+    if (e.key !== 'Enter' || e.target.tagName === 'BUTTON') return;
+    e.preventDefault();
+    const els = order(), i = els.indexOf(e.target);
+    if ((e.target.id === 'sd-part' && isCancelText(e.target.value)) || i < 0 || i === els.length - 1) { save(); return; }
+    els[i + 1].focus();
+  };
+}
+async function saveCheck(c, rec, wasNew) {
+  const id = ED.id || newId('ckdj');
+  ED.id = ''; ED.d = wasNew ? blankCheck(rec.date, nextNo(rec.checkNo)) : null;
+  await store.save('src_ckdj', id, rec, by(c.refs));
+  toast(`Check No. ${rec.checkNo} saved.`, 'ok');
+  setTimeout(() => { const el = $('#sd-ref'); if (el) el.focus(); }, 60);
+}
 
+/* ---------- the RCI line: the check as issued (the check amount) ---------- */
+function rciHtml(d, editing, m) {
+  return `<div class="panel sd-pan" id="sd-form">${editHead(d, editing)}
+    <div class="sd-line">${headHtml(d, m, 'Nature of Payment')}
+      <div class="sd-f sd-w-amt"><label for="sd-amt">Amount</label><input class="input r" id="sd-amt" inputmode="decimal" value="${d.amount === '' || d.amount === undefined || d.amount === null ? (editing && !d.cancelled ? esc(money(checkAmountOf(d))) : '') : esc(money(d.amount))}"></div>
+      <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="sd-save">${editing ? 'Save' : 'Enter'}</button></div>
+    </div></div>`;
+}
+function wireRci(c) {
+  const { lgu, acct, mine, m } = c;
+  const d = ED.d;
+  if (!$('#sd-form')) return;
+  const read = () => { d.date = dateIn(m, $('#sd-date').value); d.checkNo = $('#sd-no').value.trim(); d.ref = $('#sd-ref').value.trim(); d.payee = $('#sd-payee').value.trim(); d.particulars = $('#sd-part').value.trim(); d.cancelled = isCancelText(d.particulars); };
+  const paint = () => { read(); ['#sd-ref', '#sd-payee', '#sd-amt'].forEach((k) => { $(k).disabled = d.cancelled; }); $('#sd-form').classList.toggle('sd-cancelled', d.cancelled); };
+  ['#sd-date', '#sd-no', '#sd-ref', '#sd-payee', '#sd-part'].forEach((k) => { $(k).oninput = paint; });
+  const save = async () => {
+    read();
+    const err = headError(d, mine, m); if (err) return bad(err);
+    const amt = num($('#sd-amt').value);
+    if (!d.cancelled && !(amt > 0)) return bad('Enter the amount.');
+    const cur = ED.id ? mine.find((x) => x.id === ED.id) : null;
+    const rec = { ...(cur ? (({ id, ...r }) => r)(cur) : { lines: [], tax: { taxable: false }, officerId: '', note: '' }), lguId: lgu.id, acctId: acct.id, date: d.date, checkNo: d.checkNo,
+      ref: d.cancelled ? '' : d.ref, payee: d.cancelled ? '' : d.payee, particulars: d.cancelled ? 'Cancelled' : d.particulars, cancelled: d.cancelled, amount: d.cancelled ? 0 : r2(amt), amountSrc: 'rci' };
+    if (d.cancelled) { rec.lines = []; rec.tax = { taxable: false }; rec.officerId = ''; }
+    await saveCheck(c, rec, !ED.id);
+  };
+  wireCommon(c, save, () => ['#sd-date', '#sd-no', '#sd-ref', '#sd-payee', '#sd-part', '#sd-amt'].map((k) => $(k)).filter((el) => el && !el.disabled));
+  paint();
+}
+
+/* ---------- the CkDJ line: the entry (accounts, gross, tax); the check amount is fixed when it came from the RCI ---------- */
 function entryHtml(d, officers, editing, m) {
   const ln = (l, i) => `<div class="sd-ln" data-ln="${i}">
       <input class="input mono sd-code" list="sd-coa" value="${esc(l.code)}" placeholder="Code or title" aria-label="Account" title="${esc(l.name || '')}">
       <input class="input r sd-gross" inputmode="decimal" value="${l.gross === '' || l.gross === undefined ? '' : esc(money(l.gross))}" aria-label="Gross amount">
       ${i ? '<button class="btn sm sd-xl" type="button" aria-label="Remove account">✕</button>' : ''}</div>`;
   const tx = d.tax || {};
-  return `<div class="panel sd-pan" id="sd-form">${editing ? `<div class="cd-orhead"><h3 class="cer-h3">Edit Check No. ${esc(d.checkNo)}</h3><button class="btn sm" type="button" id="sd-del">Delete</button><button class="btn sm" type="button" id="sd-new">Cancel</button></div>` : ''}
-    <div class="sd-line">
-      <div class="sd-f sd-w-day"><label for="sd-date">Day</label><input class="input r" id="sd-date" inputmode="numeric" maxlength="2" value="${d.date ? +d.date.slice(8, 10) : ''}" title="${esc(monthLabel(m))}" aria-label="Day of ${esc(monthLabel(m))}"></div>
-      <div class="sd-f sd-w-no"><label for="sd-no">Check No.</label><input class="input mono" id="sd-no" value="${esc(d.checkNo)}"></div>
-      <div class="sd-f sd-w-ref"><label for="sd-ref">DV / Payroll</label><input class="input" id="sd-ref" value="${esc(d.ref)}"></div>
-      <div class="sd-f sd-w-txt"><label for="sd-payee">Payee</label><input class="input" id="sd-payee" value="${esc(d.payee)}"></div>
-      <div class="sd-f sd-w-txt"><label for="sd-part">Particulars</label><input class="input" id="sd-part" value="${esc(d.particulars)}" placeholder="or Cancelled"></div>
-      <div class="sd-f sd-w-amt"><label>Check Amount</label><div class="input cd-ro r" id="sd-chk"></div></div>
+  const fixed = d.amountSrc === 'rci';
+  return `<div class="panel sd-pan" id="sd-form">${editHead(d, editing)}
+    <div class="sd-line">${headHtml(d, m, 'Particulars')}
+      <div class="sd-f sd-w-amt"><label title="${fixed ? 'From the Report of Checks Issued' : 'Gross − Tax'}">Check Amount${fixed ? ' ·RCI' : ''}</label><div class="input cd-ro r" id="sd-chk"></div></div>
       <div class="sd-f sd-w-tax"><label for="sd-tax">Tax</label><button type="button" class="input cd-ro r sd-taxbtn" id="sd-tax" title="Tax Register">0.00</button></div>
       <div class="sd-f sd-w-acct"><div class="sd-acch"><label>Account</label><label class="r">Gross Amount</label><span></span></div>
         <div class="sd-accts">${d.lines.map(ln).join('')}<button type="button" class="sd-add" id="sd-addln">+ another account</button></div></div>
       <div class="sd-f sd-w-yn"><label for="sd-taxable">Taxable</label><select class="input" id="sd-taxable"><option value="0" ${tx.taxable ? '' : 'selected'}>No</option><option value="1" ${tx.taxable ? 'selected' : ''}>Yes</option></select></div>
       <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="sd-save">${editing ? 'Save' : 'Enter'}</button></div>
     </div>
+    <div class="sd-tally" id="sd-tally" hidden></div>
     <div class="sd-offrow" id="sd-offbox" hidden><label for="sd-off">Cash advance of</label><select class="input" id="sd-off"><option value="">— Officer —</option>${officers.map((o) => `<option value="${esc(o.id)}" ${o.id === d.officerId ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div>
   </div>`;
 }
 
 function wireEntry(c) {
-  const { refs, lgu, acct, mine, coa, names, m, rerender } = c;
-  // The day only: the month and year are the ones chosen at the top.
-  const lastDay = new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
-  const dateOf = (v) => { const n = parseInt(String(v || '').trim(), 10); return n >= 1 && n <= lastDay ? `${m}-${String(n).padStart(2, '0')}` : ''; };
+  const { lgu, acct, mine, coa, names, m, rerender } = c;
   const d = ED.d;
   if (!$('#sd-form')) return;
   if (!$('#sd-coa')) { const dl = document.createElement('datalist'); dl.id = 'sd-coa'; dl.innerHTML = coa.accounts.map(([k, t]) => `<option value="${esc(k)}">${esc(t)}</option>`).join(''); document.body.appendChild(dl); }
+  const fixed = d.amountSrc === 'rci';
   // A typed code or title becomes the code; the name follows the Chart of Accounts.
   const toCode = (v) => { const t = String(v || '').trim(); if (names[t]) return t; const hit = coa.accounts.find(([, n]) => n.toLowerCase() === t.toLowerCase()); return hit ? hit[0] : t; };
   const read = () => {
-    d.date = dateOf($('#sd-date').value); d.checkNo = $('#sd-no').value.trim(); d.ref = $('#sd-ref').value.trim(); d.payee = $('#sd-payee').value.trim(); d.particulars = $('#sd-part').value.trim();
+    d.date = dateIn(m, $('#sd-date').value); d.checkNo = $('#sd-no').value.trim(); d.ref = $('#sd-ref').value.trim(); d.payee = $('#sd-payee').value.trim(); d.particulars = $('#sd-part').value.trim();
     d.cancelled = isCancelText(d.particulars); d.officerId = $('#sd-off').value;
     const g0 = grossOf(d);
     d.lines = $$('.sd-ln').map((el) => { const code = toCode($('.sd-code', el).value); return { code, name: names[code] || '', gross: num($('.sd-gross', el).value) ?? '' }; });
@@ -237,6 +311,7 @@ function wireEntry(c) {
     if (!taxable) d.tax = { taxable: false };
     else { d.tax = { ...d.tax, taxable: true }; if (grossOf(d) !== g0) { d.tax.main = null; d.tax.one = null; } }   // a new gross: the tax is computed again
   };
+  const net = () => r2(grossOf(d) - taxOf(d).amount);
   const paint = () => {
     read();
     $$('.sd-ln').forEach((el, i) => { const l = d.lines[i]; $('.sd-code', el).title = l.name || (l.code ? 'Not in the Chart of Accounts' : ''); $('.sd-code', el).classList.toggle('sd-bad', !!l.code && !l.name); });
@@ -246,17 +321,16 @@ function wireEntry(c) {
     $('#sd-form').classList.toggle('sd-cancelled', off);
     $('#sd-tax').textContent = money(taxOf(d).amount) || '0.00';
     $('#sd-tax').classList.toggle('sd-need', !off && d.tax.taxable && d.tax.vat !== true && d.tax.vat !== false);
-    $('#sd-chk').textContent = off ? '0.00' : money(checkAmountOf(d));
+    $('#sd-chk').textContent = off ? '0.00' : money(fixed ? r2(d.amount) : net());
+    const tl = $('#sd-tally'), diff = fixed && !off && grossOf(d) ? r2(net() - r2(d.amount)) : 0;
+    tl.hidden = !diff; tl.textContent = diff ? `Gross − Tax = ₱${money(net())}; the check is ₱${money(r2(d.amount))} (difference ₱${money(diff)}).` : '';
     $('#sd-offbox').hidden = off || !d.lines.some((l) => CA_CODES.includes(l.code));
   };
   const openTax = async () => { read(); if (!grossOf(d)) { bad('Enter the gross amount first.'); $('#sd-taxable').value = '0'; paint(); return false; }
     const t = await taxModal(d); if (t) d.tax = t; else if (d.tax.vat !== true && d.tax.vat !== false) { d.tax = { taxable: false }; $('#sd-taxable').value = '0'; } paint(); return !!t; };
   const save = async () => {
     read();
-    if (!d.date) return bad(`Enter the day (1 to ${lastDay}).`);
-    if (!chkNo(d.checkNo)) return bad('Enter the check No.');
-    const dup = mine.find((x) => x.id !== ED.id && chkNo(x.checkNo) === chkNo(d.checkNo));
-    if (dup) return bad(`Check No. ${d.checkNo} is already in the journal (${fmtDate(dup.date)}).`);
+    const err = headError(d, mine, m); if (err) return bad(err);
     let lines = d.lines.filter((l) => l.code || l.gross !== '');
     if (!d.cancelled) {
       if (!lines.length) return bad('Enter the account and the gross amount.');
@@ -264,19 +338,16 @@ function wireEntry(c) {
       if (lines.some((l) => !names[l.code])) return bad(`${lines.find((l) => !names[l.code]).code} is not in the Chart of Accounts.`);
       if (lines.some((l) => !(+l.gross > 0))) return bad('Enter the gross amount of each account.');
       if (d.tax.taxable && d.tax.vat !== true && d.tax.vat !== false && !taxOf(d).amount) { if (!(await openTax())) return; }
-      if (checkAmountOf({ ...d, lines }) < 0) return bad('The tax is more than the gross amount.');
+      if (net() < 0) return bad('The tax is more than the gross amount.');
       if (lines.some((l) => CA_CODES.includes(l.code)) && !d.officerId) return bad('Choose the officer of the cash advance.');
     } else lines = [];
-    const rec = { lguId: lgu.id, acctId: acct.id, date: d.date, checkNo: d.checkNo, ref: d.cancelled ? '' : d.ref, payee: d.cancelled ? '' : d.payee, particulars: d.cancelled ? 'Cancelled' : d.particulars,
+    const cur = ED.id ? mine.find((x) => x.id === ED.id) : null;
+    const rec = { ...(cur ? (({ id, ...r }) => r)(cur) : {}), lguId: lgu.id, acctId: acct.id, date: d.date, checkNo: d.checkNo, ref: d.cancelled ? '' : d.ref, payee: d.cancelled ? '' : d.payee, particulars: d.cancelled ? 'Cancelled' : d.particulars,
       lines: lines.map((l) => ({ code: l.code, name: names[l.code], gross: r2(l.gross) })), tax: d.cancelled ? { taxable: false } : d.tax, cancelled: d.cancelled,
-      officerId: lines.some((l) => CA_CODES.includes(l.code)) ? d.officerId : '', note: d.note || '' };
-    const id = ED.id || newId('ckdj'), wasNew = !ED.id;
-    // Next check: same date, the next check No.
-    ED.id = ''; ED.d = wasNew ? blankCheck(rec.date, nextNo(rec.checkNo)) : null;
-    await store.save('src_ckdj', id, rec, by(refs));
-    toast(`Check No. ${rec.checkNo} saved.`, 'ok');
-    const mm = rec.date.slice(0, 7); if (mm !== (new URLSearchParams(location.hash.split('?')[1] || '').get('m') || today().slice(0, 7))) go({ m: mm });
-    setTimeout(() => { const el = $('#sd-ref'); if (el) el.focus(); }, 60);
+      officerId: lines.some((l) => CA_CODES.includes(l.code)) ? d.officerId : '', note: d.note || (cur && cur.note) || '' };
+    // Encoded here first: the check amount is gross − tax (it shows in the RCI); from the RCI: it stays as typed there.
+    if (fixed && !d.cancelled) { rec.amount = r2(d.amount); rec.amountSrc = 'rci'; } else { rec.amount = d.cancelled ? 0 : net(); rec.amountSrc = 'ckdj'; }
+    await saveCheck(c, rec, !ED.id);
   };
   $$('.sd-ln input').forEach((el) => { el.oninput = paint; el.onchange = () => { if (el.classList.contains('sd-code')) el.value = toCode(el.value); paint(); }; });
   $$('.sd-xl').forEach((b) => { b.onclick = () => { read(); d.lines.splice(+b.closest('.sd-ln').dataset.ln, 1); rerender(); }; });
@@ -285,23 +356,7 @@ function wireEntry(c) {
   $('#sd-taxable').onchange = async () => { paint(); if ($('#sd-taxable').value === '1' && d.tax.vat !== true && d.tax.vat !== false) await openTax(); };
   $('#sd-tax').onclick = () => { if ($('#sd-taxable').value === '1') openTax(); };
   $('#sd-addln').onclick = () => { read(); d.lines.push(blankLine()); rerender(); setTimeout(() => { const all = $$('.sd-code'); if (all.length) all[all.length - 1].focus(); }, 0); };
-  if ($('#sd-new')) $('#sd-new').onclick = () => { ED.id = ''; ED.d = null; rerender(); };
-  if ($('#sd-del')) $('#sd-del').onclick = async () => {
-    const ok = await modal({ title: 'Delete this check?', body: `<p style="margin:0">Delete Check No. <b>${esc(d.checkNo)}</b> from the journal?</p>`, buttons: [{ label: 'Cancel', value: false }, { label: 'Delete', cls: 'danger', value: true }] });
-    if (!ok) return;
-    const cur = mine.find((x) => x.id === ED.id); const { id, ...rec } = cur;
-    await store.save('src_ckdj', id, rec, by(refs), { deleted: true }); ED.id = ''; ED.d = null; toast('Check deleted.', 'ok');
-  };
-  $('#sd-save').onclick = save;
-  // Enter moves to the next box; on the gross amount, Taxable or the button it saves.
-  const order = () => ['#sd-date', '#sd-no', '#sd-ref', '#sd-payee', '#sd-part', ...$$('.sd-ln').flatMap((el, i) => [`.sd-ln[data-ln="${i}"] .sd-code`, `.sd-ln[data-ln="${i}"] .sd-gross`]), '#sd-taxable'].map((k) => $(k)).filter((el) => el && !el.disabled);
-  $('#sd-form').onkeydown = (e) => {
-    if (e.key !== 'Enter' || e.target.tagName === 'BUTTON') return;
-    e.preventDefault();
-    const els = order(), i = els.indexOf(e.target);
-    if (e.target.id === 'sd-taxable' || (e.target.id === 'sd-part' && isCancelText(e.target.value)) || i < 0 || i === els.length - 1) { save(); return; }
-    els[i + 1].focus();
-  };
+  wireCommon(c, save, () => ['#sd-date', '#sd-no', '#sd-ref', '#sd-payee', '#sd-part', ...$$('.sd-ln').flatMap((el, i) => [`.sd-ln[data-ln="${i}"] .sd-code`, `.sd-ln[data-ln="${i}"] .sd-gross`]), '#sd-taxable'].map((k) => $(k)).filter((el) => el && !el.disabled));
   paint();
 }
 

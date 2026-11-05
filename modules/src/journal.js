@@ -1,7 +1,8 @@
 // Source Documents · Check Disbursements Journal: the data, shared with Cash Examination.
 //
 // Record:
-//   src_ckdj  one check  { lguId, acctId (bank account: cer_settings banks|<lguId>), date, checkNo, ref (DV / payroll No.), payee,
+//   src_ckdj  one check  { lguId, acctId (bank account: cer_settings banks|<lguId>), date, checkNo, ref (DV / payroll No.), payee, amount
+//                          (check amount, from the Report of Checks Issued, encoded first),
 //                          particulars, lines[{ code, name, gross }], tax: { taxable, vat (true / false; null when imported),
 //                          main (5% or 3%, typed when rounded; empty = computed), one (1%, same) }, cancelled, officerId (for a
 //                          cash advance), note (auditor's note) }
@@ -36,7 +37,12 @@ export function taxOf(c) {
   return { ...none, amount: r2(t.amount || 0), main: r2(t.amount || 0) };
 }
 export const isTaxable = (c) => !c.cancelled && (!!(c.tax || {}).taxable || taxOf(c).amount > 0);
-export const checkAmountOf = (c) => (c.cancelled ? 0 : r2(grossOf(c) - taxOf(c).amount));
+// The check amount: as typed in the Report of Checks Issued (amount); older entries without it: gross − tax.
+export const hasAmount = (c) => c.amount !== undefined && c.amount !== null && c.amount !== '';
+export const checkAmountOf = (c) => (c.cancelled ? 0 : hasAmount(c) ? r2(c.amount) : r2(grossOf(c) - taxOf(c).amount));
+// The journal entry (accounts and gross amounts) is filled; it tallies when gross − tax = the check amount.
+export const hasEntry = (c) => (c.lines || []).some((l) => l.code && +l.gross > 0);
+export const tallies = (c) => !hasAmount(c) || Math.abs(r2(grossOf(c) - taxOf(c).amount) - r2(c.amount)) < 0.005;
 export const caGrossOf = (c) => r2((c.lines || []).filter((l) => CA_CODES.includes(l.code)).reduce((n, l) => n + (+l.gross || 0), 0));
 export const isCa = (c) => !c.cancelled && caGrossOf(c) > 0;
 export const chkNo = (v) => +String(v ?? '').replace(/\D/g, '') || 0;
