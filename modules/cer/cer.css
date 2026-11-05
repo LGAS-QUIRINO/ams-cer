@@ -779,3 +779,4 @@ table.rp-rsa{max-width:640px; margin:14px auto}
 .sd-vat{display:flex; gap:18px; padding-top:8px}
 .sd-flag{display:block; color:#9a5300; font-size:12px; margin-bottom:3px}
 .sd-notec{min-width:150px}
+.pill.p-nm{background:#fff3e0; color:#9a5300; border:1px solid #f2c48a; cursor:help}
