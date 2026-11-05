@@ -840,3 +840,4 @@ table.rp-rsa{max-width:640px; margin:14px auto}
 .lq-t td:nth-child(4){min-width:0} .lq-t td.lq-flags{min-width:0; max-width:none}
 .lq-t tbody td:first-child{white-space:nowrap; overflow-wrap:normal} .lq-t td small.lq-off, .lq-t td.lq-flags{overflow-wrap:normal}
 .lq-t td small.lq-off{font-size:10px; overflow-wrap:anywhere}
+.sd-done{color:#1f7a3d; font-size:13px; font-weight:600} .sd-done a{color:var(--blue, #1f4fd1); margin-left:2px}

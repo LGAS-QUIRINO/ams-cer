@@ -15,6 +15,7 @@ import { caAcct } from '../cer/funds.js';
 import { liqText } from '../cer/advances.js';
 import { listAdvances, CA_CODES, chkNo } from './journal.js';
 import { outButtons, wireOut } from './rciout.js';
+import { focusAfter } from './focus.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -27,6 +28,11 @@ const blank = (type = 'liq', date = '') => ({ type, date, ref: '', advanceId: ''
 const lastDayOf = (m) => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
 const dateIn = (m, v) => { const n = parseInt(String(v || '').trim(), 10); return n >= 1 && n <= lastDayOf(m) ? `${m}-${String(n).padStart(2, '0')}` : ''; };
 export const debitsOf = (l) => (l.type === 'refund' ? [{ code: CASH, amount: r2(l.amount) }] : (l.lines || []));
+const noEntryL = (l) => l.type !== 'refund' && !(l.lines || []).length;
+// A liquidation loaded in the entry line; with no entry yet, the debit amount starts as the liquidation amount.
+const loadL = (l, credit) => ({ type: l.type === 'refund' ? 'refund' : 'liq', date: l.date, ref: l.ref || '', advanceId: l.advanceId, credit,
+  lines: l.type === 'refund' ? [{ code: CASH, amount: l.amount }] : (l.lines && l.lines.length ? l.lines.map((x) => ({ code: x.code, amount: x.amount })) : [{ code: '', amount: l.amount }]) });
+const goM = (mm) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); q.set('m', mm); location.hash = '#/src?' + q.toString(); };
 const sumOf = (ls) => r2(ls.reduce((n, x) => n + (+x.amount || 0), 0));
 
 export async function liqView(c) {
@@ -97,8 +103,14 @@ export async function liqView(c) {
       <td${rs} class="af-noprint lq-flags">${fl.map((t) => `<span class="sd-flag">${esc(t)}</span>`).join('')}${enc ? `<button class="btn sm ${fl.includes('No entry yet') ? 'primary' : ''}" type="button" data-lqedit="${esc(l.id)}">${fl.includes('No entry yet') ? 'Fill entry' : 'Edit'}</button>` : ''}</td></tr>`;
     return first + deb.slice(1).map((x) => `<tr${on}>${dc(x)}</tr>`).join('');
   }).join('');
+  // Fill next entry: the liquidations of the month with no entry yet; when none is left, the next month that has some.
+  const blanks = list.filter(noEntryL);
+  const nm = (() => { const by = new Map(); liqsAll.filter((l) => noEntryL(l) && acctOfLiq(l) === acct.id).forEach((l) => { const k = String(l.date || '').slice(0, 7); if (k && k !== m) by.set(k, (by.get(k) || 0) + 1); });
+    const ks = [...by.keys()].sort(), k = ks.find((x) => x > m) || ks[0]; return k ? { m: k, n: by.get(k) } : null; })();
+  const fillHead = blanks.length ? `<button class="btn sm primary" type="button" id="lq-fillnext" data-id="${esc((blanks.find((l) => l.id !== LQ.id) || blanks[0]).id)}">Fill next entry (${blanks.length} left)</button>`
+    : list.length ? `<span class="sd-done">✓ All entries filled for ${esc(monthLabel(m))}${nm ? ` · <a href="#" id="lq-nextm" data-m="${nm.m}">Next: ${esc(monthLabel(nm.m))} (${nm.n} left) →</a>` : ''}</span>` : '';
   const inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Liquidation Journal · ${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
-      ${enc ? '<a href="#" class="cd-link" id="lq-tpl">Template</a><button class="btn sm" type="button" id="lq-imp">Import from Excel</button>' : ''}${outButtons('lq')}</div>
+      ${enc ? fillHead : ''}${enc ? '<a href="#" class="cd-link" id="lq-tpl">Template</a><button class="btn sm" type="button" id="lq-imp">Import from Excel</button>' : ''}${outButtons('lq')}</div>
     <div class="rp-doc"><div class="rp-page rp-wide lq-page"><h2 class="rp-title">LIQUIDATION JOURNAL</h2>
       <p class="c"><b>${esc(agencyName(refs, lgu))}</b><br>${esc(acctLabel(acct))}<br>${esc(monthLabel(m))}</p>
       <table class="rp-t lq-t"><colgroup>${[8, 7, 6.5, 12.5, 7.5, 11, 7.5, 7.5, 10, 7.5, 6.5, 8.5].map((w) => `<col style="width:${w}%">`).join('')}</colgroup><thead><tr><th rowspan="2">Date</th><th rowspan="2">Type</th><th rowspan="2">LR No. / OR No.</th><th rowspan="2">Particulars</th><th colspan="3" class="lq-g">DEBIT</th><th colspan="3" class="lq-g">CREDIT</th><th rowspan="2">For Check No.</th><th rowspan="2" class="af-noprint">Flags</th></tr>
@@ -121,12 +133,11 @@ export async function liqView(c) {
 
   const wire = () => {
     wireOut('lq', spec, `Liquidation Journal ${agencyName(refs, lgu)} ${acct.accountNo || ''} ${m}`, (msg) => toast(msg, 'bad'));
-    $$('[data-lqedit]').forEach((b) => { b.onclick = () => {
-      const l = list.find((x) => x.id === b.dataset.lqedit); LQ.id = l.id;
-      LQ.d = { type: l.type === 'refund' ? 'refund' : 'liq', date: l.date, ref: l.ref || '', advanceId: l.advanceId, credit: creditOf(l),
-        lines: l.type === 'refund' ? [{ code: CASH, amount: l.amount }] : (l.lines && l.lines.length ? l.lines.map((x) => ({ code: x.code, amount: x.amount })) : [{ code: '', amount: l.amount }]) };
-      rerender(); setTimeout(() => { const f = $('#lq-form'); if (f) f.scrollIntoView({ block: 'start' }); const el = $('.sd-code') || $('#lq-rfamt'); if (el) el.focus(); }, 0);
-    }; });
+    const startL = (id) => { const l = list.find((x) => x.id === id); LQ.id = l.id; LQ.d = loadL(l, creditOf(l));
+      focusAfter('#lq-form', l.type === 'refund' ? '#lq-rfamt' : '.sd-code', true); rerender(); };
+    $$('[data-lqedit]').forEach((b) => { b.onclick = () => startL(b.dataset.lqedit); });
+    if ($('#lq-fillnext')) $('#lq-fillnext').onclick = () => startL($('#lq-fillnext').dataset.id);
+    if ($('#lq-nextm')) $('#lq-nextm').onclick = (e) => { e.preventDefault(); LQ.id = ''; LQ.d = null; goM($('#lq-nextm').dataset.m); };
     if ($('#lq-tpl')) $('#lq-tpl').onclick = async (e) => { e.preventDefault();
       try { const XLSX = await loadXlsx(); const ws = XLSX.utils.aoa_to_sheet([['Type', 'Date', 'LR No. / OR No.', 'For Check No.', 'Account Code', 'Amount'], ['Liquidation', '12/11/2025', 'LR 2025-12-001', '1894958', '5-02-01-010', 60000], ['', '', 'LR 2025-12-001', '1894958', '5-02-03-010', 42173], ['Refund', '12/12/2025', '3764120', '1894958', '', 500]]);
         ws['!cols'] = [12, 12, 18, 14, 14, 14].map((w) => ({ wch: w })); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Liquidations'); XLSX.writeFile(wb, 'Liquidation Journal Template.xlsx'); } catch (err) { toast(err.message || String(err), 'bad'); } };
@@ -179,15 +190,21 @@ export async function liqView(c) {
       const rec = { ...(cur ? strip(cur) : { particulars: '' }), lguId: lgu.id, officerId: a ? a.officerId : (cur && cur.officerId) || '', type: d.type, date: d.date, ref: d.ref, advanceId: d.advanceId, amount,
         lines: d.type === 'refund' ? [] : lines.map((l) => ({ code: l.code, name: names[l.code], amount: r2(l.amount) })), credit: d.credit };
       const id = LQ.id || newId('cerlq'), was = !LQ.id;
-      LQ.id = ''; LQ.d = was ? blank(d.type, d.date) : null;
+      // Filling one that had no entry: the next one of the month with no entry opens.
+      let next = null;
+      if (cur && noEntryL(cur)) { const i = list.findIndex((x) => x.id === cur.id); next = [...list.slice(i + 1), ...list.slice(0, i)].find((x) => x.id !== cur.id && noEntryL(x)) || null; }
+      LQ.id = next ? next.id : ''; LQ.d = next ? loadL(next, creditOf(next)) : was ? blank(d.type, d.date) : null;
+      focusAfter('#lq-form', next ? '.sd-code' : '#lq-ref', !!next);
       await store.save('cer_liquid', id, rec, by(refs));
-      toast(`${d.type === 'refund' ? 'Refund' : 'Liquidation'} ${d.ref} saved.`, 'ok');
-      setTimeout(() => { const el = $('#lq-ref'); if (el) el.focus(); }, 60);
+      toast(`${d.type === 'refund' ? 'Refund' : 'Liquidation'} ${d.ref} saved.${next ? ` Next: ${next.ref || ''}.` : ''}`, 'ok');
     };
     $('#lq-save').onclick = save;
     $('#lq-form').onkeydown = (e) => {
       if (e.key !== 'Enter' || e.target.tagName === 'BUTTON') return;
       e.preventDefault();
+      // Enter in a debit box saves when every debit is complete and, for one already in, they add up to its amount.
+      if (e.target.matches('.sd-code, .sd-gross')) { read(); const cur = LQ.id ? list.find((x) => x.id === LQ.id) : null;
+        if (d.date && d.ref && d.advanceId && d.lines.length && d.lines.every((l) => l.code && names[l.code] && +l.amount > 0) && (!cur || Math.abs(sumOf(d.lines) - r2(cur.amount)) < 0.005)) { save(); return; } }
       const els = ['#lq-day', '#lq-ref', '#lq-for', ...$$('#lq-form .sd-code, #lq-form .sd-gross').map((el) => el), '#lq-cr'].map((k) => (typeof k === 'string' ? $(k) : k)).filter(Boolean);
       const i = els.indexOf(e.target); if (i < 0 || i === els.length - 1) { save(); return; } els[i + 1].focus();
     };
