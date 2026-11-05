@@ -301,15 +301,15 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <td>${enc ? '<button class="btn sm cd-x" type="button" aria-label="Remove deposit">✕</button>' : ''}</td></tr>`;
   const agree = !cur.pending && cur.rec.hardTotal !== null && cur.rec.hardTotal !== undefined && cur.rec.hardTotal !== '' ? (Math.abs(+cur.rec.hardTotal - cur.coll) < 0.005 ? '<span class="pill p-done">Agrees with hard copy</span>' : `<span class="pill p-stock">Hard copy ₱${money(cur.rec.hardTotal)}</span>`) : '';
   const lo = isLO ? loDays(f, o, fig.chains, audit.countDate) : [];
-  // Deposits register: every deposit (remittance, for the SCR) of this officer, oldest first; a row opens its report.
+  // Deposits register (SCD / RCD) and Remittances register (SCR), kept apart: those of the kind shown, oldest first; a row opens its report.
   const allDeps = [];
-  fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind)).forEach((k) => { const ch = fig.chains[k]; [...ch.figs, ch.pend].forEach((g) => (g.rec?.deposits || []).forEach((d) => allDeps.push({ ...d, g, kind: ch.kind, fund: ch.fund }))); });
+  fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind) && (fig.chains[k].kind === 'SCR') === isRem).forEach((k) => { const ch = fig.chains[k]; [...ch.figs, ch.pend].forEach((g) => (g.rec?.deposits || []).forEach((d) => allDeps.push({ ...d, g, kind: ch.kind, fund: ch.fund }))); });
   allDeps.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.ref).localeCompare(String(b.ref)));
   const shownDeps = DEPSHOW.v === 'sel' ? allDeps.filter((d) => d.g.id === selId) : allDeps;
   const depReg = `<div class="cd-block cd-depreg"><div class="cd-orhead"><h3 class="cer-h3">${isRem ? 'Remittances' : 'Deposits'} register</h3><span class="pill">${shownDeps.length}</span>
       <label class="sr-only" for="cd-depshow">Show</label><select class="input af-sm" id="cd-depshow"><option value="all" ${DEPSHOW.v !== 'sel' ? 'selected' : ''}>All of this officer</option><option value="sel" ${DEPSHOW.v === 'sel' ? 'selected' : ''}>${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</option></select>
       <button class="btn sm" type="button" id="cd-depxls">Export to Excel</button></div>
-    ${shownDeps.length ? `<div class="af-tbl cd-depscroll"><table class="af-reg cd-deptbl"><thead><tr><th scope="col">Date</th><th scope="col">Reference</th><th scope="col" class="r">Amount (₱)</th><th scope="col">${KS0}</th><th scope="col">Fund</th></tr></thead>
+    ${shownDeps.length ? `<div class="af-tbl cd-depscroll"><table class="af-reg cd-deptbl"><thead><tr><th scope="col">Date</th><th scope="col">${isRem ? 'Liquidating Officer' : 'Reference'}</th><th scope="col" class="r">Amount (₱)</th><th scope="col">${isRem ? 'SCR' : usedKinds.filter((k) => k !== 'SCR').join(' / ')}</th><th scope="col">Fund</th></tr></thead>
       <tbody>${shownDeps.map((d) => `<tr data-pickdep="${esc(d.g.id)}" tabindex="0" class="${d.g.id === selId ? 'cd-on' : ''}"><td>${esc(fmtDate(d.date))}</td><td class="mono">${esc(depRefText(d, d.kind === 'SCR'))}</td><td class="r">${money(+d.amount || 0)}</td><td>${esc(d.g.pending ? `Not yet in an ${d.kind}` : repName(d.g.rec, d.kind))}</td><td>${esc(d.fund)}</td></tr>`).join('')}</tbody>
       <tfoot><tr class="cd-foot"><td colspan="2">Total</td><td class="r">${money(r2(shownDeps.reduce((n, d) => n + (+d.amount || 0), 0)))}</td><td colspan="2"></td></tr></tfoot></table></div>`
       : `<div class="empty"><b>No ${isRem ? 'remittance' : 'deposit'} encoded yet.</b></div>`}</div>`;
@@ -365,7 +365,7 @@ function wireAll(c) {
   $('#cd-funds').onclick = () => fundsModal(refs, f, audit.lguId);
   const ds = $('#cd-depshow'); if (ds) ds.onchange = () => { DEPSHOW.v = ds.value; window.dispatchEvent(new HashChangeEvent('hashchange')); };
   $$('tr[data-pickdep]').forEach((tr) => { const pick = () => go({ r: tr.dataset.pickdep }); tr.onclick = pick; tr.onkeydown = (e) => { if (e.key === 'Enter') pick(); }; });
-  const dx = $('#cd-depxls'); if (dx) dx.onclick = () => exportXlsx(`Deposits ${c.o.name}.xlsx`, 'Deposits', $$('.cd-deptbl tbody tr').map((tr) => { const t = [...tr.children].map((td) => td.textContent.trim()); return { Date: t[0], Reference: t[1], Amount: num(t[2]), Report: t[3], Fund: t[4] }; }));
+  const dx = $('#cd-depxls'); if (dx) dx.onclick = () => { const rem = c.K === 'SCR'; exportXlsx(`${rem ? 'Remittances' : 'Deposits'} ${c.o.name}.xlsx`, rem ? 'Remittances' : 'Deposits', $$('.cd-deptbl tbody tr').map((tr) => { const t = [...tr.children].map((td) => td.textContent.trim()); return { Date: t[0], [rem ? 'Liquidating Officer' : 'Reference']: t[1], Amount: num(t[2]), Report: t[3], Fund: t[4] }; })); };
   $$('tr[data-pick]').forEach((tr) => { const pick = () => go({ r: tr.dataset.pick }); tr.onclick = pick; tr.onkeydown = (e) => { if (e.key === 'Enter') pick(); }; });
   const sumX = () => exportXlsx(`${K} Summary ${o.name} ${audit.countDate}.xlsx`, `${K} Summary`, c.allFigs.map((g) => ({
     [`${K}`]: g.pending ? 'Not yet in a report' : repName(g.rec, g.kind), [`${K} No.`]: g.pending ? '' : g.rec.no, Fund: g.pending ? g.fund : g.rec.fund, [`${K} Date`]: g.pending ? '' : fmtDate(g.rec.date), 'Period From': fmtDate(g.from), 'Period To': fmtDate(g.to),
