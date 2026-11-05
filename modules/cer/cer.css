@@ -750,3 +750,7 @@ table.rp-rsa{max-width:640px; margin:14px auto}
 .sd-tbl td:nth-child(4){min-width:140px}
 .sd-pan .cd-orhead{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
 .sd-pan .cd-orhead .btn:first-of-type{margin-left:auto}
+.panel.sd-top{display:grid; grid-template-columns:minmax(220px,1.3fr) minmax(220px,1.5fr) 150px 110px auto; gap:12px; align-items:end; padding:14px 18px; margin-bottom:14px}
+.sd-top .btn{height:42px}
+@media (max-width:1000px){.panel.sd-top{grid-template-columns:1fr 1fr}}
+@media (max-width:600px){.panel.sd-top{grid-template-columns:1fr}}

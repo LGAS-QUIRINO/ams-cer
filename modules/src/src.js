@@ -41,25 +41,37 @@ async function journalView(ctx) {
   const enc = canEncode(refs);
   const [settings0, jr, officers0, books0, coa] = await Promise.all([store.list('cer_settings'), loadJournal(), store.list('cer_officers'), store.list('cer_booklets'), loadCoa()]);
   const settings = Object.fromEntries(settings0.map((s) => [s.id, s.data]));
-  const lgus = Object.values(refs.lgu).filter((l) => mayView(refs, l)).sort((a, b) => agencyName(refs, a).localeCompare(agencyName(refs, b)));
+  // Offices sorted by municipality: the province, then each municipality followed by its barangays.
+  const munOf = (l) => (l.data.kind === 'barangay' ? refs.lgu[l.data.parentId] : l.data.kind === 'municipality' ? l : null);
+  const sortKey = (l) => { const mu = munOf(l); return [l.data.kind === 'province' ? '0' : '1', mu ? mu.data.name : '', l.data.kind === 'barangay' ? '1' + l.data.name : '0'].join('|'); };
+  const lgus = Object.values(refs.lgu).filter((l) => mayView(refs, l)).sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
+  const officeName = (l) => (l.data.kind === 'barangay' ? `${agencyName(refs, l)} · ${munOf(l)?.data.name || ''}` : agencyName(refs, l));
   if (!lgus.length) return { body: '<div class="panel"><div class="empty"><b>No LGU assigned to you.</b></div></div>' };
   const lgu = lgus.find((l) => l.id === q.get('l')) || lgus[0];
   const accounts = settings['banks|' + lgu.id]?.list || [];
   const funds = settings['funds|' + lgu.id]?.list || DEFAULT_FUNDS;
   const acct = accounts.find((x) => x.id === q.get('acct')) || accounts[0] || null;
-  const m = /^\d{4}-\d{2}$/.test(q.get('m') || '') ? q.get('m') : today().slice(0, 7);
+  const m = /^\d{4}-\d{2}$/.test(q.get('m') || '') && +q.get('m').slice(0, 4) > 1990 ? q.get('m') : today().slice(0, 7);
+  const yNow = +today().slice(0, 4), years = []; for (let y = yNow + 1; y >= yNow - 6; y--) years.push(y);
   const tab = ['ckdj', 'tax', 'rci'].includes(q.get('tab')) ? q.get('tab') : 'ckdj';
-  const top = `<div class="panel cd-bar"><div class="field"><label for="sd-lgu">LGU</label><select class="input" id="sd-lgu">${lgus.map((l) => `<option value="${esc(l.id)}" ${l.id === lgu.id ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
-      <div class="field"><label for="sd-acct">Bank Account</label><select class="input" id="sd-acct">${accounts.length ? accounts.map((x) => `<option value="${esc(x.id)}" ${acct && x.id === acct.id ? 'selected' : ''}>${esc(acctLabel(x))}</option>`).join('') : '<option value="">No bank account yet</option>'}</select></div>
-      <div class="field"><label for="sd-m">Month</label><input class="input" type="month" id="sd-m" value="${esc(m)}"></div>
-      <button class="btn" type="button" id="sd-accts">Bank Accounts (${accounts.length})</button></div>`;
+  const top = `<div class="panel sd-top"><div class="field sd-office"><label for="sd-lgu">Office</label><input class="input" id="sd-lgu" list="sd-lgus" value="${esc(officeName(lgu))}" placeholder="Type the barangay or municipality" autocomplete="off">
+        <datalist id="sd-lgus">${lgus.map((l) => `<option value="${esc(officeName(l))}">`).join('')}</datalist></div>
+      <div class="field sd-acctf"><label for="sd-acct">Bank Account</label><select class="input" id="sd-acct">${accounts.length ? accounts.map((x) => `<option value="${esc(x.id)}" ${acct && x.id === acct.id ? 'selected' : ''}>${esc(acctLabel(x))}</option>`).join('') : '<option value="">No bank account yet</option>'}</select></div>
+      <div class="field"><label for="sd-mo">Month</label><select class="input" id="sd-mo">${MONTHS.map((n, i) => `<option value="${String(i + 1).padStart(2, '0')}" ${+m.slice(5, 7) === i + 1 ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+      <div class="field"><label for="sd-yr">Year</label><select class="input" id="sd-yr">${(years.includes(+m.slice(0, 4)) ? years : [+m.slice(0, 4), ...years]).map((y) => `<option ${y === +m.slice(0, 4) ? 'selected' : ''}>${y}</option>`).join('')}</select></div>
+      <button class="btn sm" type="button" id="sd-accts" title="Bank Accounts">Bank Accounts (${accounts.length})</button></div>`;
   const wireTop = () => {
-    $('#sd-lgu').onchange = (e) => { ED.id = ''; ED.d = null; go({ l: e.target.value, acct: '' }); };
+    const pickOffice = (e) => { const v = e.target.value.trim().toLowerCase(); const l = lgus.find((x) => officeName(x).toLowerCase() === v) || (v ? lgus.filter((x) => officeName(x).toLowerCase().includes(v)) : []).find((x, i, all) => all.length === 1);
+      if (l && l.id !== lgu.id) { ED.id = ''; ED.d = null; go({ l: l.id, acct: '' }); } };
+    $('#sd-lgu').oninput = (e) => { if (lgus.some((x) => officeName(x) === e.target.value)) pickOffice(e); };
+    $('#sd-lgu').onchange = pickOffice;
+    $('#sd-lgu').onfocus = (e) => e.target.select();
     $('#sd-acct').onchange = (e) => { ED.id = ''; ED.d = null; go({ acct: e.target.value }); };
-    $('#sd-m').onchange = (e) => { if (e.target.value) go({ m: e.target.value }); };
+    const pickM = () => go({ m: `${$('#sd-yr').value}-${$('#sd-mo').value}` });
+    $('#sd-mo').onchange = pickM; $('#sd-yr').onchange = pickM;
     $('#sd-accts').onclick = () => accountsModal(refs, lgu.id, accounts, funds, enc);
   };
-  if (!acct) return { body: top + `<div class="panel"><div class="empty"><b>No bank account for ${esc(agencyName(refs, lgu))} yet.</b>${enc ? 'Add the accounts with <b>Bank Accounts</b> (bank, account No. and fund).' : ''}</div></div>`, wire: wireTop };
+  if (!acct) return { body: top + `<div class="panel"><div class="empty"><b>No bank account for ${esc(agencyName(refs, lgu))} yet.</b> ${enc ? 'Add the accounts with <b>Bank Accounts</b> (bank, account No. and fund).' : ''}</div></div>`, wire: wireTop };
 
   const names = Object.fromEntries(coa.accounts);
   const officers = officers0.map(flat).filter((o) => o.lguId === lgu.id).sort((a, b) => a.name.localeCompare(b.name));
