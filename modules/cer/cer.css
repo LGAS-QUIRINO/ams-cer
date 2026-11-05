@@ -841,3 +841,13 @@ table.rp-rsa{max-width:640px; margin:14px auto}
 .lq-t tbody td:first-child{white-space:nowrap; overflow-wrap:normal} .lq-t td small.lq-off, .lq-t td.lq-flags{overflow-wrap:normal}
 .lq-t td small.lq-off{font-size:10px; overflow-wrap:anywhere}
 .sd-done{color:#1f7a3d; font-size:13px; font-weight:600} .sd-done a{color:var(--blue, #1f4fd1); margin-left:2px}
+.sd-offrow select[hidden]{display:none} .sd-offrow{flex-wrap:wrap; font-size:13.5px}
+/* Unliquidated Cash Advances */
+.ul-bar{display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:14px}
+.ul-bar .field{margin:0} .ul-bar .ul-sp{flex:1}
+.ul-t tr.ul-fund td{background:#e8edf7; font-weight:700; letter-spacing:.03em}
+.ul-t tr.ul-person td{background:#f7f9fc; font-weight:700}
+.ul-t tr.ul-sub td{font-weight:700; background:#fbfcfe}
+.ul-t tr.ul-ftot td, .ul-t tr.ul-gtot td{font-weight:700; background:#f0f0f0}
+.ul-t td{white-space:nowrap} .ul-t td:nth-child(3){white-space:normal}
+.ul-t tr.ul-fund td, .ul-t tr.ul-person td{white-space:normal}

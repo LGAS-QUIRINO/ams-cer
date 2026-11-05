@@ -11,8 +11,9 @@ import { exportXlsx, loadXlsx, excelDate } from '../cer/forms.js';
 import { accountsModal, DEFAULT_FUNDS } from '../cer/banks.js';
 import { rciSpec, outButtons, wireOut } from './rciout.js';
 import { liqView } from './liq.js';
+import { unliqView } from './unliq.js';
 import { focusAfter } from './focus.js';
-import { loadCoa, loadJournal, CA_CODES, grossOf, taxOf, checkAmountOf, isCa, isTaxable, chkNo, hasEntry, tallies, hasAmount } from './journal.js';
+import { loadCoa, loadJournal, matchAo, CA_CODES, grossOf, taxOf, checkAmountOf, isCa, isTaxable, chkNo, hasEntry, tallies, hasAmount } from './journal.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -56,7 +57,7 @@ async function journalView(ctx) {
   const acct = accounts.find((x) => x.id === q.get('acct')) || accounts[0] || null;
   const m = /^\d{4}-\d{2}$/.test(q.get('m') || '') && +q.get('m').slice(0, 4) > 1990 ? q.get('m') : today().slice(0, 7);
   const yNow = +today().slice(0, 4), years = []; for (let y = yNow + 1; y >= yNow - 6; y--) years.push(y);
-  const tab = ['ckdj', 'tax', 'rci', 'liq'].includes(q.get('tab')) ? q.get('tab') : 'rci';
+  const tab = ['ckdj', 'tax', 'rci', 'liq', 'unl'].includes(q.get('tab')) ? q.get('tab') : 'rci';
   const top = `<div class="panel sd-top"><div class="field sd-office"><label for="sd-lgu">Office</label><input class="input" id="sd-lgu" list="sd-lgus" value="${esc(officeName(lgu))}" placeholder="Type the barangay or municipality" autocomplete="off">
         <datalist id="sd-lgus">${lgus.map((l) => `<option value="${esc(officeName(l))}">`).join('')}</datalist></div>
       <div class="field sd-acctf"><label for="sd-acct">Bank Account</label><select class="input" id="sd-acct">${accounts.length ? accounts.map((x) => `<option value="${esc(x.id)}" ${acct && x.id === acct.id ? 'selected' : ''}>${esc(acctLabel(x))}</option>`).join('') : '<option value="">No bank account yet</option>'}</select></div>
@@ -70,7 +71,7 @@ async function journalView(ctx) {
     $('#sd-lgu').onchange = pickOffice;
     $('#sd-lgu').onfocus = (e) => e.target.select();
     $('#sd-acct').onchange = (e) => { ED.id = ''; ED.d = null; go({ acct: e.target.value }); };
-    const pickM = () => go({ m: `${$('#sd-yr').value}-${$('#sd-mo').value}` });
+    const pickM = () => go({ m: `${$('#sd-yr').value}-${$('#sd-mo').value}`, asof: '' });
     $('#sd-mo').onchange = pickM; $('#sd-yr').onchange = pickM;
     $('#sd-accts').onclick = () => accountsModal(refs, lgu.id, accounts, funds, enc);
   };
@@ -82,7 +83,7 @@ async function journalView(ctx) {
   const inBook = (no) => { const n = chkNo(no); return !!n && chkBooks.some((b) => b.from <= n && n <= b.to); };
   const mine = jr.filter((c) => c.lguId === lgu.id && c.acctId === acct.id);
   const list = mine.filter((c) => String(c.date || '').startsWith(m)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || chkNo(a.checkNo) - chkNo(b.checkNo));
-  const tabs = `<div class="sd-tabs" role="tablist">${[['rci', 'Report of Checks Issued'], ['ckdj', 'Check Disbursements Journal'], ['tax', 'Tax Register'], ['liq', 'Liquidation Journal']].map(([k, t]) => `<button type="button" role="tab" class="sd-tab ${k === tab ? 'on' : ''}" data-tab="${k}" aria-selected="${k === tab}">${t}</button>`).join('')}</div>`;
+  const tabs = `<div class="sd-tabs" role="tablist">${[['rci', 'Report of Checks Issued'], ['ckdj', 'Check Disbursements Journal'], ['tax', 'Tax Register'], ['liq', 'Liquidation Journal'], ['unl', 'Unliquidated Cash Advances']].map(([k, t]) => `<button type="button" role="tab" class="sd-tab ${k === tab ? 'on' : ''}" data-tab="${k}" aria-selected="${k === tab}">${t}</button>`).join('')}</div>`;
   const totals = { g: r2(list.reduce((n, c) => n + (c.cancelled ? 0 : grossOf(c)), 0)), t: r2(list.reduce((n, c) => n + taxOf(c).amount, 0)), a: r2(list.reduce((n, c) => n + checkAmountOf(c), 0)) };
   const vatText = (c) => { const v = taxOf(c).vat; return v === true ? 'VAT' : v === false ? 'Non-VAT' : ''; };
   // The entry being typed: per tab (the RCI line, or the CkDJ line), a new check or the one being edited.
@@ -91,10 +92,13 @@ async function journalView(ctx) {
   if (ED.id && !mine.some((c) => c.id === ED.id)) Object.assign(ED, { id: '', d: null });
   if (!ED.d) ED.d = blankCheck('', '');
   const flagsOf = (c) => [inBook(c.checkNo) ? '' : 'Not in a checkbook', !c.cancelled && !hasEntry(c) ? 'No entry yet' : '', !c.cancelled && hasEntry(c) && !tallies(c) ? `Does not tally: gross − tax = ₱${money(r2(grossOf(c) - taxOf(c).amount))}` : '',
-    isCa(c) && !c.officerId ? 'Cash advance: no officer' : '', ...(c.lines || []).filter((l) => l.old).map((l) => `Old code ${l.old} (${l.oldName}): choose the new account`)].filter(Boolean);
+...(c.lines || []).filter((l) => l.old).map((l) => `Old code ${l.old} (${l.oldName}): choose the new account`)].filter(Boolean);
 
   let inner = '', lqWire = null;
-  if (tab === 'liq') {
+  if (tab === 'unl') {
+    const v = await unliqView({ refs, lgu, accounts, m, q, jr, books: chkBooks, enc });
+    inner = v.inner; lqWire = v.wire;
+  } else if (tab === 'liq') {
     const v = await liqView({ refs, lgu, acct, accounts, m, coa, names, jr, books: chkBooks, enc, monthLabel, acctLabel, rerender: ctx.rerender });
     inner = v.inner; lqWire = v.wire;
   } else if (tab === 'rci') {
@@ -174,7 +178,7 @@ async function journalView(ctx) {
     if ($('#sd-rtpl')) $('#sd-rtpl').onclick = async (e) => { e.preventDefault();
       try { const XLSX = await loadXlsx(); const ws = XLSX.utils.aoa_to_sheet([['Date', 'Check No.', 'DV / Payroll No.', 'Payee', 'Nature of Payment', 'Amount'], ['10/17/2025', '1894917', 'DV 2025-10-041', 'Juan Dela Cruz', 'Cash advance, Barangay Day', 10000], ['10/18/2025', '1894918', '', '', 'Cancelled', '']]);
         ws['!cols'] = [12, 12, 18, 28, 36, 14].map((w) => ({ wch: w })); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'RCI'); XLSX.writeFile(wb, 'RCI Template.xlsx'); } catch (err) { toast(err.message || String(err), 'bad'); } };
-    if (enc && tab === 'ckdj') wireEntry({ refs, lgu, acct, mine, coa, names, m, rerender: ctx.rerender });
+    if (enc && tab === 'ckdj') wireEntry({ refs, lgu, acct, mine, coa, names, m, officers, rerender: ctx.rerender });
     if (lqWire) lqWire();
     if (enc && tab === 'rci') wireRci({ refs, lgu, acct, mine, m, rerender: ctx.rerender });
   };
@@ -322,7 +326,8 @@ function entryHtml(d, officers, editing, m) {
       <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="sd-save">${editing ? 'Save' : 'Enter'}</button></div>
     </div>
     <div class="sd-tally" id="sd-tally" hidden></div>
-    <div class="sd-offrow" id="sd-offbox" hidden><label for="sd-off">Cash advance of</label><select class="input" id="sd-off"><option value="">— Officer —</option>${officers.map((o) => `<option value="${esc(o.id)}" ${o.id === d.officerId ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div>
+    <div class="sd-offrow" id="sd-offbox" hidden><span id="sd-offtxt"></span> <a href="#" class="cd-link" id="sd-offchg">${d.officerId ? 'change' : 'change'}</a>
+      <select class="input" id="sd-off" ${d.officerId ? '' : 'hidden'}><option value="">Match from the Payee</option>${officers.map((o) => `<option value="${esc(o.id)}" ${o.id === d.officerId ? 'selected' : ''}>AO: ${esc(o.name)}${o.designation ? ' · ' + esc(o.designation) : ''}</option>`).join('')}</select></div>
   </div>`;
 }
 
@@ -357,6 +362,10 @@ function wireEntry(c) {
     const tl = $('#sd-tally'), diff = fixed && !off && grossOf(d) ? r2(net() - r2(d.amount)) : 0;
     tl.hidden = !diff; tl.textContent = diff ? `Gross − Tax = ₱${money(net())}; the check is ₱${money(r2(d.amount))} (difference ₱${money(diff)}).` : '';
     $('#sd-offbox').hidden = off || !d.lines.some((l) => CA_CODES.includes(l.code));
+    // The person of the cash advance is the payee; an AO is matched by name (or picked with change).
+    const ao = d.officerId ? c.officers.find((o) => o.id === d.officerId) : matchAo(d.payee, c.officers, lgu.id);
+    $('#sd-offtxt').innerHTML = ao ? `Cash advance of <b>AO: ${esc(ao.name)}</b> ✓ <small class="dim">${d.officerId ? 'picked' : 'matched from the Payee'}; in the cash exam</small>`
+      : `Cash advance of <b>${esc(d.payee || 'the payee')}</b> <small class="dim">not an AO: in the Liquidation Journal and Unliquidated Cash Advances</small>`;
   };
   const openTax = async () => { read(); if (!grossOf(d)) { bad('Enter the gross amount first.'); $('#sd-taxable').value = '0'; paint(); return false; }
     const t = await taxModal(d); if (t) d.tax = t; else if (d.tax.vat !== true && d.tax.vat !== false) { d.tax = { taxable: false }; $('#sd-taxable').value = '0'; } paint(); return !!t; };
@@ -371,7 +380,6 @@ function wireEntry(c) {
       if (lines.some((l) => !(+l.gross > 0))) return bad('Enter the gross amount of each account.');
       if (d.tax.taxable && d.tax.vat !== true && d.tax.vat !== false && !taxOf(d).amount) { if (!(await openTax())) return; }
       if (net() < 0) return bad('The tax is more than the gross amount.');
-      if (lines.some((l) => CA_CODES.includes(l.code)) && !d.officerId) return bad('Choose the officer of the cash advance.');
     } else lines = [];
     const cur = ED.id ? mine.find((x) => x.id === ED.id) : null;
     const rec = { ...(cur ? (({ id, ...r }) => r)(cur) : {}), coa: 3, lguId: lgu.id, acctId: acct.id, date: d.date, checkNo: d.checkNo, ref: d.cancelled ? '' : d.ref, payee: d.cancelled ? '' : d.payee, particulars: d.cancelled ? 'Cancelled' : d.particulars,
@@ -392,6 +400,7 @@ function wireEntry(c) {
   $$('.sd-xl').forEach((b) => { b.onclick = () => { read(); d.lines.splice(+b.closest('.sd-ln').dataset.ln, 1); rerender(); }; });
   ['#sd-date', '#sd-no', '#sd-ref', '#sd-payee', '#sd-part'].forEach((k) => { $(k).oninput = paint; });
   $('#sd-off').onchange = paint;
+  $('#sd-offchg').onclick = (e) => { e.preventDefault(); $('#sd-off').hidden = false; $('#sd-off').focus(); };
   $('#sd-taxable').onchange = async () => { paint(); if ($('#sd-taxable').value === '1' && d.tax.vat !== true && d.tax.vat !== false) await openTax(); };
   $('#sd-tax').onclick = () => { if ($('#sd-taxable').value === '1') openTax(); };
   $('#sd-addln').onclick = () => { read(); d.lines.push(blankLine()); rerender(); setTimeout(() => { const all = $$('.sd-code'); if (all.length) all[all.length - 1].focus(); }, 0); };
@@ -472,7 +481,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
     const box = $('#sj-res', bg);
     if (p.error) { box.innerHTML = `<div class="msg bad">${esc(p.error)}</div>`; return; }
     const cx = p.add.filter((x) => x.cancelled).length, unk = p.add.filter((x) => x.unknown.length).length, ca = p.add.filter((x) => x.lines.some((l) => CA_CODES.includes(l.code))).length;
-    box.innerHTML = `<div class="oi-sum"><b>${p.add.length} check${p.add.length === 1 ? '' : 's'} to add${p.rci ? ' (RCI: fill the entries in the CkDJ later)' : ''}</b>${p.upd.length ? `<span>${p.upd.length} already in: blanks filled</span>` : ''}${cx ? `<span>${cx} cancelled</span>` : ''}${ca ? `<span class="warn-t">${ca} cash advance${ca > 1 ? 's' : ''}: choose the officer after the import (Edit)</span>` : ''}${unk ? `<span class="warn-t">${unk} with an account code not in the Chart of Accounts</span>` : ''}</div>
+    box.innerHTML = `<div class="oi-sum"><b>${p.add.length} check${p.add.length === 1 ? '' : 's'} to add${p.rci ? ' (RCI: fill the entries in the CkDJ later)' : ''}</b>${p.upd.length ? `<span>${p.upd.length} already in: blanks filled</span>` : ''}${cx ? `<span>${cx} cancelled</span>` : ''}${ca ? `<span>${ca} cash advance${ca > 1 ? 's' : ''} (the payee is the person; AOs matched by name)</span>` : ''}${unk ? `<span class="warn-t">${unk} with an account code not in the Chart of Accounts</span>` : ''}</div>
       ${p.problems.length ? `<div class="af-probs"><b>Not imported (${p.problems.length})</b>${p.problems.slice(0, 60).map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
   };
   const v = await modal({ title: `Import Check Disbursements · ${acctLabel(acct)}`, wide: true,

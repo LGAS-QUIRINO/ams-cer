@@ -52,7 +52,7 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
   jr.filter((c) => c.lguId === audit.lguId && c.acctId === acct.id && inS(c.date)).forEach((c) => {
     jrNos.add(chkNo(c.checkNo));
     if (c.cancelled) { row(c.date, 'Cancelled', String(c.checkNo), {}); return; }
-    const ls = c.lines || [], mineCa = c.officerId === o.id;
+    const ls = c.lines || [], mineCa = (c.aoId ?? c.officerId) === o.id;
     row(c.date, [c.payee, c.particulars].filter(Boolean).join(' · '), [c.checkNo, c.ref].filter(Boolean).join(' · '), {
       cibK: checkAmountOf(c), ca: mineCa ? r2(ls.filter((l) => CA_ONLY.includes(l.code)).reduce((n, l) => n + (+l.gross || 0), 0)) : 0,
       pc: r2(ls.filter((l) => l.code === PC_CODE).reduce((n, l) => n + (+l.gross || 0), 0)) });

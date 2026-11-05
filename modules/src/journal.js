@@ -56,25 +56,38 @@ export const caGrossOf = (c) => r2((c.lines || []).filter((l) => CA_CODES.includ
 export const isCa = (c) => !c.cancelled && caGrossOf(c) > 0;
 export const chkNo = (v) => +String(v ?? '').replace(/\D/g, '') || 0;
 
-const listJournal = async () => { const [rs, coa] = await Promise.all([store.list('src_ckdj'), loadCoa()]); return rs.map((r) => ({ ...r, data: upgrade(r.data, coa) })); };
+// The person of a cash advance is the payee. An accountable officer (cer_officers of the office) is matched by name,
+// ignoring capitals, dots, commas and middle initials (Victorino D. Amador = VICTORINO AMADOR); only a single match counts.
+// A check's officer picked by hand (officerId) stays. aoId: the AO of a cash advance check, or ''.
+const nameKey = (s) => String(s ?? '').toLowerCase().replace(/[^a-zñ\s]/g, ' ').split(/\s+/).filter((w) => w.length > 1 && !/^(jr|sr|ii|iii|iv)$/.test(w)).sort().join(' ');
+export function matchAo(payee, officers, lguId) {
+  const k = nameKey(payee); if (!k) return null;
+  const hits = officers.filter((o) => o.lguId === lguId && nameKey(o.name) === k);
+  return hits.length === 1 ? hits[0] : null;
+}
+const flatOfficers = async () => (await store.list('cer_officers')).map(flat);
+const withAo = (c, officers) => (isCa(c) ? { ...c, aoId: c.officerId || matchAo(c.payee, officers, c.lguId)?.id || '' } : { ...c, aoId: '' });
+const listJournal = async () => { const [rs, coa, officers] = await Promise.all([store.list('src_ckdj'), loadCoa(), flatOfficers()]);
+  return rs.map((r) => ({ ...r, data: withAo(upgrade(r.data, coa), officers) })); };
 export async function loadJournal() { return (await listJournal()).map(flat); }
 
-// For Cash Examination: the cash advances typed in Cash Advances plus those from the journal (a check charged to a cash
-// advance account, with its officer). A journal check already typed in Cash Advances is not doubled: the typed one stays
-// and is marked inJournal. Returns records shaped like store.list() ({ id, data }).
-export async function listAdvances() {
+// For Cash Examination: the cash advances typed in Cash Advances plus those from the journal of an AO (matched or picked).
+// A journal check already typed in Cash Advances is not doubled: the typed one stays and is marked inJournal.
+// all: true also gives the journal's cash advances of persons who are not AOs (the Punong Barangay, a Kagawad…), with
+// person (the payee) and officerId ''. Returns records shaped like store.list() ({ id, data }).
+export async function listAdvances(all = false) {
   const [typed, jr] = await Promise.all([store.list('cer_cashadv'), loadJournal()]);
   const key = (lguId, no) => `${lguId}|${chkNo(no)}`;
-  const jrCa = jr.filter((c) => isCa(c) && c.officerId);
+  const jrCa = jr.filter((c) => isCa(c) && (all || c.aoId));
   const jrKeys = new Set(jrCa.map((c) => key(c.lguId, c.checkNo)));
   const typedKeys = new Set(typed.filter((r) => !r.deleted).map((r) => key(r.data.lguId, r.data.checkNo)));
   const out = typed.map((r) => (jrKeys.has(key(r.data.lguId, r.data.checkNo)) ? { ...r, data: { ...r.data, inJournal: true } } : r));
   jrCa.filter((c) => !typedKeys.has(key(c.lguId, c.checkNo))).forEach((c) => out.push({ id: `ckdj|${c.id}`,
-    data: { lguId: c.lguId, officerId: c.officerId, date: c.date, checkNo: c.checkNo, particulars: c.particulars || c.payee || '', amount: caGrossOf(c), fromJournal: c.id, acctId: c.acctId } }));
+    data: { lguId: c.lguId, officerId: c.aoId, person: c.payee || '', date: c.date, checkNo: c.checkNo, particulars: c.particulars || c.payee || '', amount: caGrossOf(c), fromJournal: c.id, acctId: c.acctId } }));
   return out;
 }
 // store.list, with the journal's cash advances added to cer_cashadv.
 export const listT = (t) => (t === 'cer_cashadv' ? listAdvances() : t === 'src_ckdj' ? listJournal() : store.list(t));
 
-// For Bank Statements: the journal's checks of a bank account that are not cash advances (those come with Cash Advances).
-export const bankChecksOf = (jr, acctId) => jr.filter((c) => c.acctId === acctId && !c.cancelled && !(isCa(c) && c.officerId));
+// For Bank Statements: the journal's checks of a bank account that are not AO cash advances (those come with Cash Advances).
+export const bankChecksOf = (jr, acctId) => jr.filter((c) => c.acctId === acctId && !c.cancelled && !(isCa(c) && (c.aoId ?? c.officerId)));

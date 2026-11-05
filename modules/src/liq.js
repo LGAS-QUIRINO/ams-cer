@@ -11,9 +11,9 @@ import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, agencyName, fmtDate, money, num } from '../cer/cer.js';
 import { loadXlsx, excelDate } from '../cer/forms.js';
-import { caAcct } from '../cer/funds.js';
 import { liqText } from '../cer/advances.js';
-import { listAdvances, CA_CODES, chkNo } from './journal.js';
+import { CA_CODES, chkNo } from './journal.js';
+import { cashAdvancesOf } from './cadv.js';
 import { outButtons, wireOut } from './rciout.js';
 import { focusAfter } from './focus.js';
 
@@ -37,18 +37,8 @@ const sumOf = (ls) => r2(ls.reduce((n, x) => n + (+x.amount || 0), 0));
 
 export async function liqView(c) {
   const { refs, lgu, acct, accounts, m, coa, names, jr, books, enc, monthLabel, acctLabel, rerender } = c;
-  const [advs0, liqs0, officers0] = await Promise.all([listAdvances(), store.list('cer_liquid'), store.list('cer_officers')]);
-  const officers = Object.fromEntries(officers0.map((r) => [r.id, r.data.name]));
-  const ctxF = { booklets: books, accounts };
-  const jrOf = (a) => (a.fromJournal ? jr.find((x) => x.id === a.fromJournal) : jr.find((x) => x.lguId === a.lguId && chkNo(x.checkNo) === chkNo(a.checkNo) && !x.cancelled)) || null;
-  const liqsAll = liqs0.map(flat).filter((l) => l.lguId === lgu.id);
-  // The cash advances of this office with the account of their check, the Advances account (from the CkDJ) and the balance.
-  const advs = advs0.map(flat).filter((a) => a.lguId === lgu.id).map((a) => {
-    const j = jrOf(a), caLine = j && (j.lines || []).find((l) => CA_CODES.includes(l.code));
-    const ac = (j && accounts.find((x) => x.id === j.acctId)) || caAcct(a, ctxF);
-    const liq = sumOf(liqsAll.filter((l) => l.advanceId === a.id));
-    return { ...a, acctId: ac ? ac.id : '', credit: caLine ? caLine.code : '', inCkdj: !!j, bal: r2((+a.amount || 0) - liq), officer: officers[a.officerId] || '' };
-  });
+  // The cash advances of this office (AOs and other officials) with their bank account, Advances account and balance.
+  const { advs, liqs: liqsAll } = await cashAdvancesOf({ lgu, accounts, jr, books });
   const advOf = (id) => advs.find((a) => a.id === id) || null;
   // A liquidation's account: that of its check; the beginning balance (not itemized) and unknown checks: the first account.
   const acctOfLiq = (l) => { const a = advOf(l.advanceId); return (a && a.acctId) || accounts[0]?.id || ''; };
