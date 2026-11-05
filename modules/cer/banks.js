@@ -144,7 +144,15 @@ export async function banksView(ctx) {
     const lns = rec.lines || []; if (!lns.length || !enc) return null;
     const found = { ...(rec.found || {}) }, lineOf = { ...(rec.lineOf || {}) };
     const used = new Set(Object.entries(lineOf).filter(([k]) => found[k]).map(([, i]) => i));
-    const n = matchItems(list.filter((x) => !found[x.key] && !(rec.noAuto || []).includes(x.key)), lns, found, lineOf, used);
+    // Ticked by hand (no line): linked to the statement line of the same amount on the bank date typed, so that line is not
+    // counted again as a bank credit or debit.
+    let linkedN = 0;
+    list.filter((x) => found[x.key] && !(x.key in lineOf)).forEach((x) => {
+      const l = lns.find((y) => !used.has(y.i) && y.date === found[x.key] && Math.abs((x.kind === 'dep' ? y.credit : y.debit) - x.amount) < 0.005)
+        || lns.find((y) => !used.has(y.i) && Math.abs((x.kind === 'dep' ? y.credit : y.debit) - x.amount) < 0.005 && Math.abs(days(found[x.key], y.date)) <= 3);
+      if (l) { used.add(l.i); lineOf[x.key] = l.i; linkedN++; }
+    });
+    const n = linkedN + matchItems(list.filter((x) => !found[x.key] && !(rec.noAuto || []).includes(x.key)), lns, found, lineOf, used);
     return n || tidy.changed ? { n, found, lineOf } : null;
   })();
   list.forEach((x) => { x.after = afterCut(x) && !rec.found[x.key]; });
