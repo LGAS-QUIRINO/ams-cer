@@ -29,7 +29,18 @@ export const kindsOf = (l) => (isBrgy(l) ? ['SCD', 'SCR'] : ['RCD']);
 export const kindOfForm = (l, form) => (isBrgy(l) ? (String(form).startsWith('ctc') ? 'SCR' : 'SCD') : 'RCD');
 const kindOf = (l) => kindsOf(l)[0];
 // A report's name: its number, or (barangay SCDs often have none) its date, with (2), (3)… for a second unnumbered one of the same date and fund.
-export const repName = (r, kind) => { const K = (r && r.kind) || kind || 'RCD'; return r && String(r.no || '').trim() ? `${K} No. ${r.no}` : `${K} of ${fmtDate(r && r.date)}${r && r.dupe ? ` (${r.dupe})` : ''}`; };
+// Unnumbered reports of the same date: told apart by their OR series ("SCR of 01/15/2026 · 20630801–20630850"), not (2).
+const firstRange = (r) => (Array.isArray(r.ranges) && r.ranges.length ? `${r.ranges[0][0]}–${r.ranges[0][1]}${r.ranges.length > 1 ? '…' : ''}` : '');
+export const repName = (r, kind) => { const K = (r && r.kind) || kind || 'RCD'; if (r && String(r.no || '').trim()) return `${K} No. ${r.no}`;
+  const sr = r && (r.sameDay || r.dupe) ? firstRange(r) : '';
+  return `${K} of ${fmtDate(r && r.date)}${sr ? ` · ${sr}` : r && r.dupe ? ` (${r.dupe})` : ''}`; };
+// Marks the unnumbered reports that share officer, type, fund and date with another (for repName).
+export function tagSameDay(list) {
+  const key = (r) => [r.officerId, r.kind, r.fund, r.date].join('|');
+  const n = {}; list.forEach((r) => { if (!r.pending && !String(r.no || '').trim()) n[key(r)] = (n[key(r)] || 0) + 1; });
+  list.forEach((r) => { if (!r.pending && !String(r.no || '').trim() && n[key(r)] > 1) r.sameDay = true; });
+  return list;
+}
 const KIND_NAME = { SCD: 'Summary of Collections and Deposits', SCR: 'Summary of Collections and Remittances', RCD: 'Report of Collections and Deposits' };
 const pendId = (officerId, kind, fund) => `nyr|${officerId}|${kind}|${fund}`;
 const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
@@ -37,7 +48,7 @@ const int = (s) => { const v = parseInt(String(s ?? '').replace(/[^\d]/g, ''), 1
 const r2 = (n) => Math.round(n * 100) / 100;
 const sum = (list, k) => r2(list.reduce((n, x) => n + (+x[k] || 0), 0));
 const flat = (r) => ({ id: r.id, ...r.data });
-const strip = (x) => { const { id, ...rest } = x; return rest; };
+const strip = (x) => { const { id, sameDay, ...rest } = x; return rest; };   // sameDay is worked out on loading, never saved
 const bad = (m) => { toast(m, 'bad'); return false; };
 const DEPSHOW = { v: 'all' };
 const KSEL = {};   // the report type shown per officer (SCD / RCD or SCR), remembered while the app is open
@@ -146,7 +157,7 @@ function loDays(f, o, chains, countDate) {
 export async function collectionsView(ctx) {
   const { refs, q } = ctx;
   const f = await loadForms();
-  f.reports = (await store.list('cer_reports')).map(flat);
+  f.reports = tagSameDay((await store.list('cer_reports')).map(flat));
   const crumb = 'Collections & Deposits';
   const hello = (extra = '') => `<div class="hello"><div><h1>Collections &amp; Deposits</h1><p>Encode each OR as printed on the receipt in hand, then the deposits. Barangays file an SCD (Summary of Collections and Deposits) for AF 51 and an SCR (Summary of Collections and Remittances) for CTC remitted to the MTO; the LGU and PLGU file an RCD (Report of Collections and Deposits).</p></div>${extra}</div>`;
   const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
@@ -233,7 +244,7 @@ export async function collectionsView(ctx) {
     return `<div>${what} of ${esc(ch.fund)}${!last ? '' : ch.figs.some(hasRange) ? ` outside the OR ranges of the ${ch.kind}s encoded` : ` dated after ${esc(fmtDate(last.rec.date))}`} ${p.nOrs + (p.rec?.deposits || []).length > 1 ? 'are not yet in an ' + ch.kind + '. They go' : 'is not yet in an ' + ch.kind + '. It goes'} into the next ${ch.kind} when you add it.</div>`; }).join('');
   const isNew = cur.pending;
   const sumTable = (pick) => realFigs.length ? `<div class="af-tbl"><table class="af-reg cd-sumtbl"><thead><tr><th scope="col">${KS0}</th><th scope="col">Fund</th><th scope="col">Date</th><th scope="col">Period</th><th scope="col">OR Range</th><th scope="col" class="r">ORs</th><th scope="col" class="r">Collections</th><th scope="col" class="r">${isRem ? 'Remitted' : 'Deposited'}</th><th scope="col" class="r">${isRem ? 'Unremitted' : 'Undeposited'}</th>${pick && enc ? '<th scope="col"></th>' : ''}</tr></thead>
-      <tbody>${realFigs.map((g) => `<tr ${pick ? `data-pick="${esc(g.id)}" tabindex="0"` : ''} class="${g.id === selId ? 'cd-on' : ''}"><td><b>${esc(repName(g.rec, g.kind))}</b></td><td>${esc(g.rec.fund)}</td><td>${esc(fmtDate(g.rec.date))}</td>
+      <tbody>${realFigs.map((g) => `<tr ${pick ? `data-pick="${esc(g.id)}" tabindex="0"` : ''} class="${g.id === selId ? 'cd-on' : ''}"><td><b>${esc(repName({ ...g.rec, sameDay: false, dupe: 0 }, g.kind))}</b></td><td>${esc(g.rec.fund)}</td><td>${esc(fmtDate(g.rec.date))}</td>
         <td>${g.from ? esc(`${fmtDate(g.from)}–${fmtDate(g.to)}`) : '<span class="dim">—</span>'}</td><td class="cd-rng">${hasRange(g) ? `<span class="cd-rngt" title="${esc(rangesTyped(g.rec.ranges).replace(/-/g, ' – '))}">${esc(rangesTyped(g.rec.ranges).replace(/-/g, ' – '))}</span> <small class="dim">· ${g.rangeIn} of ${g.rangeN}</small>` : `<span class="cd-rngt">${esc(g.range.replace(/Accountable Form 51 – (Barangay|LGU) /g, 'AF 51 ')) || '—'}</span> <small class="dim">· no range</small>`}</td><td class="r">${g.nOrs}${g.nCancelled ? ` <span class="dim">(${g.nCancelled} cancelled)</span>` : ''}</td>
         <td class="r">${money(g.coll)}</td><td class="r">${money(g.dep)}</td><td class="r">${money(g.end)}</td>
 ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.id)}">Edit</button></td>` : ''}</tr>`).join('')}</tbody>
@@ -787,7 +798,10 @@ async function reportModal(c, K, g) {
     if (rr.error) return bad(rr.error) || null;
     if (!rr.ranges.length) return bad(`Type the OR Range of the ${K} (e.g. 3764059-3764100; 3765951-3765971).`) || null;
     const clash = (chainOf(fund)?.figs || []).find((x) => x.id !== (g ? g.id : '') && hasRange(x) && x.rec.ranges.some(([a, z]) => rr.ranges.some(([p, q]) => p <= z && a <= q)));
-    if (clash) return bad(`Part of that range is already in ${repName(clash.rec, K)}.`) || null;
+    if (clash) {
+      const same = clash.rec.date === date && rangesTyped(clash.rec.ranges) === rangesTyped(rr.ranges);
+      return bad(same ? `This ${K} is already entered (${repName(clash.rec, K)}).` : `Part of that range is already in ${repName(clash.rec, K)}.`) || null;
+    }
     const v = { no, date, fund, ranges: rr.ranges, hardTotal: hard ? num(hard) : null, received: $('#rp-recv', bg).value, dupe: no ? 0 : dupeOf(f, o.id, K, date, fund, g ? g.id : undefined) };
     if (firstOf(fund)) v.begTyped = num($('#rp-beg', bg).value) || 0;
     return v;

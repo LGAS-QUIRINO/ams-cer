@@ -13,7 +13,7 @@ import { store, newId } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
 import { loadForms, unusedFormsOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges } from './forms.js';
-import { figuresOf, fundsOf, kindOfForm } from './collections.js';
+import { figuresOf, fundsOf, kindOfForm, tagSameDay } from './collections.js';
 
 const canCount = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
 const BILLS = [1000, 500, 200, 100, 50, 20];
@@ -57,7 +57,7 @@ export async function countView(ctx) {
   const { refs, q } = ctx;
   const f = await loadForms();
   const [reports, advs0, liqs0, counts0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount'].map((t) => store.list(t)));
-  f.reports = reports.map(flat);
+  f.reports = tagSameDay(reports.map(flat));
   const advs = advs0.map(flat), liqs = liqs0.map(flat);
   const crumb = 'Cash Count (Cut-off)';
   const hello = `<div class="hello"><div><h1>Cash Count (Cut-off)</h1><p>The ending: what the officer presents at the cut-off. The remaining accountable forms, then cash on hand and cash items. The count is split by accountability and carried to the Report of Cash Examination (GF 74-A).</p></div></div>`;

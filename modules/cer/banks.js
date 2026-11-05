@@ -19,7 +19,7 @@ import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
 import { exportXlsx, lastChecksOf } from './forms.js';
-import { repName, depRefText } from './collections.js';
+import { repName, depRefText, tagSameDay } from './collections.js';
 
 const DEFAULT_FUNDS = ['General Fund', 'Special Education Fund', 'Trust Fund'];
 const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
@@ -105,7 +105,7 @@ export async function banksView(ctx) {
   const otherAccts = accounts.filter((x) => x.id !== acct.id).map((x) => `${audit.id}|${x.id}`);
   const foundElsewhere = new Set(recs0.map(flat).filter((r) => otherAccts.includes(r.id)).flatMap((r) => Object.keys(r.found || {})));
   const items = [];
-  reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => (r.deposits || []).forEach((d) => {
+  tagSameDay(reports0.map(flat)).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => (r.deposits || []).forEach((d) => {
     const key = `dep|${r.id}|${d.date}|${d.ref}|${d.amount}`;
     items.push({ key, kind: 'dep', date: d.date, ref: depRefText(d), amount: +d.amount || 0,
       from: `${r.pending ? 'Not yet reported' : repName(r)} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });

@@ -15,7 +15,7 @@ import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
 import { bankFindings } from './banks.js';
 import { loadForms, orIn, cutoffFindings, checkUsage, exportXlsx } from './forms.js';
-import { figuresOf, fundsOf, kindOfForm, repName } from './collections.js';
+import { figuresOf, fundsOf, kindOfForm, repName, tagSameDay } from './collections.js';
 import { booksOf, compute } from './count.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -83,7 +83,7 @@ export async function verifyView(ctx) {
   const { refs, q } = ctx;
   const f = await loadForms();
   const [reports, advs0, liqs0, counts0, ver0, bank0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount', 'cer_verify', 'cer_bankrec'].map((t) => store.list(t)));
-  f.reports = reports.map(flat);
+  f.reports = tagSameDay(reports.map(flat));
   const advs = advs0.map(flat), liqs = liqs0.map(flat);
   const crumb = 'Verification';
   const hello = `<div class="hello"><div><h1>Verification</h1><p>Everything encoded is put together for the auditor: the statement of accountability, the reconciliation with the officer's books, and the findings to decide on.</p></div></div>`;

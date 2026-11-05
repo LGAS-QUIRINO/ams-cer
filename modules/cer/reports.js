@@ -7,6 +7,7 @@
 // Other reports follow.
 import { store } from '../../js/store.js';
 import { covOf, inCov, withLines, isPart } from './banks.js';
+import { tagSameDay } from './collections.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { mayView, agencyName, fmtDate, money, num, autoPreparer, autoReviewer } from './cer.js';
 import { loadForms, saafRows, unusedFormsOf, countRanges, FORM_SHORT } from './forms.js';
@@ -42,7 +43,7 @@ export async function reportsView(ctx) {
   const { refs, q } = ctx;
   const f = await loadForms();
   const [reports, advs0, liqs0, counts0, ver0, bank0, bset0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount', 'cer_verify', 'cer_bankrec', 'cer_settings'].map((t) => store.list(t)));
-  f.reports = reports.map(flat);
+  f.reports = tagSameDay(reports.map(flat));
   const advs = advs0.map(flat), liqs = liqs0.map(flat), counts = counts0.map(flat);
   const crumb = 'Reports';
   const hello = `<div class="hello"><div><h1>Reports</h1><p>Made from the records encoded: nothing is typed again. Print or export each one. More reports follow.</p></div></div>`;
