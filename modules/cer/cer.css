@@ -890,3 +890,9 @@ table.af-reg.tr-month{min-width:0}
 /* Audit Setup: OR series in a collection beginning balance */
 .cer-begser { margin-top: 6px; max-width: 360px }
 .cer-begser .input { width: 100%; font-size: 12.5px }
+/* Forms not presented: blocks centred on the page, one width */
+.fnp-blk { width: 100%; max-width: 620px; margin: 0 auto }
+.fnp-t { width: 100% }
+.fnp-t th.c, .fnp-t td.c { text-align: center }
+.fnp-t { table-layout: fixed }
+.fnp-t th.c:nth-child(1), .fnp-t th.c:nth-child(2) { width: 28% } .fnp-t th:nth-child(3) { width: 14% }

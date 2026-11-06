@@ -144,12 +144,13 @@ export function fnpHtml(c) {
   const head = `<h2 class="rp-title">SCHEDULE OF ACCOUNTABLE FORMS NOT PRESENTED AT THE LAST CASH EXAMINATION</h2>
     <p class="c"><b>${esc(o.name)}</b>${o.designation ? ' · ' + esc(o.designation) : ''} · ${esc(agency)}<br>Last cash examination: ${esc(fmtDate(A.from)) || '—'} · Cash count: ${esc(fmtDate(A.to))}</p>`;
   if (!d) return { portrait: true, html: `<div class="rp-page">${head}<p class="c dim">None: every OR issued before the last cash examination and remitted in this period was in the beginning balance.</p></div>` };
-  const sec = (g, i) => `<h3 class="cnp-h">${LET[i] || ''}. ${esc(g.title)}</h3>
-    <table class="rp-t cnp-calc"><thead><tr><th>From</th><th>To</th><th class="r">Qty.</th><th>Date Reported</th></tr></thead>
-    <tbody>${g.rows.map((r) => `<tr><td class="mono">${r.a}</td><td class="mono">${r.z}</td><td class="r">${r.qty}</td><td>${esc(fmtDate(r.date))}</td></tr>`).join('')}
-      <tr class="tot"><td colspan="2">Subtotal, ${esc(g.short)}</td><td class="r">${g.qty}</td><td></td></tr></tbody></table>${g.note ? `<p class="rp-note">${esc(g.note)}</p>` : ''}`;
-  const sum = `<h3 class="cnp-h">SUMMARY</h3><table class="rp-t cnp-calc"><thead><tr><th>Form</th><th class="r">Qty. (pcs)</th></tr></thead>
-    <tbody>${d.groups.map((g) => `<tr><td>${esc(g.short)}</td><td class="r">${g.qty}</td></tr>`).join('')}<tr class="tot"><td>Total</td><td class="r">${d.qty}</td></tr></tbody></table>`;
+  // Centred on the page, every block the same width so the headings and tables line up.
+  const sec = (g, i) => `<div class="fnp-blk"><h3 class="cnp-h">${LET[i] || ''}. ${esc(g.title)}</h3>
+    <table class="rp-t fnp-t"><thead><tr><th class="c">From</th><th class="c">To</th><th class="r">Qty.</th><th class="c">Date Reported</th></tr></thead>
+    <tbody>${g.rows.map((r) => `<tr><td class="mono c">${r.a}</td><td class="mono c">${r.z}</td><td class="r">${r.qty}</td><td class="c">${esc(fmtDate(r.date))}</td></tr>`).join('')}
+      <tr class="tot"><td colspan="2">Subtotal, ${esc(g.short)}</td><td class="r">${g.qty}</td><td></td></tr></tbody></table>${g.note ? `<p class="rp-note">${esc(g.note)}</p>` : ''}</div>`;
+  const sum = `<div class="fnp-blk"><h3 class="cnp-h">SUMMARY</h3><table class="rp-t fnp-t"><thead><tr><th>Form</th><th class="r">Qty. (pcs)</th></tr></thead>
+    <tbody>${d.groups.map((g) => `<tr><td>${esc(g.short)}</td><td class="r">${g.qty}</td></tr>`).join('')}<tr class="tot"><td>Total</td><td class="r">${d.qty}</td></tr></tbody></table></div>`;
   return { portrait: true, html: `<div class="rp-page">${head}${d.groups.map(sec).join('')}${sum}</div>` };
 }
 
@@ -158,7 +159,7 @@ export function fnpSheet(wb, c) {
   const d = fnpData(f, o, exam, A.from, A.to); if (!d) return;
   const ws = wb.addWorksheet('WP-FORMS NOT PRESENTED');
   ws.columns = [18, 18, 10, 18].map((width) => ({ width }));
-  ws.pageSetup = { ...(ws.pageSetup || {}), orientation: 'portrait', paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } };
+  ws.pageSetup = { ...(ws.pageSetup || {}), horizontalCentered: true, orientation: 'portrait', paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } };
   const B = { style: 'thin', color: { argb: 'FF000000' } }, box = { top: B, left: B, bottom: B, right: B };
   const put = (r, vals, o2 = {}) => vals.forEach((v, i) => { const cl = ws.getCell(r, i + 1); cl.value = v; cl.font = { name: 'Arial', size: 10, bold: !!o2.bold, italic: !!o2.italic }; if (o2.box) cl.border = box; cl.alignment = { vertical: 'top', wrapText: !o2.nowrap }; });
   [['SCHEDULE OF ACCOUNTABLE FORMS NOT PRESENTED AT THE LAST CASH EXAMINATION', true], [`${o.name}${o.designation ? ' · ' + o.designation : ''} · ${agency}`], [`Last cash examination: ${fmtDate(A.from)} · Cash count: ${fmtDate(A.to)}`]]
