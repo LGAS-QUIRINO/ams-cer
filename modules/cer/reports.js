@@ -12,7 +12,7 @@ import { covOf, inCov, withLines, isPart } from './banks.js';
 import { tagSameDay } from './collections.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { mayView, agencyName, fmtDate, money, num, autoPreparer, autoReviewer } from './cer.js';
-import { loadForms, saafRows, unusedFormsOf, countRanges, FORM_SHORT } from './forms.js';
+import { loadForms, saafRows, unusedFormsOf, notPresentedOf, countRanges, FORM_SHORT, faceOf } from './forms.js';
 import { accountability } from './verify.js';
 import { WP, wpLines, wpHtml, rsaHtml, wireWp, downloadReport, downloadWp } from './wp.js';
 
@@ -119,6 +119,8 @@ function gf74a(c) {
   const items = (cnt.items || []).map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return { ...it, allowed: a, dis: r2((+it.presented || 0) - a) }; });
   const allowed = r2(items.reduce((n, x) => n + x.allowed, 0)), disallowed = r2(items.reduce((n, x) => n + x.dis, 0));
   const forms = unusedFormsOf(c.f, o.id, exam, A.to);
+  const nps = notPresentedOf(c.f, exam, A.to), npMv = nps.some((x) => faceOf({ form: x.form }));
+  const SEE = 'See Annex B (SAAF)';
   const withMv = forms.filter((x) => x.face && x.qty), without = forms.filter((x) => !x.face);
   const formsQty = without.reduce((n, x) => n + x.qty, 0), formsAmt = withMv.reduce((n, x) => n + x.amount, 0);
   const total = A.T('balance');
@@ -148,11 +150,12 @@ function gf74a(c) {
     <h3>C. INVENTORY OF UNUSED ACCOUNTABLE FORMS</h3>
     <div class="rp-two">
       <table class="rp-t"><thead><tr><th colspan="5">With Money Value</th></tr><tr><th>Name of Form</th><th class="r">Qty.</th><th>Inclusive Serial No.</th><th class="r">Denomination</th><th class="r">Amount</th></tr></thead>
-        <tbody>${withMv.length ? withMv.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${x.ns ? 'No serial' : esc(x.text)}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td></tr>`).join('') : '<tr><td colspan="5" class="c">None</td></tr>'}<tr class="tot"><td colspan="4">Total</td><td class="r">₱ ${money(formsAmt)}</td></tr></tbody></table>
+        <tbody>${withMv.length ? withMv.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${x.ns ? 'No serial' : esc(x.text)}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td></tr>`).join('') : `<tr><td colspan="5" class="c">${npMv ? SEE : 'None'}</td></tr>`}<tr class="tot"><td colspan="4">Total</td><td class="r">₱ ${money(formsAmt)}</td></tr></tbody></table>
       <table class="rp-t"><thead><tr><th colspan="3">Without Money Value</th></tr><tr><th>Name of Form</th><th class="r">Qty.</th><th>Inclusive Serial No.</th></tr></thead>
-        <tbody>${without.length ? without.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${esc(x.text) || 'None'}</td></tr>`).join('') : '<tr><td colspan="3" class="c">None</td></tr>'}
+        <tbody>${without.length ? without.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${esc(x.text) || 'None'}</td></tr>`).join('') : `<tr><td colspan="3" class="c">${SEE}</td></tr>`}
         <tr class="tot"><td>Total</td><td class="r">${formsQty}</td><td></td></tr></tbody></table>
     </div>
+    ${nps.length ? `<p class="rp-note">Forms not presented at the count: ${nps.map((x) => `${esc(x.name)} ${x.ns ? '(no serial)' : `${x.from} – ${x.to}`}`).join('; ')}. See Annex B (SAAF).</p>` : ''}
     <h3>CERTIFICATION</h3>
     <p class="rp-just">I HEREBY CERTIFY on my official oath: (1) That upon demand by the Auditor / Examiner I produced all my cash, treasury warrants, checks, money orders, cash items, paid vouchers, unused accountable forms, etc., for which I am officially accountable; (2) That the inventory of such cash items and unused accountable forms in my possession and produced to the Auditor / Examiner at the time of cash count today, ${esc(fmtDate(audit.countDate))}, is correctly stated above and is broken down as follows:</p>
     <table class="rp-kv rp-cert"><tr><td>1) Cash and / or cash items</td><td class="r">₱ ${money(r2(cash + allowed + disallowed))}</td></tr>
@@ -203,9 +206,9 @@ function saaf(c) {
   const html = `<div class="rp-page rp-wide"><div class="rp-top"><span></span><span class="r"><b>ANNEX B</b></span></div>
     <h2 class="rp-title">STATEMENT OF ACCOUNTABILITY FOR ACCOUNTABLE FORMS</h2><p class="c">As of ${esc(fmtDate(audit.countDate))}</p>
     <table class="rp-kv"><tr><td>Name of Accountable Officer</td><td><b>${esc(o.name)}</b></td></tr><tr><td>Designation</td><td>${esc(o.designation || '')}</td></tr><tr><td>Office / Station</td><td>${esc(agency)}, ${esc(station)}</td></tr></table>
-    <table class="rp-t rp-saaf"><thead><tr><th rowspan="2">Name of Form</th><th colspan="3">Balance Beg.</th><th colspan="3">Received</th><th colspan="3">Issued</th><th colspan="3">Balance End</th><th colspan="3">Balance per Count</th><th rowspan="2" class="r">Difference</th></tr>
+    <table class="rp-t rp-saaf"><thead><tr><th rowspan="2">Name of Form</th><th colspan="3">Balance Beg.</th><th colspan="3">Received</th><th colspan="3">Issued</th><th colspan="3">Balance End</th><th colspan="3">Balance per Count</th><th rowspan="2" class="r">Difference</th><th rowspan="2">Remarks</th></tr>
       <tr>${'<th>From</th><th>To</th><th class="r">Qty.</th>'.repeat(5)}</tr></thead>
-      <tbody>${groups.length ? groups.map((g) => `<tr class="rp-form"><td><b>${esc(g.name)}</b>${g.rows[0].face && g.form !== 'chk' ? ` <small>₱${money(g.rows[0].face)} each</small>` : ''}</td>${'<td></td>'.repeat(16)}</tr>` + g.rows.map((r, i) => {
+      <tbody>${groups.length ? groups.map((g) => `<tr class="rp-form"><td><b>${esc(g.name)}</b>${g.rows[0].face && g.form !== 'chk' ? ` <small>₱${money(g.rows[0].face)} each</small>` : ''}</td>${'<td></td>'.repeat(17)}</tr>` + g.rows.map((r, i) => {
           // One line per range: line k shows the k-th range of each column.
           const cols = [r.beg, r.rec, r.issued, r.end, r.count || []];
           const n = r.ns ? 1 : Math.max(1, ...cols.map((rs) => rs.length));
@@ -213,17 +216,17 @@ function saaf(c) {
           return Array.from({ length: n }, (_, k) => {
             const cellK = (rs, isCount) => (isCount && r.count === null ? ['', '', ''] : r.ns ? cells(rs, true) : rs[k] ? [rs[k][0], rs[k][1], countRanges([rs[k]])] : ['', '', '']);
             const notes = k ? [] : [fund ? `<span class="rp-fund">${esc(fund)}</span>` : '', r.other ? '<small>not in the register</small>' : '', r.ns ? '<small>no serial</small>' : ''].filter(Boolean);
-            return `<tr class="rp-cont"><td>${notes.join('<br>')}</td>${cols.map((rs, ci) => cellK(rs, ci === 4).map((v, j) => `<td class="${j === 2 ? 'r' : ''}">${v}</td>`).join('')).join('')}<td class="r">${k || r.diff === null ? '' : r.diff}</td></tr>`;
+            return `<tr class="rp-cont"><td>${notes.join('<br>')}</td>${cols.map((rs, ci) => cellK(rs, ci === 4).map((v, j) => `<td class="${j === 2 ? 'r' : ''}">${v}</td>`).join('')).join('')}<td class="r">${k || r.diff === null ? '' : r.diff}</td><td>${k ? '' : esc(r.remarks || '')}</td></tr>`;
           }).join('');
         }).join('')).join('')
-        : '<tr><td colspan="17" class="c">No accountable forms for this officer within the scope of audit.</td></tr>'}
-      <tr class="tot"><td>Total</td><td></td><td></td><td class="r">${tot('beg')}</td><td></td><td></td><td class="r">${tot('rec')}</td><td></td><td></td><td class="r">${tot('issued')}</td><td></td><td></td><td class="r">${tot('end')}</td><td></td><td></td><td class="r">${rows.reduce((n, r) => n + (r.count ? countRanges(r.count) : 0), 0)}</td><td class="r">${rows.reduce((n, r) => n + (r.diff || 0), 0)}</td></tr></tbody></table>
+        : '<tr><td colspan="18" class="c">No accountable forms for this officer within the scope of audit.</td></tr>'}
+      <tr class="tot"><td>Total</td><td></td><td></td><td class="r">${tot('beg')}</td><td></td><td></td><td class="r">${tot('rec')}</td><td></td><td></td><td class="r">${tot('issued')}</td><td></td><td></td><td class="r">${tot('end')}</td><td></td><td></td><td class="r">${rows.reduce((n, r) => n + (r.count ? countRanges(r.count) : 0), 0)}</td><td class="r">${rows.reduce((n, r) => n + (r.diff || 0), 0)}</td><td></td></tr></tbody></table>
     <p class="rp-just">I HEREBY CERTIFY that the above Statement of Accountability for Accountable Forms without Money Value is true and correct.</p>
     <div class="rp-signs">${sign('Prepared by', prep)}${sign('Accountable Officer', { name: o.name, pos: o.designation || '' })}</div></div>`;
   const xr = (rs) => rs.map(([a, z]) => (a === z ? `${a}` : `${a}-${z}`)).join(', ');
   const xs = (r, rs) => (r.ns ? (rs.length ? `${countRanges(rs)} pcs` : '') : xr(rs));
   return { html, rows: rows.map((r) => ({ Form: r.name, Booklet: r.ns ? 'No serial' : `${r.booklet[0]}-${r.booklet[1]}`, 'Balance Beg.': xs(r, r.beg), 'Beg. Qty': countRanges(r.beg), Received: xs(r, r.rec), 'Rec. Qty': countRanges(r.rec),
-    Issued: xs(r, r.issued), 'Iss. Qty': countRanges(r.issued), 'Balance End': xs(r, r.end), 'End Qty': countRanges(r.end), 'Per Count': r.count ? xs(r, r.count) : '', 'Count Qty': r.count ? countRanges(r.count) : '', Difference: r.diff ?? '' })) };
+    Issued: xs(r, r.issued), 'Iss. Qty': countRanges(r.issued), 'Balance End': xs(r, r.end), 'End Qty': countRanges(r.end), 'Per Count': r.count ? xs(r, r.count) : '', 'Count Qty': r.count ? countRanges(r.count) : '', Difference: r.diff ?? '', Remarks: r.remarks || '' })) };
 }
 
 /* ---------- Annex C / D · Statement of Accountability by month ---------- */

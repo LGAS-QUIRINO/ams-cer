@@ -881,3 +881,7 @@ table.af-reg.tr-month{min-width:0}
 /* Collections not presented: one section per form */
 .cnp-h { font-size: 13px; margin: 18px 0 6px; }
 .cnp-calc { max-width: 640px; margin-top: 10px; }
+/* Cut-off: booklets not presented at the count */
+.cut-entry .cut-np { flex: 0 0 auto; align-self: center; padding-top: 18px; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap }
+.cut-nptbl { margin-top: 12px }
+.rp-note { font-size: 12px; margin: 6px 0 0 }

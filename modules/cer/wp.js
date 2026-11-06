@@ -9,7 +9,7 @@ import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, fmtDate, money, num } from './cer.js';
 import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart } from './collections.js';
 import { accountsOf, caFund, begByFund, restFund, fundOrder } from './funds.js';
-import { saafRows, unusedFormsOf, countRanges, FORM_SHORT } from './forms.js';
+import { saafRows, unusedFormsOf, notPresentedOf, countRanges, FORM_SHORT, faceOf } from './forms.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -265,6 +265,11 @@ export async function downloadReport(c, ver) {
     .forEach((x, i) => { set(ws, `A${41 + i}`, x.name); set(ws, `F${41 + i}`, x.qty); set(ws, `J${41 + i}`, x.ns ? 'No serial' : x.text); set(ws, `R${41 + i}`, x.face); set(ws, `Z${41 + i}`, x.amount); });
   fit(nomv, 7, (xs) => ({ name: 'Others', qty: xs.reduce((s, x) => s + x.qty, 0), text: xs.map((x) => x.text).join('; ') }))
     .forEach((x, i) => { set(ws, `AF${41 + i}`, x.name); set(ws, `AN${41 + i}`, x.qty); set(ws, `AR${41 + i}`, x.text.replace(/ – /g, '- ')); });
+  // Nothing counted: see the SAAF; booklets not presented: noted on the next free line.
+  const nps = notPresentedOf(c.f, exam, A.to);
+  if (!nomv.length) set(ws, 'AF41', 'See Annex B (SAAF)');
+  else if (nps.length && nomv.length < 7) set(ws, `AF${41 + nomv.length}`, 'Not presented: see Annex B (SAAF)');
+  if (!mv.length && nps.some((x) => faceOf({ form: x.form }))) set(ws, 'A41', 'See Annex B (SAAF)');
   const mvAmt = mv.reduce((s, x) => s + x.amount, 0), pcs = nomv.reduce((s, x) => s + x.qty, 0);
   set(ws, 'AA48', mvAmt); set(ws, 'AN48', pcs);
   set(ws, 'D53', fmtDate(audit.countDate)); set(ws, 'AQ55', r2(cash + tA)); set(ws, 'AQ56', mvAmt); set(ws, 'AQ57', pcs); set(ws, 'J59', tD);
@@ -291,6 +296,8 @@ export async function downloadReport(c, ver) {
   set(ws, 'A57', o.name); set(ws, 'R57', des); set(ws, 'AC57', agency); set(ws, 'A62', prep.name); set(ws, 'R62', prep.des || prep.pos);
   // Annex B · SAAF: one line per range, a blank line between forms, the beginning first
   ws = wb.getWorksheet('SAAFwo');
+  set(ws, 'T9', 'Remarks'); ws.getCell('T9').style = JSON.parse(JSON.stringify(ws.getCell('Q9').style || {})); ws.getCell('T10').style = JSON.parse(JSON.stringify(ws.getCell('S10').style || {}));
+  ws.getColumn('T').width = 15; if (ws.pageSetup.printArea) ws.pageSetup.printArea = String(ws.pageSetup.printArea).replace(/\$?S\$?140/, '$T$140');
   set(ws, 'I3', fmtDate(audit.countDate)); set(ws, 'B5', o.name); set(ws, 'B6', des); set(ws, 'B7', `${agency}, ${station}`);
   const rows = saafRows(c.f, o.id, exam, A.from, A.to, c.advs);
   let r = 12; const FIRST = 12, LAST = 131;
@@ -319,6 +326,7 @@ export async function downloadReport(c, ver) {
         const pick = (rs) => (x.ns ? (k === 0 && rs.length ? rs : null) : rs[k] || null);
         [['B', 'C', 'D'], ['E', 'F', 'G'], ['H', 'I', 'J'], ['K', 'L', 'M'], ['N', 'O', 'P']].forEach((c0, ci) => { const p = pick(cols[ci]); if (!p) return; if (x.ns) set(ws, `${c0[2]}${r}`, countRanges(p)); else put(r, c0, p, false); });
         if (k === 0 && x.diff !== null && x.diff !== undefined) set(ws, `S${r}`, x.diff);
+        if (k === 0 && x.remarks) set(ws, `T${r}`, x.remarks);
       }
       T.beg += countRanges(x.beg); T.rec += countRanges(x.rec); T.iss += countRanges(x.issued); T.end += countRanges(x.end); T.cnt += x.count ? countRanges(x.count) : 0; T.diff += x.diff || 0;
     });

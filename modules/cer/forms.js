@@ -1446,7 +1446,8 @@ async function fundsModal(refs, f, lguId) {
 }
 
 /* ---------- Cut-off (Cash Count): the officer's remaining accountable forms at the count ----------
-   cer_cutoff  id = examId  { examId, officerId, lines[{ id, bookletId ('' = typed, not in the register), form, from, to, ns, ranges[[a, z]] }] }
+   cer_cutoff  id = examId  { examId, officerId, lines[{ id, bookletId ('' = typed, not in the register), form, from, to, ns, ranges[[a, z]], np }] }
+   np: the booklet was not presented at the count (ticked): nothing counted, it stays in the register balance; Remarks "Not presented" in the SAAF.
    Ranges are the unused numbers on hand (a form without serial: [[1, pcs]]). Nothing is compared here; Verification does that. */
 export const cutoffOf = (f, examId) => (f.cutoffs || []).find((c) => c.id === examId) || null;
 export function cutoffLines(f, examId) {
@@ -1468,16 +1469,19 @@ export function parseCutRanges(text, from, to) { return parseRanges(text, from, 
 // For Cash Count and Reports: the remaining forms at the cut-off, one row per line entered.
 export function unusedFormsOf(f, officerId, exam) {
   if (!exam) return [];
-  return cutoffLines(f, exam.id).map((l) => {
+  return cutoffLines(f, exam.id).filter((l) => !l.np).map((l) => {
     const qty = countRanges(l.ranges), face = faceOf(l.b || { form: l.form });
     return { id: l.id, bookletId: l.bookletId, form: l.form, name: FORM_SHORT[l.form] || l.form, from: l.ns ? '' : l.from, to: l.ns ? '' : l.to, ns: l.ns, ranges: l.ranges, qty,
       text: l.ns ? `${qty} pcs (no serial)` : rangesText(l.ranges), face, amount: face * qty, other: !l.bookletId };
   });
 }
+// Booklets ticked Not presented at the cut-off.
+export const notPresentedOf = (f, exam, to) => (exam ? cutoffLines(f, exam.id).filter((l) => l.np).map((l) => { const un = l.b ? rawUnused(l.b, to) : [];
+  return { id: l.id, bookletId: l.bookletId, form: l.form, name: FORM_SHORT[l.form] || l.form, from: l.from, to: l.to, ns: l.ns, qty: countRanges(un), text: rangesText(un) }; }) : []);
 // The last check issued per checkbook at the cut-off: the number before the first unused one (all used: the last of the checkbook).
 export function lastChecksOf(f, examIds) {
   const out = [];
-  (f.cutoffs || []).filter((c) => examIds.has(c.id)).forEach((c) => (c.lines || []).forEach((l) => {
+  (f.cutoffs || []).filter((c) => examIds.has(c.id)).forEach((c) => (c.lines || []).filter((l) => !l.np).forEach((l) => {
     const b = l.bookletId ? f.booklets.find((x) => x.id === l.bookletId) : null;
     const form = b ? b.form : l.form; if (form !== 'chk') return;
     const from = +(b ? b.from : l.from), to = +(b ? b.to : l.to), rs = l.ranges || [];
@@ -1495,7 +1499,7 @@ export function begRanges(f, b, from) {
   if (!isBeg(b, from)) return [];
   if (b.status === 'lost' && b.history?.some((h) => h.action === 'lost' && h.date < from)) return [];
   const prev = (f.exams || []).filter((e) => e.officerId === b.officerId && (f.audits || []).find((a) => a.id === e.auditId)?.countDate === from);
-  for (const e of prev) { const ls = cutoffLines(f, e.id).filter((l) => l.bookletId === b.id); if (ls.length) return mergeRanges(ls.flatMap((l) => l.ranges)); }
+  for (const e of prev) { const ls = cutoffLines(f, e.id).filter((l) => l.bookletId === b.id && !l.np); if (ls.length) return mergeRanges(ls.flatMap((l) => l.ranges)); }
   const start = b.beginDate === from && (Array.isArray(b.unusedAtStart) || !!b.usedBefore);
   return rawUnused(b, from, start);
 }
@@ -1523,15 +1527,16 @@ export function saafRows(f, officerId, exam, from, to, advs = []) {
       const beg = begRanges(f, b, from);
       const rec = !isBeg(b, from) ? [[b.from, b.to]] : [];
       const mine = lines.filter((l) => l.bookletId === b.id);
-      const count = cut ? mergeRanges(mine.flatMap((l) => l.ranges)) : null;
+      const np = mine.length > 0 && mine.every((l) => l.np);   // not presented at the count: nothing counted
+      const count = cut ? mergeRanges(mine.filter((l) => !l.np).flatMap((l) => l.ranges)) : null;
       // Checks: no check register yet (Checks Issued comes later), so the balance end follows the cut-off count;
       // before the cut-off is entered, the check Nos. of the cash advances (and beginning checks) count as issued.
       const caUsed = b.form === 'chk' && count === null ? mergeRanges(advs.filter((a) => a.officerId === officerId && (!a.date || a.date <= to)).map((a) => parseInt(String(a.checkNo || '').replace(/\D/g, ''), 10))
         .filter((n) => n >= b.from && n <= b.to).map((n) => [n, n])) : [];
       const end = b.status === 'lost' ? [] : b.form === 'chk' && count !== null ? count : b.form === 'chk' ? subtractRanges(subtractRanges([...beg, ...rec], caUsed), (b.orNos || []).filter((x) => x.d && x.d <= to).map((x) => [x.n, x.n])) : rawUnused(b, to);
       if (!beg.length && !rec.length && !end.length && !(count && count.length)) return;
-      const issued = subtractRanges([...beg, ...rec], count || end);
-      out.push({ id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, face: faceOf(b), beg, rec, issued, end, count,
+      const issued = subtractRanges([...beg, ...rec], np || !count ? end : count);
+      out.push({ np, remarks: np ? 'Not presented' : '', id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, face: faceOf(b), beg, rec, issued, end, count,
         diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || b.bankAccount || '', date: b.receivedDate && !isBeg(b, from) ? b.issuedDate || b.receivedDate : b.issuedDate || '' });
     });
   lines.filter((l) => !l.bookletId).forEach((l) => out.push({ id: l.id, form: l.form, name: FORM_SHORT[l.form] || l.form, booklet: [l.from, l.to], ns: l.ns, face: faceOf({ form: l.form }), beg: [], rec: [], issued: [], end: [], count: l.ranges, diff: -countRanges(l.ranges), fund: '', other: true }));
@@ -1552,6 +1557,7 @@ export function cutoffFindings(f, o, exam, from, to) {
   f.booklets.filter((b) => b.officerId === o.id && b.status !== 'stock' && b.issuedDate && b.issuedDate <= to).forEach((b) => {
     const name = `${FORM_SHORT[b.form] || b.form} ${serialText(b)}`;
     const mine = lines.filter((l) => l.bookletId === b.id);
+    if (mine.length && mine.every((l) => l.np)) { add(`npt|${b.id}`, `${name}: in the officer's hands per the register (${rangesText(rawUnused(b, to)) || 'none unused'}), but not presented at the cash count.`); return; }
     if (!mine.length) {
       if (b.status !== 'lost' && statusOf(b).key !== 'done') add(`np|${b.id}`, `${name}: in the officer's hands per the register (${rangesText(rawUnused(b, to)) || 'none unused'}), but not presented at the cut-off.`);
       return;
