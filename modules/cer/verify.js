@@ -10,7 +10,7 @@
 // Records:
 //   cer_verify  id = examId  { examId, recon{ <column>: { cashbook, unrecBeg, unrecDebit, unrecCredit } },
 //                              decisions{ <finding key>: { decision, remarks } }, complete, completeBy, completeAt, ready, readyBy, readyAt }
-import { cnpData } from './cnp.js';
+import { cnpData, fnpData } from './cnp.js';
 import { listT } from '../src/journal.js';
 import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
@@ -121,6 +121,7 @@ export async function verifyView(ctx) {
   // Collections by OR range (cashbooks): the collector's cashbook against the Liquidating Officer's, and the beginning.
   cashbookFindings(f, o, exam, from, to).forEach((x) => add(x.key, 'Collections', x.text, '#/cer/collections'));
   { const np = cnpData(f, o, exam, from, to); if (np && np.notPresented > 0.004) add(`cnp|${np.notPresented}`, 'Collections', `₱${money(np.notPresented)}${np.groups.filter((g) => g.notPresented > 0.004).length > 1 ? ` (${np.groups.filter((g) => g.notPresented > 0.004).map((g) => `₱${money(g.notPresented)} ${g.short}`).join('; ')})` : ''} of collections dated before the last cash examination (${fmtDate(from)}) were not presented then; remitted only in this period (see the working paper: Collections not presented at the last cash exam).`, `#/cer/reports?a=${audit.id}&e=${exam.id}&rep=cnp`); }
+  { const fn = fnpData(f, o, exam, from, to); if (fn && fn.qty) add(`fnp|${fn.qty}`, 'Accountable Forms', `${fn.qty} accountable form${fn.qty > 1 ? 's' : ''} issued before the last cash examination (${fmtDate(from)}) were not presented then${fn.groups.length > 1 ? ` (${fn.groups.map((g) => `${g.qty} ${g.short}`).join('; ')})` : ` (${fn.groups[0].short})`}; reported only in this period (see the working paper: Accountable forms not presented at the last cash exam).`, `#/cer/reports?a=${audit.id}&e=${exam.id}&rep=fnp`); }
   cutoffFindings(f, o, exam, from, to).forEach((x) => add(`af|${x.key}`, 'Accountable Forms', x.text, x.key === 'nocut' || x.key.startsWith('np|') || x.key.startsWith('nir|') ? `#/cer/count?a=${audit.id}&e=${exam.id}` : '#/cer/forms'));
   // Late deposits: collections deposited in date order (first in, first out) against the deadline of the officer's rule.
   const hol = await holidaysOf(refs, audit.lguId);

@@ -3,7 +3,7 @@
 //
 // Per CashBook in the working papers: the same as Per Audit unless a line is edited. Edits are kept with the officer's
 // Verification record: cer_verify.wp{ a1a|a1b|a2a: { <line key>: { d, c } } } (d = collections / cash advance, c = deposits / liquidation).
-import { cnpSheet } from './cnp.js';
+import { cnpSheet, fnpSheet } from './cnp.js';
 import { store } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, fmtDate, money, num } from './cer.js';
@@ -447,6 +447,7 @@ export async function downloadWp(c, ver, bank) {
     });
   }
   cnpSheet(wb, c);
+  fnpSheet(wb, c);
   if (!wb.worksheets.length) { const ws = wb.addWorksheet('Working Papers'); ws.getCell('A1').value = `No working paper for ${c.o.name}: no collections, cash advances or imported bank statement within ${scope}.`; }
   await save(wb, `WP - ${fileBase(c)}.xlsx`);
 }
