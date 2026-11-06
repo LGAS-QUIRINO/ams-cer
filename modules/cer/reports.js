@@ -102,7 +102,9 @@ export async function reportsView(ctx) {
     <div id="cer-print" class="rp-doc">${doc.html}</div>`;
   return { crumb, body, wire: () => {
     wireTop();
-    $('#rp-print').onclick = () => { document.body.classList.add('af-printing', 'rp-printing'); window.print(); document.body.classList.remove('af-printing', 'rp-printing'); };
+    // A paper made for portrait (long, 8.5 × 13 in) prints that way; the others follow the printer settings.
+    $('#rp-print').onclick = () => { const pg = doc.portrait ? Object.assign(document.createElement('style'), { textContent: '@page{size:8.5in 13in portrait; margin:0.5in}' }) : null; if (pg) document.head.appendChild(pg);
+      document.body.classList.add('af-printing', 'rp-printing'); window.print(); document.body.classList.remove('af-printing', 'rp-printing'); if (pg) pg.remove(); };
     $('#rp-xr').onclick = (e) => run(e.currentTarget, () => downloadReport(ctx2, ver));
     $('#rp-xw').onclick = (e) => run(e.currentTarget, () => downloadWp(ctx2, ver, bank));
     if (isWp) wireWp(ctx2, rep, ver, refs);

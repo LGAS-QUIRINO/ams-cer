@@ -125,8 +125,12 @@ export function fnpData(f, o, exam, from, to) {
       [...ls].sort((a, b) => b.date.localeCompare(a.date) || b.a - a.a).some((l) => { if (cum + l.amount > g.begAll + 0.004) return true; cum = r2(cum + l.amount); take.add(l); return false; });
       assumed = mergeRanges([...take].map((l) => [l.a, l.z])); ls = ls.filter((l) => !take.has(l));
     }
+    // Rows: the series merged per date reported (the RCD's date, or the remittance date when not yet in an RCD).
+    const repDate = (l) => { const r = l.reportId && f.reports.find((x) => x.id === l.reportId && !x.pending); return (r && r.date) || l.rem.date || ''; };
+    const byDate = {}; ls.forEach((l) => { (byDate[repDate(l)] = byDate[repDate(l)] || []).push([l.a, l.z]); });
+    const rows = Object.entries(byDate).flatMap(([dt, rr]) => mergeRanges(rr).map(([a, z]) => ({ a, z, qty: z - a + 1, date: dt }))).sort((x, y) => x.a - y.a);
     const rs = mergeRanges(ls.map((l) => [l.a, l.z]));
-    return { form: g.form, title: g.title, short: g.short, rows: rs.map(([a, z]) => ({ a, z, qty: z - a + 1 })), qty: countRanges(rs),
+    return { form: g.form, title: g.title, short: g.short, rows, qty: countRanges(rs),
       note: g.series ? `Not listed: ${rangesText(g.series)}, in the beginning balance at the last cash examination (series per Audit Setup).`
         : assumed.length ? `Not listed: ${rangesText(assumed)}, assumed in the beginning balance of ₱${money(g.begAll)} (the latest before the last cash examination; no series in Audit Setup).` : '' };
   }).filter((g) => g.qty || g.note);
@@ -139,21 +143,22 @@ export function fnpHtml(c) {
   const d = fnpData(f, o, exam, A.from, A.to);
   const head = `<h2 class="rp-title">SCHEDULE OF ACCOUNTABLE FORMS NOT PRESENTED AT THE LAST CASH EXAMINATION</h2>
     <p class="c"><b>${esc(o.name)}</b>${o.designation ? ' · ' + esc(o.designation) : ''} · ${esc(agency)}<br>Last cash examination: ${esc(fmtDate(A.from)) || '—'} · Cash count: ${esc(fmtDate(A.to))}</p>`;
-  if (!d) return { html: `<div class="rp-page rp-wide">${head}<p class="c dim">None: every OR issued before the last cash examination and remitted in this period was in the beginning balance.</p></div>` };
+  if (!d) return { portrait: true, html: `<div class="rp-page">${head}<p class="c dim">None: every OR issued before the last cash examination and remitted in this period was in the beginning balance.</p></div>` };
   const sec = (g, i) => `<h3 class="cnp-h">${LET[i] || ''}. ${esc(g.title)}</h3>
-    <table class="rp-t cnp-calc"><thead><tr><th>From</th><th>To</th><th class="r">Qty.</th></tr></thead>
-    <tbody>${g.rows.map((r) => `<tr><td class="mono">${r.a}</td><td class="mono">${r.z}</td><td class="r">${r.qty}</td></tr>`).join('')}
-      <tr class="tot"><td colspan="2">Subtotal, ${esc(g.short)}</td><td class="r">${g.qty}</td></tr></tbody></table>${g.note ? `<p class="rp-note">${esc(g.note)}</p>` : ''}`;
+    <table class="rp-t cnp-calc"><thead><tr><th>From</th><th>To</th><th class="r">Qty.</th><th>Date Reported</th></tr></thead>
+    <tbody>${g.rows.map((r) => `<tr><td class="mono">${r.a}</td><td class="mono">${r.z}</td><td class="r">${r.qty}</td><td>${esc(fmtDate(r.date))}</td></tr>`).join('')}
+      <tr class="tot"><td colspan="2">Subtotal, ${esc(g.short)}</td><td class="r">${g.qty}</td><td></td></tr></tbody></table>${g.note ? `<p class="rp-note">${esc(g.note)}</p>` : ''}`;
   const sum = `<h3 class="cnp-h">SUMMARY</h3><table class="rp-t cnp-calc"><thead><tr><th>Form</th><th class="r">Qty. (pcs)</th></tr></thead>
     <tbody>${d.groups.map((g) => `<tr><td>${esc(g.short)}</td><td class="r">${g.qty}</td></tr>`).join('')}<tr class="tot"><td>Total</td><td class="r">${d.qty}</td></tr></tbody></table>`;
-  return { html: `<div class="rp-page rp-wide">${head}${d.groups.map(sec).join('')}${sum}</div>` };
+  return { portrait: true, html: `<div class="rp-page">${head}${d.groups.map(sec).join('')}${sum}</div>` };
 }
 
 export function fnpSheet(wb, c) {
   const { f, o, exam, A, agency } = c;
   const d = fnpData(f, o, exam, A.from, A.to); if (!d) return;
   const ws = wb.addWorksheet('WP-FORMS NOT PRESENTED');
-  ws.columns = [18, 18, 10, 40].map((width) => ({ width }));
+  ws.columns = [18, 18, 10, 18].map((width) => ({ width }));
+  ws.pageSetup = { ...(ws.pageSetup || {}), orientation: 'portrait', paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } };
   const B = { style: 'thin', color: { argb: 'FF000000' } }, box = { top: B, left: B, bottom: B, right: B };
   const put = (r, vals, o2 = {}) => vals.forEach((v, i) => { const cl = ws.getCell(r, i + 1); cl.value = v; cl.font = { name: 'Arial', size: 10, bold: !!o2.bold, italic: !!o2.italic }; if (o2.box) cl.border = box; cl.alignment = { vertical: 'top', wrapText: !o2.nowrap }; });
   [['SCHEDULE OF ACCOUNTABLE FORMS NOT PRESENTED AT THE LAST CASH EXAMINATION', true], [`${o.name}${o.designation ? ' · ' + o.designation : ''} · ${agency}`], [`Last cash examination: ${fmtDate(A.from)} · Cash count: ${fmtDate(A.to)}`]]
@@ -161,9 +166,9 @@ export function fnpSheet(wb, c) {
   let r = 5;
   d.groups.forEach((g, i) => {
     put(r++, [`${LET[i] || ''}. ${g.title}`], { bold: true, nowrap: true });
-    put(r++, ['From', 'To', 'Qty.'], { bold: true, box: true });
-    g.rows.forEach((x) => put(r++, [x.a, x.z, x.qty], { box: true }));
-    put(r++, [`Subtotal, ${g.short}`, '', g.qty], { bold: true, box: true });
+    put(r++, ['From', 'To', 'Qty.', 'Date Reported'], { bold: true, box: true });
+    g.rows.forEach((x) => put(r++, [x.a, x.z, x.qty, fmtDate(x.date)], { box: true }));
+    put(r++, [`Subtotal, ${g.short}`, '', g.qty, ''], { bold: true, box: true });
     if (g.note) { ws.mergeCells(r, 1, r, 4); put(r++, [g.note], { italic: true }); }
     r++;
   });
