@@ -251,6 +251,9 @@ export async function collectionsView(ctx) {
   const o = exam.o;
   const funds = fundsOf(f, audit.lguId);
   let fig = figuresOf(f, o, funds, audit.countDate, lgu);
+  // ORs dated before the last cash exam (entered one by one or imported before this rule): tagged Before the period once.
+  const oldOrs = exam.lastExamDate ? f.ors.filter((x) => x.officerId === o.id && !x.beg && x.date && x.date < exam.lastExamDate) : [];
+  if (canEncode(refs) && oldOrs.length) { for (const x of oldOrs) await store.save('cer_ors', x.id, { ...strip(x), beg: true }, by(refs), { quiet: true }); return collectionsView(ctx); }
   // Records dated on or before a submitted report go into it (e.g. ORs encoded after the SCD was added).
   if (canEncode(refs) && misplaced(fig)) { await sweepChains(f, fig, refs); return collectionsView(ctx); }
   const isLO = (exam.functions || []).includes('liquidating');
@@ -735,7 +738,8 @@ function wireAll(c) {
   if (LASTC.focus) { const el = LASTC.focus === 'or' ? orIn : dateIn; if (el) el.focus(); LASTC.focus = ''; }
 }
 const orData = (c, b, serial, date, status, items) => ({ lguId: c.audit.lguId, officerId: c.o.id, form: $('#cd-form') ? $('#cd-form').value : (b ? b.form : ''), bookletId: b ? b.id : '', serial, date, status,
-  items, amount: status === 'cancelled' ? 0 : r2(items.reduce((n, i) => n + i.amt, 0)), fund: c.curFund, reportId: c.cur.pending || hasRange(c.cur) ? placeIn(c.fig.chains[c.curKey], date, serial) : c.selId });
+  items, amount: status === 'cancelled' ? 0 : r2(items.reduce((n, i) => n + i.amt, 0)), fund: c.curFund, reportId: c.cur.pending || hasRange(c.cur) ? placeIn(c.fig.chains[c.curKey], date, serial) : c.selId,
+  ...(c.exam.lastExamDate && date && date < c.exam.lastExamDate ? { beg: true } : {}) });   // before the period: its amount is in the beginning balance
 function partRowHtml(i) {
   return `<div class="cd-prow"><label class="sr-only" for="cd-p${i}">Particular ${i + 1}</label><input class="input cd-p" id="cd-p${i}" list="cd-parts" placeholder="Type to search or add a new particular…" autocomplete="off">
     <label class="sr-only" for="cd-a${i}">Amount ${i + 1}</label><input class="input r cd-a" id="cd-a${i}" inputmode="decimal" placeholder="0.00" autocomplete="off">
@@ -927,7 +931,8 @@ async function importOrs(c) {
   if (v !== 'go') return;
   for (const x of plan.add) {
     await store.save('cer_ors', newId('ceror'), { lguId: c.audit.lguId, officerId: o.id, form: plan.form, bookletId: x.bookletId, serial: x.n, date: x.date, status: x.cancelled ? 'cancelled' : 'issued',
-      items: x.cancelled ? [] : x.items, amount: x.cancelled ? 0 : r2(x.items.reduce((t, i) => t + i.amt, 0)), fund: curFund, reportId: x.reportId }, by(refs), { quiet: true });
+      items: x.cancelled ? [] : x.items, amount: x.cancelled ? 0 : r2(x.items.reduce((t, i) => t + i.amt, 0)), fund: curFund, reportId: x.reportId,
+      ...(c.exam.lastExamDate && x.date && x.date < c.exam.lastExamDate ? { beg: true } : {}) }, by(refs), { quiet: true });
   }
   emitChange('local'); toast(`${plan.add.length} OR${plan.add.length === 1 ? '' : 's'} imported.`, 'ok');
 }
