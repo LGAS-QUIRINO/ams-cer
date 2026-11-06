@@ -39,7 +39,7 @@ export function wpLines(c, paper, ver) {
     const kind = book.kind;
     f.ors.filter((x) => x.officerId === o.id && kindOfForm(lgu, x.form) === kind && orOk(x)).forEach((x) => {
       const cx = x.status === 'cancelled';
-      lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : (x.items || []).map((i) => i.p).filter(Boolean).join('; '), no: String(x.serial), d: cx ? 0 : +x.amount || 0, c: 0, ord: 0, sn: +x.serial || 0 });
+      lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : (x.items || []).map((i) => i.p).filter(Boolean).join('; '), no: x.range ? `${x.serial}–${x.serialTo}` : String(x.serial), d: cx ? 0 : +x.amount || 0, c: 0, ord: 0, sn: +x.serial || 0 });
     });
     Object.values(A.fig.chains).filter((ch) => ch.kind === kind).forEach((ch) => [...ch.figs, ch.pend].forEach((g) => {
       (g.rec?.remittances || []).filter((m) => inScope(m.date)).forEach((m, i) => lines.push({ key: `rem|${g.id}|${i}|${m.date}|${m.amount}`, date: m.date, part: `Remittance from ${c.f.officers.find((x) => x.id === m.collectorId)?.name || 'collector'}${m.reportNo ? ', ' + m.reportNo : ''}`, no: '', d: +m.amount || 0, c: 0, ord: 0 }));

@@ -44,7 +44,7 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
   // Collections: one line per day and form, with the OR numbers.
   const byDay = {};
   f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && orIn(f, x, from, to) && ofF(x.fund)).forEach((x) => { const k = `${x.date}|${x.form}`; (byDay[k] = byDay[k] || []).push(x); });
-  Object.entries(byDay).forEach(([k, xs]) => { const [date, form] = k.split('|'); const ns = xs.map((x) => +x.serial).sort((a, b) => a - b);
+  Object.entries(byDay).forEach(([k, xs]) => { const [date, form] = k.split('|'); const ns = xs.flatMap((x) => [+x.serial, x.range ? +x.serialTo : +x.serial]).sort((a, b) => a - b);
     row(date, `Collections (${SHORT[form] || FORM_SHORT[form] || form})`, `${ns[0]}${ns.length > 1 ? '–' + ns[ns.length - 1] : ''}`, { cltC: r2(xs.reduce((n, x) => n + (+x.amount || 0), 0)) }); });
   // Deposits (and, for the SCR, remittances to the MTO).
   f.reports.filter((r) => r.officerId === o.id && ofF(r.fund)).forEach((r) => (r.deposits || []).filter((d) => inS(d.date)).forEach((d) => {

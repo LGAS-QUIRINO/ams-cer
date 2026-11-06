@@ -117,7 +117,12 @@ export async function loadForms() {
   const flat = (r) => ({ id: r.id, ...r.data });
   const out = { ...cer, booklets: booklets.map(flat), checks: checks.map(flat), cutoffs: cutoffs.map(flat), raaf: raaf.map(flat), settings: Object.fromEntries(settings.map((s) => [s.id, s.data])), ors: ors.map(flat) };
   // Numbers encoded in Collections & Deposits (issued or cancelled) are used numbers of their booklet.
-  const byBk = {}; out.ors.forEach((o) => { if (o.bookletId) (byBk[o.bookletId] = byBk[o.bookletId] || []).push({ n: o.serial, d: o.date }); });
+  const byBk = {}; out.ors.forEach((o) => {
+    if (!o.range) { if (o.bookletId) (byBk[o.bookletId] = byBk[o.bookletId] || []).push({ n: o.serial, d: o.date }); return; }
+    // A line by OR range (from a cashbook): each number of the range is used, in whichever booklet holds it.
+    const bks = out.booklets.filter((b) => b.form === o.form && !b.noSerial && (b.officerId === o.officerId || b.id === o.bookletId));
+    for (let n = +o.serial; n <= +o.serialTo && n - o.serial < 5000; n++) { const b = bks.find((x) => x.from <= n && n <= x.to); if (b) (byBk[b.id] = byBk[b.id] || []).push({ n, d: o.date, rg: true, beg: !!o.beg }); }
+  });
   // Checks in the Check Disbursements Journal (Source Documents), issued or cancelled, are used numbers of their checkbook.
   const chks = out.booklets.filter((b) => b.form === 'chk' && !b.noSerial);
   ckdj.map(flat).forEach((c) => { const n = +String(c.checkNo || '').replace(/\D/g, '') || 0; if (!n) return;
@@ -1555,7 +1560,9 @@ export function cutoffFindings(f, o, exam, from, to) {
     const avail = isBeg(b, from) ? begRanges(f, b, from) : [[b.from, b.to]];
     const used = subtractRanges(avail, count);
     const ors = new Set((b.orNos || []).map((x) => x.n));
-    const miss = []; used.forEach(([a, z]) => { for (let n = a; n <= z && miss.length < 5000; n++) if (!ors.has(n)) miss.push(n); });
+    // Lines by OR range (cashbook): numbers before the first range of the period were used before the last cash exam (unless unticked).
+    const rgs = (b.orNos || []).filter((x) => x.rg && !x.beg && (!from || x.d >= from)), firstRg = rgs.length && !f.settings?.['orrange|' + o.id]?.noA ? Math.min(...rgs.map((x) => x.n)) : 0;
+    const miss = []; used.forEach(([a, z]) => { for (let n = a; n <= z && miss.length < 5000; n++) if (!ors.has(n) && !(firstRg && n < firstRg)) miss.push(n); });
     if (miss.length) add(`miss|${b.id}|${miss.length}`, `${name}: ${miss.length} OR${miss.length > 1 ? 's' : ''} used before the cut-off with no collection encoded: ${rangesText(toR(miss))}.`);
     const onUn = (b.orNos || []).filter((x) => count.some(([a, z]) => a <= x.n && x.n <= z)).map((x) => x.n);
     if (onUn.length) add(`onun|${b.id}|${onUn.length}`, `${name}: ${onUn.length} OR${onUn.length > 1 ? 's' : ''} encoded on numbers still unused at the cut-off: ${rangesText(toR(onUn))}.`);

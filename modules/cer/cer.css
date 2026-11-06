@@ -874,3 +874,7 @@ table.af-reg.tr-sched{min-width:0; margin-bottom:6px} .tr-sched .input.af-sm{wid
 table.af-reg.tr-month{min-width:0}
 .tr-entry{margin:8px 0 12px}
 .cer-tick.b-none{margin:10px 0 4px; font-weight:600}
+/* Collections · by OR range */
+.seg.cd-mode{margin:4px 0 10px}
+.cd-rgentry{margin-bottom:6px}
+.cer-tick.cd-rga{margin:4px 0 12px; font-size:13px}

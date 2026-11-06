@@ -116,6 +116,8 @@ export async function verifyView(ctx) {
   const unrep = Object.values(fig.chains).map((c) => c.pend).filter((g) => g.nOrs);
   unrep.forEach((g) => add(`nyr|${g.id}`, 'Collections', `${g.nOrs} OR${g.nOrs > 1 ? 's' : ''} (₱${money(g.orsTotal)}) not yet in a submitted ${g.kind}, ${g.fund}.`, '#/cer/collections'));
   f.ors.filter((x) => x.officerId === o.id && x.date > to).slice(0, 1).forEach(() => add('afterct', 'Collections', `${f.ors.filter((x) => x.officerId === o.id && x.date > to).length} OR(s) dated after the cash count.`, '#/cer/collections'));
+  // Collections by OR range (cashbooks): the collector's cashbook against the Liquidating Officer's, and the beginning.
+  cashbookFindings(f, o, exam, from, to).forEach((x) => add(x.key, 'Collections', x.text, '#/cer/collections'));
   cutoffFindings(f, o, exam, from, to).forEach((x) => add(`af|${x.key}`, 'Accountable Forms', x.text, x.key === 'nocut' || x.key.startsWith('np|') || x.key.startsWith('nir|') ? `#/cer/count?a=${audit.id}&e=${exam.id}` : '#/cer/forms'));
   // Late deposits: collections deposited in date order (first in, first out) against the deadline of the officer's rule.
   const hol = await holidaysOf(refs, audit.lguId);
@@ -314,4 +316,45 @@ function wireVerify(c) {
   $('#vf-xls').onclick = () => exportXlsx(`Verification ${o.name} ${audit.countDate}.xlsx`, 'Verification', [
     ...st.map((x) => ({ Part: 'Statement of Accountability', Item: x.label, 'Balance, Last Exam': x.beg, Debits: x.debit, Credits: x.credit, Balance: x.balance, Inventory: x.inv ?? '', 'Shortage/(Overage)': x.sh ?? '' })),
     {}, ...findings.map((x) => ({ Part: 'Finding', Item: x.area, 'Balance, Last Exam': x.text, Debits: dec(x.key).decision, Credits: dec(x.key).remarks }))]);
+}
+
+// Lines by OR range from the cashbooks. For a collector: each range of the collector's cashbook against the remittances the
+// Liquidating Officer recorded by OR range (LO's cashbook); the beginning per the cashbooks (collected before the last cash
+// exam, remitted in the period) against Audit Setup. For an LO: the same, for each collector with lines by OR range.
+function cashbookFindings(f, o, exam, from, to) {
+  const out = [], add = (key, text) => out.push({ key, text });
+  const inS = (d) => !!d && (!from || d >= from) && d <= to;
+  const amt = (x) => r2((x.items || []).reduce((n, i) => n + (+i.amt || 0), 0));
+  const loName = (r) => f.officers.find((x) => x.id === r.officerId)?.name || 'the Liquidating Officer';
+  const one = (col, bal) => {
+    const mine = f.ors.filter((x) => x.officerId === col.id && x.range);
+    if (!mine.length) return;
+    const lo = f.reports.flatMap((r) => (r.remittances || []).filter((m) => m.collectorId === col.id && m.from).map((m) => ({ ...m, lo: loName(r) })));
+    const who = col.id === o.id ? '' : `${col.name}: `;
+    add(`cbsum|${col.id}`, `${who}collections verified at the summary level, by OR range from the cashbooks; the RCDs / SCDs and the ORs were not examined individually.`);
+    if (!lo.length) return;
+    const covered = new Set();
+    lo.filter((m) => inS(m.date)).forEach((m) => {
+      const a = +m.from, z = +(m.to || m.from);
+      const inR = mine.filter((x) => +x.serial >= a && +x.serialTo <= z); inR.forEach((x) => covered.add(x.id));
+      const sumC = r2(inR.reduce((n, x) => n + amt(x), 0));
+      if (!inR.length) add(`cbnolo|${col.id}|${m.date}|${a}`, `${who}${a}–${z} received by ${m.lo} on ${fmtDate(m.date)} (₱${money(m.amount)}) is not in the collector's cashbook.`);
+      else if (Math.abs(sumC - (+m.amount || 0)) > 0.004) add(`cbdiff|${col.id}|${m.date}|${a}`, `${who}${a}–${z}: ₱${money(sumC)} in the collector's cashbook, ₱${money(m.amount)} received by ${m.lo} on ${fmtDate(m.date)}.`);
+    });
+    // Ranges collected in the period (or before it and remitted in it) and not received by the LO by the cut-off.
+    mine.filter((x) => inS(x.date) && !covered.has(x.id) && !lo.some((m) => +x.serial >= +m.from && +x.serialTo <= +(m.to || m.from)))
+      .forEach((x) => add(`cbnorec|${col.id}|${x.id}`, `${who}${x.serial}–${x.serialTo} collected ${fmtDate(x.date)} (₱${money(amt(x))}) is not among the remittances received by the Liquidating Officer up to the cut-off (unremitted: it should be in the collector's cash).`));
+    // The beginning per the cashbooks: collected before the last cash exam and remitted to the LO in the period.
+    if (from && bal !== null) {
+      const begC = r2(mine.filter((x) => x.beg && lo.some((m) => inS(m.date) && +x.serial >= +m.from && +x.serialTo <= +(m.to || m.from))).reduce((n, x) => n + amt(x), 0));
+      if (begC && Math.abs(begC - bal) > 0.004) add(`cbbeg|${col.id}|${begC}|${bal}`, `${who}beginning per the cashbooks (collected before ${fmtDate(from)}, remitted in the period) is ₱${money(begC)}; Audit Setup has ₱${money(bal)}.`);
+    }
+  };
+  const colBeg = Object.entries(exam.balances || {}).filter(([k]) => k.startsWith('col-')).reduce((n, [, v]) => n + (+v?.amount || 0), 0);
+  one(o, r2(colBeg));
+  if ((exam.functions || []).includes('liquidating')) {
+    const ids = new Set(f.reports.filter((r) => r.officerId === o.id).flatMap((r) => (r.remittances || []).map((m) => m.collectorId)));
+    f.officers.filter((x) => ids.has(x.id) && x.id !== o.id).forEach((col) => one(col, null));
+  }
+  return out;
 }
