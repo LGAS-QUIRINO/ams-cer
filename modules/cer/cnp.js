@@ -5,6 +5,7 @@
 import { esc } from '../../js/ui.js';
 import { fmtDate, money } from './cer.js';
 import { FORM_SHORT, mergeRanges, rangesText, countRanges } from './forms.js';
+import { wpPage, wcell, wtitle } from './wp.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
 const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
@@ -82,34 +83,37 @@ export function cnpHtml(c) {
   return { html: `<div class="rp-page rp-wide">${head}${d.groups.map(sec).join('')}${sum}</div>` };
 }
 
-// Excel: one sheet in the working papers, the same sections and summary.
+// Excel: one sheet in the working papers, drawn like the screen (sections, computation, summary).
 export function cnpSheet(wb, c) {
   const { f, o, exam, A, agency } = c;
   const d = cnpData(f, o, exam, A.from, A.to);
   if (!d || !d.lines.length) return;
   const ws = wb.addWorksheet('WP-NOT PRESENTED');
-  ws.columns = [14, 22, 14, 14, 26, 22, 10].map((width) => ({ width }));
-  const B = { style: 'thin', color: { argb: 'FF000000' } }, box = { top: B, left: B, bottom: B, right: B };
-  const put = (r, vals, o2 = {}) => vals.forEach((v, i) => { const cl = ws.getCell(r, i + 1); cl.value = v; cl.font = { name: 'Arial', size: 10, bold: !!o2.bold }; if (o2.box) cl.border = box; if (typeof v === 'number' && (i !== 6 || o2.money)) cl.numFmt = '#,##0.00'; cl.alignment = { vertical: 'top', wrapText: !o2.nowrap }; });
-  ws.mergeCells(1, 1, 1, 7); put(1, ['SCHEDULE OF COLLECTIONS NOT PRESENTED AT THE LAST CASH EXAMINATION'], { bold: true }); ws.getCell(1, 1).alignment = { horizontal: 'center' };
-  ws.mergeCells(2, 1, 2, 7); put(2, [`${o.name}${o.designation ? ' · ' + o.designation : ''} · ${agency}`]); ws.getCell(2, 1).alignment = { horizontal: 'center' };
-  ws.mergeCells(3, 1, 3, 7); put(3, [`Last cash examination: ${fmtDate(A.from)} · Cash count: ${fmtDate(A.to)}`]); ws.getCell(3, 1).alignment = { horizontal: 'center' };
+  ws.columns = [14, 24, 15, 14, 28, 24, 11].map((width) => ({ width }));
+  wpPage(ws, true);
+  const H = { b: true, box: true, al: 'center', fill: 'FFF0F0F0' }, T = { b: true, box: true, fill: 'FFF3F4F6' };
+  wtitle(ws, 1, 7, 'SCHEDULE OF COLLECTIONS NOT PRESENTED AT THE LAST CASH EXAMINATION', { b: true, sz: 12 });
+  wtitle(ws, 2, 7, `${o.name}${o.designation ? ' · ' + o.designation : ''} · ${agency}`);
+  wtitle(ws, 3, 7, `Last cash examination: ${fmtDate(A.from)} · Cash count: ${fmtDate(A.to)}`);
+  // A line across columns a–b (merged), the rest as given.
+  const span = (r, a, b, v, o2) => { wcell(ws, r, a, v, o2); for (let k = a + 1; k <= b; k++) wcell(ws, r, k, null, { ...o2, keep: true }); ws.mergeCells(r, a, r, b); };
   let r = 5;
   d.groups.forEach((g, i) => {
-    put(r++, [`${LET[i] || ''}. ${g.title}`], { bold: true, nowrap: true });
-    put(r++, ['Date of Collection', g.ser, 'Amount', 'Date Remitted', 'Remitted to', 'Remittance Series', 'Days Held'], { bold: true, box: true });
-    g.lines.forEach((l) => { put(r++, [fmtDate(l.date), l.a === l.z ? String(l.a) : `${l.a} – ${l.z}`, l.amount, fmtDate(l.rem.date), l.rem.to, `${l.rem.a}–${l.rem.z}`, l.held], { box: true }); });
-    put(r++, [`Subtotal, ${g.short}`, '', g.total, '', '', '', ''], { bold: true, box: true });
-    put(r++, ['Collections before the last cash examination, remitted this period', '', '', '', '', '', g.total], { money: true, nowrap: true });
-    put(r++, [`Less: ${g.short} balance at the last cash examination (Audit Setup)${g.series ? `, not covered by its series ${rangesText(g.series)}` : ''}`, '', '', '', '', '', g.beg], { money: true, nowrap: true });
-    put(r++, [`${g.short} collections not presented at the last cash examination`, '', '', '', '', '', g.notPresented], { bold: true, money: true, nowrap: true });
+    wcell(ws, r++, 1, `${LET[i] || ''}. ${g.title}`, { b: true, wrap: false });
+    ['Date of Collection', g.ser, 'Amount', 'Date Remitted', 'Remitted to', 'Remittance Series', 'Days Held'].forEach((t, k) => wcell(ws, r, k + 1, t, H)); r++;
+    g.lines.forEach((l) => { [fmtDate(l.date), l.a === l.z ? String(l.a) : `${l.a} – ${l.z}`, l.amount, fmtDate(l.rem.date), l.rem.to, `${l.rem.a}–${l.rem.z}`, l.held].forEach((v, k) => wcell(ws, r, k + 1, v, { box: true, ...(k === 6 ? { n: '0' } : {}), ...([0, 1, 3, 5].includes(k) ? { al: 'center' } : {}) })); r++; });
+    span(r, 1, 2, `Subtotal, ${g.short}`, T); wcell(ws, r, 3, g.total, T); span(r, 4, 7, null, T); r++;
+    r++;
+    span(r, 1, 6, 'Collections before the last cash examination, remitted this period', { box: true }); wcell(ws, r++, 7, g.total, { box: true });
+    span(r, 1, 6, `Less: ${g.short} balance at the last cash examination (Audit Setup)${g.series ? `, not covered by its series ${rangesText(g.series)}` : ''}`, { box: true }); wcell(ws, r++, 7, g.beg, { box: true });
+    span(r, 1, 6, `${g.short} collections not presented at the last cash examination`, T); wcell(ws, r++, 7, g.notPresented, T);
     r++;
   });
-  put(r++, ['SUMMARY'], { bold: true });
-  const sumRow = (vals, o2) => { put(r, [vals[0], '', vals[1], '', vals[2], '', vals[3]], { box: true, money: true, ...o2 }); ws.mergeCells(r, 1, r, 2); ws.mergeCells(r, 3, r, 4); ws.mergeCells(r, 5, r, 6); r++; };
-  sumRow(['Form', 'Before last exam, remitted now', 'Balance at last exam', 'Not presented'], { bold: true });
-  d.groups.forEach((g) => sumRow([g.short, g.total, g.beg, g.notPresented]));
-  sumRow(['Total', d.total, d.beg, d.notPresented], { bold: true });
+  wcell(ws, r++, 1, 'SUMMARY', { b: true });
+  span(r, 1, 2, 'Form', H); span(r, 3, 4, 'Before last exam, remitted now', H); span(r, 5, 6, 'Balance at last exam', H); wcell(ws, r++, 7, 'Not presented', H);
+  const sumRow = (vals, o2) => { span(r, 1, 2, vals[0], o2); span(r, 3, 4, vals[1], o2); span(r, 5, 6, vals[2], o2); wcell(ws, r++, 7, vals[3], o2); };
+  d.groups.forEach((g) => sumRow([g.short, g.total, g.beg, g.notPresented], { box: true }));
+  sumRow(['Total', d.total, d.beg, d.notPresented], T);
 }
 
 /* ---------- Accountable forms not presented at the last cash examination (design approved 7 Nov 2026) ----------
@@ -158,23 +162,25 @@ export function fnpSheet(wb, c) {
   const { f, o, exam, A, agency } = c;
   const d = fnpData(f, o, exam, A.from, A.to); if (!d) return;
   const ws = wb.addWorksheet('WP-FORMS NOT PRESENTED');
-  ws.columns = [18, 18, 10, 18].map((width) => ({ width }));
-  ws.pageSetup = { ...(ws.pageSetup || {}), horizontalCentered: true, orientation: 'portrait', paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } };
-  const B = { style: 'thin', color: { argb: 'FF000000' } }, box = { top: B, left: B, bottom: B, right: B };
-  const put = (r, vals, o2 = {}) => vals.forEach((v, i) => { const cl = ws.getCell(r, i + 1); cl.value = v; cl.font = { name: 'Arial', size: 10, bold: !!o2.bold, italic: !!o2.italic }; if (o2.box) cl.border = box; cl.alignment = { vertical: 'top', wrapText: !o2.nowrap }; });
-  [['SCHEDULE OF ACCOUNTABLE FORMS NOT PRESENTED AT THE LAST CASH EXAMINATION', true], [`${o.name}${o.designation ? ' · ' + o.designation : ''} · ${agency}`], [`Last cash examination: ${fmtDate(A.from)} · Cash count: ${fmtDate(A.to)}`]]
-    .forEach(([t, bold], i) => { ws.mergeCells(i + 1, 1, i + 1, 4); put(i + 1, [t], { bold }); ws.getCell(i + 1, 1).alignment = { horizontal: 'center' }; });
+  ws.columns = [6, 20, 20, 12, 20, 6].map((width) => ({ width }));   // the table in B–E, centred on the page
+  wpPage(ws, false);
+  const H = { b: true, box: true, al: 'center', fill: 'FFF0F0F0' }, T = { b: true, box: true, fill: 'FFF3F4F6' };
+  wtitle(ws, 1, 6, 'SCHEDULE OF ACCOUNTABLE FORMS NOT PRESENTED AT THE LAST CASH EXAMINATION', { b: true, sz: 12 });
+  ws.getRow(1).height = 32;
+  wtitle(ws, 2, 6, `${o.name}${o.designation ? ' · ' + o.designation : ''} · ${agency}`);
+  wtitle(ws, 3, 6, `Last cash examination: ${fmtDate(A.from)} · Cash count: ${fmtDate(A.to)}`);
+  const span = (r, a, b, v, o2) => { wcell(ws, r, a, v, o2); for (let k = a + 1; k <= b; k++) wcell(ws, r, k, null, { ...o2, keep: true }); ws.mergeCells(r, a, r, b); };
   let r = 5;
   d.groups.forEach((g, i) => {
-    put(r++, [`${LET[i] || ''}. ${g.title}`], { bold: true, nowrap: true });
-    put(r++, ['From', 'To', 'Qty.', 'Date Reported'], { bold: true, box: true });
-    g.rows.forEach((x) => put(r++, [x.a, x.z, x.qty, fmtDate(x.date)], { box: true }));
-    put(r++, [`Subtotal, ${g.short}`, '', g.qty, ''], { bold: true, box: true });
-    if (g.note) { ws.mergeCells(r, 1, r, 4); put(r++, [g.note], { italic: true }); }
+    wcell(ws, r++, 2, `${LET[i] || ''}. ${g.title}`, { b: true, wrap: false });
+    ['From', 'To', 'Qty.', 'Date Reported'].forEach((t, k) => wcell(ws, r, k + 2, t, H)); r++;
+    g.rows.forEach((x) => { [String(x.a), String(x.z), x.qty, fmtDate(x.date)].forEach((v, k) => wcell(ws, r, k + 2, v, { box: true, ...(k === 2 ? { n: '0' } : { al: 'center' }) })); r++; });
+    span(r, 2, 3, `Subtotal, ${g.short}`, T); wcell(ws, r, 4, g.qty, { ...T, n: '0' }); wcell(ws, r++, 5, null, T);
+    if (g.note) { span(r, 2, 5, g.note, { i: true }); ws.getRow(r).height = 28; r++; }
     r++;
   });
-  put(r++, ['SUMMARY'], { bold: true });
-  put(r++, ['Form', '', 'Qty. (pcs)'], { bold: true, box: true });
-  d.groups.forEach((g) => put(r++, [g.short, '', g.qty], { box: true }));
-  put(r++, ['Total', '', d.qty], { bold: true, box: true });
+  wcell(ws, r++, 2, 'SUMMARY', { b: true });
+  span(r, 2, 3, 'Form', H); span(r, 4, 5, 'Qty. (pcs)', H); r++;
+  d.groups.forEach((g) => { span(r, 2, 3, g.short, { box: true }); span(r, 4, 5, g.qty, { box: true, n: '0' }); r++; });
+  span(r, 2, 3, 'Total', T); span(r, 4, 5, d.qty, { ...T, n: '0' });
 }

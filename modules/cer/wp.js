@@ -396,56 +396,90 @@ export async function downloadReport(c, ver) {
   await save(wb, `CER - ${fileBase(c)}.xlsx`);
 }
 
-export async function downloadWp(c, ver, bank) {
-  const wb = await template('cer-wp.xlsx');
-  const { A, prep, rev } = c;
-  const scope = `${fmtDate(A.from)} to ${fmtDate(A.to)}`;
-  [['a1a', 'WP-AF51', 'B5', 10, 1545, 1551, ['C', 'H'], 1557], ['a1b', 'WP-CTC', 'A5', 10, 785, 789, ['C', 'G'], null], ['a2a', 'WP-CA', 'A5', 10, 408, 414, ['C', 'G'], null]].forEach(([paper, name, sc, first, last, sig, sc2, totRow]) => {
-    const ws = wb.getWorksheet(name); const w = wpLines(c, paper, ver);
-    if (!w) { wb.removeWorksheet(ws.id); return; }
-    set(ws, sc, scope);
-    // LGU: the CTC go into the RCD, so its column is deposits, not remittances.
-    if (paper === 'a1b' && w.book.kind === 'RCD') for (let rr = 1; rr <= 9; rr++) ws.getRow(rr).eachCell((cl) => { if (typeof cl.value === 'string' && /remittance/i.test(cl.value)) cl.value = cl.value.replace(/REMITTANCES/g, 'DEPOSITS').replace(/REMITTANCE/g, 'DEPOSIT').replace(/Remittances/g, 'Deposits').replace(/Remittance/g, 'Deposit'); });
-    set(ws, 'B9', D(A.from)); ws.getCell('B9').numFmt = 'mm/dd/yyyy'; set(ws, 'C9', 'Beginning Balance'); set(ws, 'G9', w.beg); set(ws, 'J9', w.beg); set(ws, 'K9', 0);
-    let r = first;
-    // More than one fund: a heading, a beginning and a subtotal line per fund.
-    const bold = (cell) => { const st = JSON.parse(JSON.stringify(ws.getCell(cell).style || {})); st.font = { ...(st.font || {}), bold: true }; ws.getCell(cell).style = st; };
-    const grouped = w.groups && w.groups.length > 1;
-    if (grouped) { set(ws, 'C9', 'Beginning Balance (all funds)'); }
-    const rowsOut = grouped ? w.groups.flatMap((g) => [{ head: g.fund }, { begOf: g }, ...g.lines, { subOf: g }]) : w.lines;
-    rowsOut.slice(0, last - first + 1).forEach((l) => {
-      if (l.head) { set(ws, `C${r}`, l.head); bold(`C${r}`); r++; return; }
-      if (l.begOf) { set(ws, `B${r}`, D(A.from)); ws.getCell(`B${r}`).numFmt = 'mm/dd/yyyy'; set(ws, `C${r}`, 'Beginning Balance'); set(ws, `G${r}`, l.begOf.beg); set(ws, `J${r}`, l.begOf.beg); set(ws, `K${r}`, 0); r++; return; }
-      if (l.subOf) { const g = l.subOf; set(ws, `C${r}`, `Subtotal, ${g.fund}`); bold(`C${r}`); set(ws, `E${r}`, g.tot.d || null); set(ws, `F${r}`, g.tot.c || null); set(ws, `G${r}`, g.end); set(ws, `H${r}`, g.tot.cd || null); set(ws, `I${r}`, g.tot.cc || null); set(ws, `J${r}`, g.endCb); set(ws, `K${r}`, g.tot.k); r++; return; }
-      set(ws, `B${r}`, D(l.date)); ws.getCell(`B${r}`).numFmt = 'mm/dd/yyyy'; set(ws, `C${r}`, l.part); set(ws, `D${r}`, l.no ? (Number.isFinite(+l.no) ? +l.no : l.no) : null);
-      set(ws, `E${r}`, l.d || null); set(ws, `F${r}`, l.c || null); set(ws, `G${r}`, l.ga); set(ws, `H${r}`, l.cd || null); set(ws, `I${r}`, l.cc || null); set(ws, `J${r}`, l.gb); set(ws, `K${r}`, l.k);
+/* ---------- Working papers (Excel): drawn like the screen ----------
+   Each sheet is built fresh (no template): title block, a boxed table with a two-row header, every line boxed,
+   subtotals and total, the signatures; long bond paper (Legal in Excel), fitted to the page width and centred. */
+const BOX = (() => { const b = { style: 'thin', color: { argb: 'FF000000' } }; return { top: b, left: b, bottom: b, right: b }; })();
+const NUM = '#,##0.00;(#,##0.00);"-"';
+export function wpPage(ws, landscape, titles) {
+  ws.pageSetup = { orientation: landscape ? 'landscape' : 'portrait', paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true,
+    margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 }, ...(titles ? { printTitlesRow: titles } : {}) };
+}
+// One cell: value, and { b: bold, i: italic, al: 'left' | 'center' | 'right', box, fill, n: number format, sz, wrap }.
+export function wcell(ws, r, col, v, o = {}) {
+  const cl = ws.getCell(r, col); if (!o.keep) cl.value = clean(v);   // keep: the other cells of a merge (style only, the value stays)
+  cl.font = { name: 'Arial', size: o.sz || 10, bold: !!o.b, italic: !!o.i };
+  cl.alignment = { vertical: 'middle', horizontal: o.al || (typeof v === 'number' ? 'right' : 'left'), wrapText: o.wrap !== false };
+  if (o.box) cl.border = BOX;
+  if (o.fill) cl.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: o.fill } };
+  if (typeof v === 'number' || o.n) cl.numFmt = o.n || NUM;
+  return cl;
+}
+export function wtitle(ws, r, nCols, text, o = {}) { wcell(ws, r, 1, text, { al: 'center', ...o }); ws.mergeCells(r, 1, r, nCols); }
+function wsigns(ws, r, prep, rev, colA, colB) {
+  wcell(ws, r, colA, 'Prepared by:'); wcell(ws, r, colB, 'Reviewed by:');
+  [[prep, colA], [rev, colB]].forEach(([p, col]) => { wcell(ws, r + 3, col, p.name || '', { b: true, wrap: false }); wcell(ws, r + 4, col, p.pos || '', { wrap: false }); wcell(ws, r + 5, col, p.des || '', { wrap: false }); });
+}
+function wpSheetNew(wb, c, paper, ver, name) {
+  const w = wpLines(c, paper, ver); if (!w) return;
+  const { A, agency, station, prep, rev, o } = c;
+  const title = paper === 'a2a' ? ['DETAILED STATEMENT OF CASH ADVANCES AND LIQUIDATIONS', 'CASH ADVANCES', 'Check No.', 'Cash Advances', 'Liquidations']
+    : paper === 'a1b' ? (w.book.kind === 'RCD' ? ['DETAILED STATEMENT OF COLLECTIONS AND DEPOSITS', 'CTC', 'CTC No.', 'Collections', 'Deposits'] : ['DETAILED STATEMENT OF COLLECTIONS AND REMITTANCES', 'CTC', 'CTC No.', 'Collections', 'Remittance'])
+      : ['DETAILED STATEMENT OF COLLECTIONS AND DEPOSITS', 'OFFICIAL RECEIPTS', 'OR No.', 'Collections', 'Deposits'];
+  const ws = wb.addWorksheet(name);
+  ws.columns = [12, 44, 13, 14, 14, 14, 14, 14, 14, 14].map((width) => ({ width }));
+  wpPage(ws, true, '7:8');
+  wcell(ws, 1, 10, WP[paper], { b: true, al: 'right', wrap: false });
+  wtitle(ws, 2, 10, title[0], { b: true, sz: 12 }); wtitle(ws, 3, 10, title[1], { b: true });
+  wtitle(ws, 4, 10, `${fmtDate(A.from)} to ${fmtDate(A.to)}`); wtitle(ws, 5, 10, `${o.name} · ${o.designation || ''} · ${agency}, ${station}`);
+  const H = { b: true, box: true, al: 'center', fill: 'FFF0F0F0' };
+  [[1, 'Date'], [2, 'Particulars'], [3, title[2]], [10, 'Reconciling amount']].forEach(([col, t]) => { wcell(ws, 7, col, t, H); wcell(ws, 8, col, null, { ...H, keep: true }); ws.mergeCells(7, col, 8, col); });
+  [[4, 'Per Audit'], [7, 'Per CashBook']].forEach(([col, t]) => { wcell(ws, 7, col, t, H); wcell(ws, 7, col + 1, null, { ...H, keep: true }); wcell(ws, 7, col + 2, null, { ...H, keep: true }); ws.mergeCells(7, col, 7, col + 2); });
+  [title[3], title[4], 'Balance', title[3], title[4], 'Balance'].forEach((t, k) => wcell(ws, 8, 4 + k, t, H));
+  let r = 9;
+  const line = (vals, o2 = {}) => { vals.forEach((v, k) => wcell(ws, r, k + 1, v, { box: true, ...(k === 0 || k === 2 ? { al: 'center' } : {}), ...o2 })); r++; };
+  const groups = w.groups && w.groups.length > 1 ? w.groups : [{ fund: '', beg: w.beg, lines: w.lines }];
+  groups.forEach((g) => {
+    if (g.fund) { wcell(ws, r, 1, g.fund, { b: true, box: true, fill: 'FFF7F9FC' }); for (let k = 2; k <= 10; k++) wcell(ws, r, k, null, { box: true, fill: 'FFF7F9FC', keep: true }); ws.mergeCells(r, 1, r, 10); r++; }
+    line([fmtDate(A.from), 'Beginning Balance', '', null, null, g.beg, null, null, g.beg, 0]);
+    g.lines.forEach((l) => line([fmtDate(l.date), l.part, l.no || '', l.d || 0, l.c || 0, l.ga, l.cd || 0, l.cc || 0, l.gb, l.k], l.edited ? { fill: 'FFFFF4E5' } : {}));
+    if (g.fund) line(['', `Subtotal, ${g.fund}`, '', g.tot.d, g.tot.c, g.end, g.tot.cd, g.tot.cc, g.endCb, g.tot.k], { i: true, b: true });
+  });
+  line(['', 'Total', '', w.tot.d, w.tot.c, w.end, w.tot.cd, w.tot.cc, w.endCb, w.tot.k], { b: true, fill: 'FFF3F4F6' });
+  wsigns(ws, r + 2, prep, rev, 2, 7);
+}
+function bankSheetNew(wb, bank) {
+  if (!bank.length) return;
+  const ws = wb.addWorksheet('BANK STATEMENT');
+  const isAmt = (h) => /debit|credit|balance|amount|withdraw|deposit/i.test(h);
+  const nCols = Math.max(6, ...bank.map((bk) => (bk.heads && bk.heads.length) || 6));
+  ws.columns = Array.from({ length: nCols }, (_, k) => ({ width: k === 1 ? 44 : 15 }));
+  wpPage(ws, true);
+  wtitle(ws, 1, nCols, 'BANK STATEMENT', { b: true, sz: 12 });
+  let r = 3;
+  bank.forEach((bk) => {
+    [['Account Number', bk.account || ''], ['Currency', 'PHP'], ['Account Type', bk.label || '']].forEach(([k, v]) => { wcell(ws, r, 1, k, { b: true, wrap: false }); wcell(ws, r, 2, v, { wrap: false }); r++; });
+    r++;
+    const heads = bk.heads && bk.heads.length ? bk.heads : ['Date', 'Description', 'Debit', 'Credit', 'Balance', 'Cheque Number'];
+    heads.forEach((h, k) => wcell(ws, r, k + 1, clean(h), { b: true, box: true, al: 'center', fill: 'FFF0F0F0' })); r++;
+    const bi = heads.findIndex((h) => /balance/i.test(h));
+    if (bk.opening !== null && bk.opening !== undefined) { heads.forEach((h, k) => wcell(ws, r, k + 1, k === 1 ? 'Beginning balance' : k === (bi >= 0 ? bi : 4) ? num(bk.opening) : null, { box: true, i: k === 1 })); r++; }
+    bk.lines.forEach((l) => {
+      const cells = l.cells && l.cells.length ? l.cells : [fmtDate(l.date), l.desc, l.debit || '', l.credit || '', l.bal ?? '', l.chq];
+      heads.forEach((h, k) => { const v = cells[k] ?? ''; const n2 = isAmt(h) && v !== '' ? num(v) : null; wcell(ws, r, k + 1, n2 !== null ? n2 : clean(v), { box: true, ...(n2 === null && k !== 1 ? { al: 'center' } : {}) }); });
       r++;
     });
-    hideRows(ws, r, last);
-    set(ws, `${sc2[0]}${sig}`, prep.name); set(ws, `${sc2[0]}${sig + 1}`, prep.pos); set(ws, `${sc2[0]}${sig + 2}`, prep.des);
-    set(ws, `${sc2[1]}${sig}`, rev.name); set(ws, `${sc2[1]}${sig + 1}`, rev.pos); set(ws, `${sc2[1]}${sig + 2}`, rev.des);
-    if (totRow) hideRows(ws, totRow - 1, totRow + 2);   // the template's check totals: not part of the working paper
+    r += 2;
   });
-  // Bank statement: the imported lines within the coverage, with the statement's own columns, one block per bank account.
-  const ws = wb.getWorksheet('BANK STATEMENT');
-  if (!bank.length) wb.removeWorksheet(ws.id);
-  else {
-    const isAmt = (h) => /debit|credit|balance|amount|withdraw|deposit/i.test(h);
-    let r = 1;
-    bank.forEach((bk, i) => {
-      if (i) { r += 2; set(ws, `A${r}`, 'Account Number'); set(ws, `A${r + 1}`, 'Currency'); set(ws, `A${r + 2}`, 'Account Type'); }
-      set(ws, `B${r}`, bk.account || ''); set(ws, `B${r + 1}`, 'PHP'); set(ws, `B${r + 2}`, bk.label || '');
-      const heads = bk.heads && bk.heads.length ? bk.heads : ['Date', 'Description', 'Debit', 'Credit', 'Balance', 'Cheque Number'];
-      heads.forEach((h, k) => { const cl = ws.getCell(r + 4, k + 1); cl.value = clean(h); cl.font = { bold: true }; });
-      r += 5;
-      if (bk.opening !== null && bk.opening !== undefined) { set(ws, `B${r}`, 'Beginning balance'); const k = heads.findIndex((h) => /balance/i.test(h)); ws.getCell(r, (k >= 0 ? k : 4) + 1).value = clean(bk.opening); r++; }
-      bk.lines.forEach((l) => {
-        const cells = l.cells && l.cells.length ? l.cells : [fmtDate(l.date), l.desc, l.debit || '', l.credit || '', l.bal ?? '', l.chq];
-        cells.forEach((v, k) => { const cl = ws.getCell(r, k + 1); const h = heads[k] || ''; const n2 = isAmt(h) && v !== '' ? num(v) : null; cl.value = n2 !== null ? n2 : clean(v); if (n2 !== null) cl.numFmt = '#,##0.00'; });
-        r++;
-      });
-    });
-  }
+}
+
+export async function downloadWp(c, ver, bank) {
+  const ExcelJS = await loadExcelJS();
+  const wb = new ExcelJS.Workbook();
+  const { A } = c;
+  const scope = `${fmtDate(A.from)} to ${fmtDate(A.to)}`;
+  [['a1a', 'WP-AF51'], ['a1b', 'WP-CTC'], ['a2a', 'WP-CA']].forEach(([paper, name]) => wpSheetNew(wb, c, paper, ver, name));
+  bankSheetNew(wb, bank);
   cnpSheet(wb, c);
   fnpSheet(wb, c);
   if (!wb.worksheets.length) { const ws = wb.addWorksheet('Working Papers'); ws.getCell('A1').value = `No working paper for ${c.o.name}: no collections, cash advances or imported bank statement within ${scope}.`; }
