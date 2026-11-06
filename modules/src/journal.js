@@ -95,11 +95,12 @@ export const listT = (t) => (t === 'cer_cashadv' ? listAdvances() : t === 'src_c
 export const bankChecksOf = (jr, acctId) => jr.filter((c) => c.acctId === acctId && !c.cancelled && !(isCa(c) && (c.aoId ?? c.officerId)));
 
 // A transfer into a bank account: a check of another account of the office paid to this account's fund (the payee names it,
-// e.g. "Brgy. Sta. Maria 5% BDRRM Fund", or the particulars say transfer … 5% BDRRM). For the Cashbook and the bank reconciliation.
+// e.g. "Brgy. Sta. Maria 5% BDRRM Fund" or "… General Fund", or the particulars say transfer … 5% BDRRM / general fund). For the Cashbook and the bank reconciliation.
 const fcore = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9%]/g, '').replace(/landbankofthephilippines|landbank|lbp|dbp|fund$/g, '');
 export function transfersInto(jr, acct, lguId) {
-  const k = fcore(acct.fund); if (k.length < 3 || k === 'general') return [];
-  const has = (t) => fcore(t).includes(k);
+  const k = fcore(acct.fund); if (k.length < 3) return [];   // the General Fund too (e.g. the 5% BDRRM paying the taxes withheld back)
+  // "General" alone is too common (General Merchandise): the General Fund must be named "general fund".
+  const kf = k + 'fund', has = (t) => { const n = String(t ?? '').toLowerCase().replace(/[^a-z0-9%]/g, ''); return n.includes(kf) || (k !== 'general' && fcore(t).includes(k)); };
   return jr.filter((c) => c.lguId === lguId && c.acctId && c.acctId !== acct.id && !c.cancelled && (has(c.payee) || (/transfer/i.test(c.particulars || '') && has(c.particulars))));
 }
 // A transfer already typed as a bank credit (Cashbook "Other entry"): same amount, and its text names the check No. or its
