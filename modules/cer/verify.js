@@ -352,6 +352,23 @@ function cashbookFindings(f, o, exam, from, to) {
   };
   const colBeg = Object.entries(exam.balances || {}).filter(([k]) => k.startsWith('col-')).reduce((n, [, v]) => n + (+v?.amount || 0), 0);
   one(o, r2(colBeg));
+  // Cashbook only: each deposit / remittance against the collections of its OR series; gaps and overlaps between the series.
+  if (exam.records === 'cashbook') {
+    if (!f.ors.some((x) => x.officerId === o.id && x.range)) add(`cbsum|${o.id}`, 'collections verified at the summary level from the cashbook; the RCDs / SCDs and the ORs were not examined individually.');
+    const deps = f.reports.filter((r) => r.officerId === o.id).flatMap((r) => (r.deposits || []).filter((d) => d.from && inS(d.date))).sort((a, b) => +a.from - +b.from);
+    const mx = (x) => (x.range ? +x.serialTo : +x.serial);
+    deps.forEach((d, i) => {
+      const a = +d.from, z = +(d.to || d.from);
+      const c = r2(f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && +x.serial >= a && mx(x) <= z).reduce((n, x) => n + amt(x), 0));
+      if (Math.abs(c - (+d.amount || 0)) > 0.004) add(`serdiff|${o.id}|${d.date}|${a}`, `${a}–${z}: collections ₱${money(c)}, ${d.toLO ? 'remitted' : 'deposited'} ₱${money(d.amount)} on ${fmtDate(d.date)}.`);
+      const p = deps[i - 1]; if (!p) return;
+      const pz = +(p.to || p.from);
+      // A gap counts only on numbers of the officer's own booklets (the next booklet may start far after).
+      const gap = f.booklets.filter((b) => b.officerId === o.id && !b.noSerial && b.from <= a - 1 && b.to >= pz + 1).map((b) => [Math.max(b.from, pz + 1), Math.min(b.to, a - 1)]);
+      if (a > pz + 1 && gap.length) add(`sergap|${o.id}|${pz}|${a}`, `ORs ${gap.map(([x, y]) => (x === y ? x : `${x}–${y}`)).join(', ')} are in no ${d.toLO ? 'remittance' : 'deposit'} (between the series ${p.from}–${pz} and ${a}–${z}).`);
+      else if (a <= pz) add(`serovl|${o.id}|${pz}|${a}`, `The series ${p.from}–${pz} and ${a}–${z} overlap.`);
+    });
+  }
   if ((exam.functions || []).includes('liquidating')) {
     const ids = new Set(f.reports.filter((r) => r.officerId === o.id).flatMap((r) => (r.remittances || []).map((m) => m.collectorId)));
     f.officers.filter((x) => ids.has(x.id) && x.id !== o.id).forEach((col) => one(col, null));

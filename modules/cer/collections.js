@@ -79,6 +79,11 @@ export function figuresOf(f, o, funds, countDate, lgu) {
   const reals = f.reports.filter((r) => r.officerId === o.id && !r.pending);
   const allFunds = [...new Set([...funds, ...reals.map((r) => r.fund), ...ors.map((x) => x.fund).filter(Boolean)])];
   const encoded = {}; f.ors.forEach((x) => { const st = (encoded[x.form] = encoded[x.form] || new Set()); serialsOf(x).forEach((n) => st.add(n)); });
+  // Remittances to this officer (as the Liquidating Officer) typed on the collectors' side, with their OR series (cashbook only):
+  // they show in this LO's remittances received, so the LO's book is not typed again.
+  const nm = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+  const colLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.deposits || []).filter((d) => d.toLO && !d.fromLO && d.from && nm(d.ref) && nm(d.ref) === nm(o.name))
+    .map((d) => ({ date: d.date, collectorId: r.officerId, reportNo: '', amount: +d.amount || 0, from: d.from, to: d.to || d.from, fromCol: true, fund: r.fund || '' })));
   // A collector's remittances recorded by a Liquidating Officer (from the LO's cashbook): the collector's remittances to the LO.
   const loLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.remittances || []).filter((m) => m.collectorId === o.id && !m.beg && m.date)
     .map((m) => ({ date: m.date, ref: f.officers.find((x) => x.id === r.officerId)?.name || 'Liquidating Officer', amount: +m.amount || 0, toLO: true, fromLO: true, form: m.form || '', from: m.from || '', to: m.to || '', fund: r.fund || '' })));
@@ -129,8 +134,10 @@ export function figuresOf(f, o, funds, countDate, lgu) {
     const figs = list.map((r, i) => { const fg = build(r.id, r, ors.filter((x) => x.reportId === r.id), i === 0 ? (num(r.begTyped) || 0) : beg); beg = fg.end; return fg; });
     const pid = pendId(o.id, kind, fund); const prec = f.reports.find((r) => r.id === pid) || null;
     const pr0 = prec ? { ...prec, pending: true } : { pending: true, kind, fund, deposits: [], remittances: [] };
-    const myLo = loLines.filter((m) => (m.fund || allFunds[0]) === fund && (m.form ? kindOfForm(lgu, m.form) : kinds[0]) === kind && !(pr0.deposits || []).some((d) => d.date === m.date && Math.abs((+d.amount || 0) - m.amount) < 0.005));
+    const myLo = loLines.filter((m) => (m.fund || allFunds[0]) === fund && (m.form ? kindOfForm(lgu, m.form) : kinds[0]) === kind && !(pr0.deposits || []).some((d) => (d.from && m.from && String(d.from) === String(m.from)) || (d.date === m.date && Math.abs((+d.amount || 0) - m.amount) < 0.005)));
     if (myLo.length) pr0.deposits = [...(pr0.deposits || []), ...myLo].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const myCol = colLines.filter((m) => (m.fund || allFunds[0]) === fund && kind === kinds[0] && !(pr0.remittances || []).some((x) => x.collectorId === m.collectorId && ((x.from && String(x.from) === String(m.from)) || (x.date === m.date && Math.abs((+x.amount || 0) - m.amount) < 0.005))));
+    if (myCol.length) pr0.remittances = [...(pr0.remittances || []), ...myCol].sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const pend = build(pid, pr0, ors.filter((x) => !x.reportId && (x.fund || allFunds[0]) === fund && kindOfForm(lgu, x.form) === kind), figs.length ? beg : (num(prec?.begTyped) || 0));
     pend.pending = true; pend.fund = fund; pend.kind = kind;
     figs.forEach((g) => { g.kind = kind; g.fund = fund; });
@@ -242,7 +249,10 @@ export async function collectionsView(ctx) {
   const crList = f.reports.filter((r) => !r.pending && collectors.some((c) => c.id === r.officerId)).map((r) => r.no);
   const remBlock = isLO ? `<div class="cd-block"><h3 class="cer-h3">Remittances received from collectors</h3>
       <div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">Date Received</th><th scope="col">From Collector</th><th scope="col">Collector's RCD No.</th><th scope="col">OR From</th><th scope="col">OR To</th><th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
-        <tbody id="cd-rems">${(cur.rec?.remittances || []).map(remRow).join('')}</tbody></table></div>
+        <tbody id="cd-rems">${(cur.rec?.remittances || []).filter((m) => !m.fromCol).map(remRow).join('')}</tbody></table></div>
+      ${(cur.rec?.remittances || []).some((m) => m.fromCol) ? `<h3 class="cer-h3" style="margin-top:10px">From the collectors' records <small class="dim">(remittances to this LO with their OR series)</small></h3>
+        <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th>Date</th><th>Collector</th><th>OR Series</th><th class="r">Amount (₱)</th></tr></thead>
+        <tbody>${cur.rec.remittances.filter((m) => m.fromCol).map((m) => `<tr><td>${esc(fmtDate(m.date))}</td><td>${esc(f.officers.find((x) => x.id === m.collectorId)?.name || '')}</td><td class="mono">${esc(m.from)}–${esc(m.to)}</td><td class="r">${money(m.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
       <datalist id="cd-crlist">${[...new Set(crList)].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
       ${enc ? `<div class="cd-actions"><button class="btn sm" type="button" id="cd-addrem">+ Add Remittance</button><button class="btn primary" type="button" id="cd-saverem">Save Remittances</button></div>` : ''}
       <p class="af-note">Each collector's remittance, with the date it was received (and the OR range, from the LO's cashbook). When the collector's RCD is in the app, its collections are compared with the amount; by OR range, the collector's cashbook is compared in Verification. A remittance dated before the last cash exam is in the beginning balance.</p></div>` : '';
@@ -270,7 +280,9 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   /* ----- 2 · Collections ----- */
   const myBooklets = (form) => f.booklets.filter((b) => b.form === form && b.officerId === o.id && b.status !== 'lost' && !b.noSerial).sort((a, b) => a.from - b.from);
   const ckey = o.id + '|' + selId;
-  if (LASTC.key !== ckey) Object.assign(LASTC, { key: ckey, form: '', bookletId: '', serial: '', focus: '' });
+  const cbook = exam.records === 'cashbook', cbMode = cbook || f.ors.some((x) => x.officerId === o.id && x.range);
+  if (LASTC.key !== ckey) Object.assign(LASTC, { key: ckey, form: '', bookletId: '', serial: '', focus: '', mode: cbook ? 'range' : 'one' });
+  if (!cbMode) LASTC.mode = 'one';
   const form = forms.includes(LASTC.form) ? LASTC.form : forms[0] || '';
   const bks = myBooklets(form);
   // Unused per the Forms Register: numbers used before the beginning (partly used) and ORs already encoded are both taken out.
@@ -298,7 +310,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         <div class="field"><label for="cd-bk">Booklet</label><select class="input" id="cd-bk">${bks.map((b) => `<option value="${esc(b.id)}" ${bk && b.id === bk.id ? 'selected' : ''}>${b.from} – ${b.to} · ${unusedOfBk(b)} unused</option>`).join('')}<option value="" ${bk ? '' : 'selected'}>Not in the Forms Register</option></select></div>
         <span class="cd-goes">Goes to: <b>${esc(cur.pending ? `the ${K} whose OR Range has its number` : repName(cur.rec, K))} · ${esc(curFund)}</b> <span class="crumb-i" title="Enter moves along: Date → Particulars → Amount → saves the OR, then back to Date for the next OR (Alt + Enter in Amount adds another particular). The fund follows the ${K}. Cancelled ORs have no particulars and a zero amount.">ⓘ</span></span>
       </div>
-      <div class="seg cd-mode" role="group" aria-label="How to encode"><a href="#" data-cmode="one" class="${LASTC.mode !== 'range' ? 'on' : ''}">One OR at a time</a><a href="#" data-cmode="range" class="${LASTC.mode === 'range' ? 'on' : ''}">By OR range</a></div>
+      ${cbMode ? '' : '<!--'}<div class="seg cd-mode" role="group" aria-label="How to encode"><a href="#" data-cmode="one" class="${LASTC.mode !== 'range' ? 'on' : ''}">One OR at a time</a><a href="#" data-cmode="range" class="${LASTC.mode === 'range' ? 'on' : ''}">By OR range</a></div>${cbMode ? '' : '-->'}
       ${LASTC.mode === 'range' ? `<div class="sd-line cd-rgentry" id="cd-rgform">
         <div class="sd-f sd-w-date"><label for="rg-date">Date</label><input class="input" type="date" id="rg-date" value="${esc(LASTC.date)}"></div>
         <div class="sd-f sd-w-no"><label for="rg-from">OR From</label><input class="input mono" id="rg-from" inputmode="numeric" value="${esc(LASTC.rgNext || '')}"></div>
@@ -339,10 +351,14 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const toLO = !isRem && !!exam.remitToLO;
   const remish = isRem || toLO;
   const DEP = isRem ? 'Remittance' : toLO ? 'Remittance to LO' : 'Deposit', DEPS = isRem ? 'Remittances' : toLO ? 'Remittances to LO' : 'Deposits';
+  // Cashbook only: each deposit / remittance with the OR series it covers. The next series starts after the last one.
+  const lastTo = Math.max(0, ...f.reports.filter((r) => r.officerId === o.id).flatMap((r) => (r.deposits || []).filter((d) => !d.fromLO).map((d) => +d.to || 0)));
+  const firstOr = Math.min(Infinity, ...f.ors.filter((x) => x.officerId === o.id && !x.beg && (!exam.lastExamDate || x.date >= exam.lastExamDate)).map((x) => +x.serial));
+  const sCell = (d) => (cbook ? `<td><input class="input mono" data-k="from" inputmode="numeric" value="${esc(d.from || '')}" aria-label="OR From" ${enc ? '' : 'disabled'}></td><td><input class="input mono" data-k="to" inputmode="numeric" value="${esc(d.to || '')}" aria-label="OR To" ${enc ? '' : 'disabled'}></td>` : '');
   const depRow = (d = {}) => `<tr class="cd-dep"><td><input class="input" type="date" data-k="date" value="${esc(d.date || '')}" aria-label="${toLO ? 'Date remitted' : 'Deposit date'}" ${enc ? '' : 'disabled'}></td>
       <td><input class="input" data-k="ref" value="${esc(d.ref || '')}" list="cd-reflist" placeholder="${remish ? 'Choose or type the name' : 'Choose or type'}" aria-label="${remish ? 'Liquidating Officer' : 'Reference'}" ${enc ? '' : 'disabled'}></td>
       ${remish ? '' : `<td><input class="input mono" data-k="no" value="${esc(d.no || '')}" placeholder="Optional" aria-label="Deposit slip No." ${enc ? '' : 'disabled'}></td>`}
-      <td><input class="input r" data-k="amount" inputmode="decimal" value="${d.amount !== undefined && d.amount !== '' ? esc(money(d.amount)) : ''}" aria-label="Amount" ${enc ? '' : 'disabled'}></td>
+      ${sCell(d)}<td><input class="input r" data-k="amount" inputmode="decimal" value="${d.amount !== undefined && d.amount !== '' ? esc(money(d.amount)) : ''}" aria-label="Amount" ${enc ? '' : 'disabled'}></td>
       <td>${enc ? '<button class="btn sm cd-x" type="button" aria-label="Remove deposit">✕</button>' : ''}</td></tr>`;
   const agree = !cur.pending && cur.rec.hardTotal !== null && cur.rec.hardTotal !== undefined && cur.rec.hardTotal !== '' ? (Math.abs(+cur.rec.hardTotal - cur.coll) < 0.005 ? '<span class="pill p-done">Agrees with hard copy</span>' : `<span class="pill p-stock">Hard copy ₱${money(cur.rec.hardTotal)}</span>`) : '';
   const lo = isLO ? loDays(f, o, fig.chains, audit.countDate) : [];
@@ -358,8 +374,8 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <tbody>${shownDeps.map((d) => `<tr data-pickdep="${esc(d.g.id)}" tabindex="0" class="${d.g.id === selId ? 'cd-on' : ''}"><td>${esc(fmtDate(d.date))}</td><td class="mono">${esc(depRefText(d, d.kind === 'SCR'))}</td><td class="r">${money(+d.amount || 0)}</td><td>${esc(d.g.pending ? `Not yet in an ${d.kind}` : repName(d.g.rec, d.kind))}</td><td>${esc(d.fund)}</td></tr>`).join('')}</tbody>
       <tfoot><tr class="cd-foot"><td colspan="2">Total</td><td class="r">${money(r2(shownDeps.reduce((n, d) => n + (+d.amount || 0), 0)))}</td><td colspan="2"></td></tr></tfoot></table></div>`
       : `<div class="empty"><b>No ${remish ? 'remittance' : 'deposit'} encoded yet.</b></div>`}</div>`;
-  const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : toLO ? 'Date Remitted to LO' : 'Deposit Date'}</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th>${remish ? '' : '<th scope="col">No.</th>'}<th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
-      <tbody id="cd-deps">${(cur.rec?.deposits || []).filter((d) => !d.fromLO).map(depRow).join('')}</tbody></table></div>
+  const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : toLO ? 'Date Remitted to LO' : 'Deposit Date'}</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th>${remish ? '' : '<th scope="col">No.</th>'}${cbook ? '<th scope="col">OR From</th><th scope="col">OR To</th>' : ''}<th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
+      <tbody id="cd-deps" data-next="${lastTo ? lastTo + 1 : isFinite(firstOr) ? firstOr : ''}">${(cur.rec?.deposits || []).filter((d) => !d.fromLO).map(depRow).join('')}</tbody></table></div>
     ${(cur.rec?.deposits || []).some((d) => d.fromLO) ? `<div class="cd-block"><h3 class="cer-h3">Received by the Liquidating Officer <small class="dim">(from the LO's cashbook)</small></h3>
       <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th>Date</th><th>Liquidating Officer</th><th>OR Range</th><th class="r">Amount (₱)</th></tr></thead>
       <tbody>${cur.rec.deposits.filter((d) => d.fromLO).map((d) => `<tr><td>${esc(fmtDate(d.date))}</td><td>${esc(d.ref)}</td><td class="mono">${d.from ? `${esc(d.from)}–${esc(d.to || d.from)}` : ''}</td><td class="r">${money(d.amount)}</td></tr>`).join('')}</tbody></table></div>
@@ -395,7 +411,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       ['dep', isRem ? 'Remittances to MTO' : 'Deposits', `₱ ${money(cur.dep)} ${isRem ? 'remitted' : 'deposited'} · ₱ ${money(cur.end)} ${isRem ? 'unremitted' : 'undeposited'}`, depBody]])}
 `;
 
-  const ctxw = { refs, f, audit, lgu, K, KS, o, exam, fig, cur, curFund, curKey, selId, isLO, enc, funds, form, bk, bks, listOrs, allFigs, isFirst, toLO };
+  const ctxw = { refs, f, audit, lgu, K, KS, o, exam, fig, cur, curFund, curKey, selId, isLO, enc, funds, form, bk, bks, listOrs, allFigs, isFirst, toLO, cbook };
   return { crumb, body, wire: () => { wireTop(); wireAll(ctxw); } };
 }
 
@@ -467,7 +483,8 @@ function wireAll(c) {
   const depBox = $('#cd-deps');
   if (depBox) {
     wireRows(depBox);
-    $('#cd-adddep').onclick = () => { const t = document.createElement('tbody'); t.innerHTML = depRowHtml(c.K === 'SCR' || c.toLO, c.toLO); const tr = t.firstElementChild; depBox.appendChild(tr); wireRows(depBox); $('input', tr).focus(); };
+    $('#cd-adddep').onclick = () => { const t = document.createElement('tbody'); t.innerHTML = depRowHtml(c.K === 'SCR' || c.toLO, c.toLO, c.cbook);
+      if (c.cbook) { const tos = $$('[data-k="to"]', depBox).map((i) => +i.value || 0); const nx = Math.max(+depBox.dataset.next || 0, ...tos.map((v) => (v ? v + 1 : 0))); const fi = $('[data-k="from"]', t.firstElementChild); if (fi && nx) fi.value = nx; } const tr = t.firstElementChild; depBox.appendChild(tr); wireRows(depBox); $('input', tr).focus(); };
     if (!depBox.children.length) $('#cd-adddep').click();
     $('#cd-savedep').onclick = async () => {
       const list = [];
@@ -476,7 +493,9 @@ function wireAll(c) {
         if (!g('date') && !g('amount') && !g('ref') && !g('no')) continue;
         if (!g('date')) return bad('Enter the date of each deposit.');
         const amt = num(g('amount')); if (!amt) return bad('Enter the amount of each deposit.');
-        list.push({ date: g('date'), ref: g('ref'), ...(g('no') ? { no: g('no') } : {}), amount: amt, ...(c.toLO ? { toLO: true } : {}) });
+        const sf = g('from').replace(/\D/g, ''), stt = g('to').replace(/\D/g, '') || sf;
+        if (sf && +stt < +sf) return bad('OR To must not be before OR From.');
+        list.push({ date: g('date'), ref: g('ref'), ...(g('no') ? { no: g('no') } : {}), amount: amt, ...(c.toLO ? { toLO: true } : {}), ...(sf ? { from: sf, to: stt } : {}) });
       }
       list.sort((a, b) => a.date.localeCompare(b.date));
       await pendRec({ deposits: list }); toast(K === 'SCR' || c.toLO ? 'Remittances saved.' : 'Deposits saved.', 'ok');
@@ -653,10 +672,11 @@ function remRowHtml(c) {
     <td><input class="input r" data-k="amount" inputmode="decimal" aria-label="Amount"></td>
     <td><button class="btn sm cd-x" type="button" aria-label="Remove remittance">✕</button></td></tr>`;
 }
-function depRowHtml(rem, toLO = false) {
+function depRowHtml(rem, toLO = false, series = false) {
   return `<tr class="cd-dep"><td><input class="input" type="date" data-k="date" aria-label="${toLO ? 'Date remitted to LO' : rem ? 'Date received by MTO' : 'Deposit date'}"></td>
     <td><input class="input" data-k="ref" list="cd-reflist" placeholder="${rem ? 'Choose or type the name' : 'Choose or type'}" aria-label="${rem ? 'Liquidating Officer' : 'Reference'}"></td>
     ${rem ? '' : '<td><input class="input mono" data-k="no" placeholder="Optional" aria-label="Deposit slip No."></td>'}
+    ${series ? '<td><input class="input mono" data-k="from" inputmode="numeric" aria-label="OR From"></td><td><input class="input mono" data-k="to" inputmode="numeric" aria-label="OR To"></td>' : ''}
     <td><input class="input r" data-k="amount" inputmode="decimal" aria-label="Amount"></td>
     <td><button class="btn sm cd-x" type="button" aria-label="Remove deposit">✕</button></td></tr>`;
 }
