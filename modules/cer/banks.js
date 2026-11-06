@@ -14,7 +14,12 @@
 //                  found{ <item key>: bankDate }, otherChecks[{ id, date, checkNo, payee, amount }], lines[] (imported; saved in parts <id>#lines<k> { part, recId, k, lines }, lineParts = how many),
 //                  opening (bank balance at the last cash exam), account (account No. read from it), covFrom / covTo (coverage imported),
 //                  lineOf{ <item key>: line i } (which imported line each item matched; unmatched lines count as bank credits / debits),
-//                  noAuto[] (item keys unticked by hand: never matched again automatically) }
+//                  noAuto[] (item keys unticked by hand: never matched again automatically),
+//                  begMark{ <line key>: 1 | 0 } (a line marked by hand as outstanding at the last cash exam, or unmarked) }
+// Outstanding at the last cash exam: a cheque issued before the last cash exam clears in the period. It is already deducted in
+// the beginning book balance, so it is neither a bank debit nor an outstanding check now. Found by itself when its number is
+// before the first check of the period in its checkbook (and not in the CkDJ); any line can be marked or unmarked by hand
+// (a deposit in transit then, too).
 import { listT, bankChecksOf, checkAmountOf, chkNo, transfersInto, typedTransfer } from '../src/journal.js';
 import { caAcct } from './funds.js';
 import { store, newId } from '../../js/store.js';
@@ -186,7 +191,10 @@ export async function banksView(ctx) {
   // Bank-only items: the imported lines not matched to a deposit or check in the books, by their side
   // (credit → bank credit, debit → bank debit), plus any typed by hand (statements not imported).
   const linked = new Set(Object.entries(rec.lineOf || {}).filter(([k]) => rec.found[k]).map(([, i]) => i));
-  const unmatched = (rec.lines || []).filter((l) => !(rec.lineOf ? linked.has(l.i) : l.matched) && !l.added && l.date <= asOf);
+  const cand = (rec.lines || []).filter((l) => !(rec.lineOf ? linked.has(l.i) : l.matched) && !l.added && l.date <= asOf);
+  const begSet = begLinesOf(rec, cand, jr0.map(flat), acct, books0.map(flat), cov);
+  const begLines = cand.filter((l) => begSet.has(l.i));
+  const unmatched = cand.filter((l) => !begSet.has(l.i));
   // Not Matched: a bank line whose cheque number is a check in the books, but with another amount.
   const nmByLine = {}, nmByKey = {};
   unmatched.filter((l) => l.debit && l.chq).forEach((l) => { const x = list.find((y) => y.kind === 'chk' && !y.cb && !rec.found[y.key] && !nmByKey[y.key] && chqKey(y.ref) && chqKey(y.ref) === chqKey(l.chq) && Math.abs(y.amount - l.debit) >= 0.005); if (x) { nmByLine[l.i] = x; nmByKey[x.key] = l; } });
@@ -216,6 +224,17 @@ export async function banksView(ctx) {
     return `<div class="bk-proof"><span>Beginning${rec.covFrom ? ` (${esc(fmtDate(rec.covFrom))})` : ''} <b>₱ ${money(rec.opening)}</b></span><span>+ Credits <b>₱ ${money(cr)}</b></span><span>− Debits <b>₱ ${money(dr)}</b></span><span>= Ending${rec.covTo ? ` (${esc(fmtDate(rec.covTo))})` : ''} <b>₱ ${money(r2(+rec.opening + cr - dr))}</b></span>
       ${d === null ? '' : Math.abs(d) < 0.005 ? '<span class="pill p-done">Adds up to the ending balance</span>' : `<span class="pill p-flag">Differs from the ending balance by ₱${money(d)}</span>`}${rec.account ? `<span class="dim">Account No. ${esc(rec.account)}</span>` : ''}</div>`;
   })() : '';
+  // The beginning: bank balance at the last cash exam − checks outstanding then + deposits in transit then = Cashbook beginning.
+  const begProof = lns.length && rec.opening !== null && rec.opening !== undefined ? (() => {
+    const bo = r2(begLines.reduce((n, l) => n + (l.debit || 0), 0)), bd = r2(begLines.reduce((n, l) => n + (l.credit || 0), 0));
+    const nO = begLines.filter((l) => l.debit).length, nD = begLines.filter((l) => l.credit).length, adj = r2(+rec.opening - bo + bd);
+    const exs = exams0.map(flat).filter((e) => e.auditId === audit.id), ex = exs.find((e) => /treasurer/i.test(officers.find((o) => o.id === e.officerId)?.designation || '')) || exs[0];
+    const cbb = ex ? num(settings[`cashbook|${ex.id}|${acct.id}`]?.begBank) : null;
+    const d = cbb === null || cbb === undefined ? null : r2(adj - cbb);
+    return `<div class="bk-proof bk-begproof"><span>Bank, last cash exam <b>₱ ${money(rec.opening)}</b></span><span>− Outstanding checks then (${nO}) <b>₱ ${money(bo)}</b></span><span>+ Deposits in transit then (${nD}) <b>₱ ${money(bd)}</b></span><span>= <b>₱ ${money(adj)}</b></span>
+      ${d === null ? '<span class="dim">Cashbook beginning not typed yet</span>' : `<span>Cashbook beginning <b>₱ ${money(cbb)}</b></span>${Math.abs(d) < 0.005 ? '<span class="pill p-done">Agrees</span>' : `<span class="pill p-flag">Differs by ₱${money(d)}</span>`}`}
+      <span class="dim">Only those that cleared within the coverage are known.</span></div>`;
+  })() : '';
   const dis = enc ? '' : 'disabled';
   const imported = !!lns.length;
   const manual = !imported || UI.manual;
@@ -229,10 +248,13 @@ export async function banksView(ctx) {
   const numCol = (h) => /debit|credit|balance|amount|withdraw|deposit/i.test(h);
   const inBooks = (l) => { const x = byLine[l.i]; if (x) return `<span class="pill p-done">${x.label || (x.kind === 'dep' ? 'Deposit' : 'Check')} ${esc(x.ref)}</span>`;
     if (!rec.lineOf && l.matched) return '<span class="pill p-done">Matched</span>';
-    if (nmByLine[l.i]) return `<span class="pill p-nm" title="Check ${esc(nmByLine[l.i].ref)}: ₱${money(nmByLine[l.i].amount)} in the books">Not Matched</span>`;
-    return l.debit && l.chq ? '<span class="pill p-stock">Check, not yet encoded</span>' : '<span class="pill p-stock">Not in the books</span>'; };
+    const k = esc(lineKey(l));
+    if (begSet.has(l.i)) return `<span class="pill p-beg" title="Issued before the last cash exam: already in the beginning book balance">${l.credit ? 'Deposit in transit at the last cash exam' : 'Outstanding at the last cash exam'}</span>${enc ? ` <button type="button" class="bk-lnk" data-begmk="${k}" data-v="0" title="Not outstanding at the last cash exam">undo</button>` : ''}`;
+    const mk = enc ? ` <button type="button" class="bk-lnk" data-begmk="${k}" data-v="1" title="${l.credit ? 'A deposit in transit at the last cash exam' : 'A check outstanding at the last cash exam'}: already in the beginning book balance">at last exam?</button>` : '';
+    if (nmByLine[l.i]) return `<span class="pill p-nm" title="Check ${esc(nmByLine[l.i].ref)}: ₱${money(nmByLine[l.i].amount)} in the books">Not Matched</span>${mk}`;
+    return (l.debit && l.chq ? '<span class="pill p-stock">Check, not yet encoded</span>' : '<span class="pill p-stock">Not in the books</span>') + mk; };
   const shown = lns.filter((l) => l.date <= asOf).filter((l) => !UI.only || unmatched.includes(l));
-  const stmtTbl = imported ? `<div class="bk-tools"><span class="dim">${cov.from ? `Coverage ${esc(fmtDate(cov.from))} – ${esc(fmtDate(cov.to))}` : '<span class="pill p-flag">No last cash exam date</span>'} · ${lns.length} line${lns.length === 1 ? '' : 's'} · ${lns.length - unmatched.length} found in the books · ${unmatched.length} not in the books</span>
+  const stmtTbl = imported ? `<div class="bk-tools"><span class="dim">${cov.from ? `Coverage ${esc(fmtDate(cov.from))} – ${esc(fmtDate(cov.to))}` : '<span class="pill p-flag">No last cash exam date</span>'} · ${lns.length} line${lns.length === 1 ? '' : 's'} · ${lns.length - unmatched.length - begLines.length} found in the books${begLines.length ? ` · ${begLines.length} outstanding at the last cash exam` : ''} · ${unmatched.length} not in the books</span>
         <label class="cer-chip"><input type="checkbox" id="bk-only" ${UI.only ? 'checked' : ''}> Not in the books only</label></div>
       <div class="af-tbl bk-stmtwrap"><table class="af-reg bk-stmt"><thead><tr>${heads.map((h) => `<th scope="col"${numCol(h) ? ' class="r"' : ''}>${esc(h)}</th>`).join('')}<th scope="col">In the books</th></tr></thead>
       <tbody>${!UI.only && rec.opening !== null && rec.opening !== undefined ? `<tr class="bk-open">${heads.map((h, k) => `<td${numCol(h) ? ' class="r"' : ''}>${/balance/i.test(h) ? `<b>${money(rec.opening)}</b>` : k === 1 ? '<b>Beginning balance</b>' : ''}</td>`).join('')}<td class="dim">as of the last cash exam</td></tr>` : ''}
@@ -257,7 +279,7 @@ export async function banksView(ctx) {
     <p class="af-note">Then tick each deposit and check found in the bank in tab 2.</p>`;
   const stBody = `${enc ? `<div class="cd-pick"><button class="btn primary" type="button" id="bk-import">${imported ? 'Import Again' : 'Import Soft Copy (Excel / CSV)'}</button>
         <label class="cer-chip"><input type="checkbox" id="bk-manual" ${manual && !imported ? 'checked disabled' : manual ? 'checked' : ''}> No soft copy (PDF / printed)</label></div>` : ''}
-    ${proof}
+    ${proof}${begProof}
     ${imported && !manual ? stmtTbl : ''}
     ${manual ? manualBox : ''}
     ${imported && manual ? stmtTbl : ''}`;
@@ -383,7 +405,28 @@ function wireBanks(c) {
     if (out) save({ otherChecks: [...(rec.otherChecks || []), out] }, `Check No. ${out.checkNo} added.`);
   };
   $('#bk-import').onclick = () => importStatement(c, save);
+  $$('[data-begmk]').forEach((b) => { b.onclick = () => save({ begMark: { ...(rec.begMark || {}), [b.dataset.begmk]: +b.dataset.v } }, +b.dataset.v ? 'Marked as outstanding at the last cash exam.' : 'Unmarked.'); });
   if (c.auto && !UI.edit) save({ found: c.auto.found, lineOf: c.auto.lineOf }, c.auto.n ? `${c.auto.n} matched with the uploaded statement.` : '');
+}
+
+/* ---------- outstanding at the last cash exam ---------- */
+const lineKey = (l) => `${l.date}|${l.debit || 0}|${l.credit || 0}|${chqKey(l.chq)}`;
+function begLinesOf(rec, cand, jr, acct, booklets, cov) {
+  const marks = rec.begMark || {}, out = new Set();
+  const mine = jr.filter((c) => c.acctId === acct.id);
+  const inJr = new Set(mine.map((c) => chkNo(c.checkNo)).filter(Boolean));
+  const period = mine.filter((c) => c.date && (!cov.from || c.date >= cov.from)).map((c) => chkNo(c.checkNo)).filter(Boolean);
+  const books = booklets.filter((b) => b.form === 'chk');
+  const firstOf = (n) => { const b = books.find((x) => +x.from <= n && n <= +x.to); const ps = period.filter((p) => (b ? +b.from <= p && p <= +b.to : p - n < 1000)); return ps.length ? Math.min(...ps) : null; };
+  cand.forEach((l) => {
+    const m = marks[lineKey(l)];
+    if (m === 0) return;
+    if (m === 1) { out.add(l.i); return; }
+    const n = +chqKey(l.chq);
+    if (!l.debit || !n || inJr.has(n)) return;
+    const f = firstOf(n); if (f && n < f) out.add(l.i);
+  });
+  return out;
 }
 
 /* ---------- import a soft copy ---------- */
@@ -567,7 +610,9 @@ export async function bankFindings(audit, refs) {
     const dits = list.filter((x) => x.kind === 'dep' && !found[x.key]), ocs = list.filter((x) => x.kind === 'chk' && !found[x.key] && !after(x));
     const dit = r2(dits.reduce((n, x) => n + x.amount, 0)), oc = r2(ocs.reduce((n, x) => n + x.amount, 0));
     const linked = new Set(Object.entries(rec.lineOf || {}).filter(([k]) => found[k]).map(([, i]) => i));
-    const un = (rec.lines || []).filter((l) => !(rec.lineOf ? linked.has(l.i) : l.matched) && !l.added && l.date <= asOf);
+    const cand = (rec.lines || []).filter((l) => !(rec.lineOf ? linked.has(l.i) : l.matched) && !l.added && l.date <= asOf);
+    const begS = begLinesOf(rec, cand, jr0.map(flat), acct, books0.map(flat), covOf(audit, exams0.map(flat)));
+    const un = cand.filter((l) => !begS.has(l.i));
     const sum = (a, g) => r2(a.reduce((n, x) => n + (+g(x) || 0), 0));
     const bi = (rec.bankItems || []).filter((b) => !b.date || b.date <= asOf);
     const unCr = sum(un, (l) => l.credit), unDr = sum(un, (l) => l.debit);
