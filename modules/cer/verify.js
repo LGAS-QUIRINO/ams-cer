@@ -123,7 +123,7 @@ export async function verifyView(ctx) {
   const rule = brgy ? 'brgy' : exam.depositRule === 'weekly' ? 'weekly' : 'next';
   const dueOf = (d) => (rule === 'brgy' ? addBankingDays(d, 5, hol) : rule === 'next' ? addBankingDays(d, 1, hol) : (() => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + 7); return x.toISOString().slice(0, 10); })());
   const ruleText = rule === 'brgy' ? 'within 5 banking days (Barangay Treasurer)' : rule === 'next' ? 'not later than the next banking day' : 'at least once a week, or the next banking day once collections reach ₱10,000';
-  Object.values(fig.chains).filter((c) => c.kind !== 'SCR').forEach((c) => {
+  Object.values(fig.chains).filter((c) => c.kind !== 'SCR' && !exam.remitToLO).forEach((c) => {   // remitted to the LO: no deposit deadline
     const gs = [...c.figs, c.pend];
     const coll = {}; const put = (d, a) => { if (inScope(d) && a) coll[d] = r2((coll[d] || 0) + a); };
     gs.forEach((g) => { (g.ors || []).filter((x) => x.status !== 'cancelled' && orOk(x)).forEach((x) => put(x.date, +x.amount || 0)); (g.rec?.remittances || []).forEach((m) => put(m.date, +m.amount || 0)); });

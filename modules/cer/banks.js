@@ -136,7 +136,9 @@ export async function banksView(ctx) {
   const otherAccts = accounts.filter((x) => x.id !== acct.id).map((x) => `${audit.id}|${x.id}`);
   const foundElsewhere = new Set(recs0.map(flat).filter((r) => otherAccts.includes(r.id)).flatMap((r) => Object.keys(r.found || {})));
   const items = [];
-  tagSameDay(reports0.map(flat)).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => depItems(r).forEach(({ d, key, old }) => {
+  // Collectors who remit to the Liquidating Officer (Audit Setup): their remittances are not bank deposits.
+  const toLOs = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id && e.remitToLO).map((e) => e.officerId));
+  tagSameDay(reports0.map(flat)).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR' && !toLOs.has(r.officerId)).forEach((r) => depItems(r).filter(({ d }) => !d.toLO).forEach(({ d, key, old }) => {
     items.push({ key, old, kind: 'dep', date: d.date, ref: depRefText(d), amount: +d.amount || 0,
       from: `${r.pending ? 'Not yet reported' : repName(r)} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });
   }));
@@ -600,7 +602,8 @@ export async function bankFindings(audit, refs) {
       if (!nCk) add(`bkck|${acct.id}`, `${name}: no checks in the Check Disbursements Journal for the period (Source Documents).`); }
     if (!rec) { add(`bk0|${acct.id}`, `${name}: no bank statement or reconciliation yet.`); continue; }
     const items = [];
-    reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR').forEach((r) => depItems(r).forEach(({ d, key, old }) => items.push({ key, old, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0 })));
+    const toLOs = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id && e.remitToLO).map((e) => e.officerId));
+    reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR' && !toLOs.has(r.officerId)).forEach((r) => depItems(r).filter(({ d }) => !d.toLO).forEach(({ d, key, old }) => items.push({ key, old, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0 })));
     advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg && (() => { const ac = caAcct(a, { booklets: books0.map(flat), accounts }); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; })()).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
     const jrChecks = bankChecksOf(jr0.map(flat), acct.id), jrNos = new Set(jrChecks.map((c) => chkNo(c.checkNo)));
     jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c) }));

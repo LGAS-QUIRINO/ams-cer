@@ -48,8 +48,8 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
     row(date, `Collections (${SHORT[form] || FORM_SHORT[form] || form})`, `${ns[0]}${ns.length > 1 ? '–' + ns[ns.length - 1] : ''}`, { cltC: r2(xs.reduce((n, x) => n + (+x.amount || 0), 0)) }); });
   // Deposits (and, for the SCR, remittances to the MTO).
   f.reports.filter((r) => r.officerId === o.id && ofF(r.fund)).forEach((r) => (r.deposits || []).filter((d) => inS(d.date)).forEach((d) => {
-    const rem = r.kind === 'SCR', toBank = !rem;
-    row(d.date, rem ? `Remittance to MTO${d.ref ? ' · ' + d.ref : ''}` : 'Deposit', rem ? '' : depRefText(d), { cltD: +d.amount || 0, cibD: toBank ? +d.amount || 0 : 0 });
+    const rem = r.kind === 'SCR', lo = !rem && (d.toLO || exam.remitToLO), toBank = !rem && !lo;
+    row(d.date, rem ? `Remittance to MTO${d.ref ? ' · ' + d.ref : ''}` : lo ? `Remittance to the Liquidating Officer${d.ref ? ' · ' + d.ref : ''}` : 'Deposit', rem || lo ? '' : depRefText(d), { cltD: +d.amount || 0, cibD: toBank ? +d.amount || 0 : 0 });
   }));
   // Checks of this account (Check Disbursements Journal).
   const jrNos = new Set();

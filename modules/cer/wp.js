@@ -43,7 +43,7 @@ export function wpLines(c, paper, ver) {
     });
     Object.values(A.fig.chains).filter((ch) => ch.kind === kind).forEach((ch) => [...ch.figs, ch.pend].forEach((g) => {
       (g.rec?.remittances || []).filter((m) => inScope(m.date)).forEach((m, i) => lines.push({ key: `rem|${g.id}|${i}|${m.date}|${m.amount}`, date: m.date, part: `Remittance from ${c.f.officers.find((x) => x.id === m.collectorId)?.name || 'collector'}${m.reportNo ? ', ' + m.reportNo : ''}`, no: '', d: +m.amount || 0, c: 0, ord: 0 }));
-      (g.rec?.deposits || []).filter((d) => inScope(d.date)).forEach((d, i) => lines.push({ key: `dep|${g.id}|${i}|${d.date}|${d.amount}`, date: d.date, part: kind === 'SCR' ? `Remittance to MTO${depRefText(d, true) ? ', ' + depRefText(d, true) : ''}` : `Deposit${depRefText(d) ? ', ' + depRefText(d) : ''}`, no: '', d: 0, c: +d.amount || 0, ord: 1 }));
+      (g.rec?.deposits || []).filter((d) => inScope(d.date)).forEach((d, i) => lines.push({ key: `dep|${g.id}|${i}|${d.date}|${d.amount}`, date: d.date, part: kind === 'SCR' ? `Remittance to MTO${depRefText(d, true) ? ', ' + depRefText(d, true) : ''}` : d.toLO ? `Remittance to the Liquidating Officer${d.ref ? ', ' + d.ref : ''}` : `Deposit${depRefText(d) ? ', ' + depRefText(d) : ''}`, no: '', d: 0, c: +d.amount || 0, ord: 1 }));
     }));
   }
   lines.sort((x, y) => String(x.date).localeCompare(String(y.date)) || x.ord - y.ord || (x.sn || 0) - (y.sn || 0));

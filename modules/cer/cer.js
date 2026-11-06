@@ -6,7 +6,7 @@
 //   cer_officers  one accountable officer of an auditee           { lguId, name, designation }
 //   cer_audits    one cash examination = auditee + cash count date { lguId, countDate, preparedBy, reviewedBy }
 //   cer_exams     one officer's exam record inside a cash examination
-//                 { auditId, officerId, functions[], forms[], bond{maxCash, amount, riskNo, from, to, none (the officer has no fidelity bond)}, lastExamDate, lastExamSource, caRestFund (fund of the beginning cash advance not itemized),
+//                 { auditId, officerId, functions[], forms[], bond{maxCash, amount, riskNo, from, to, none (the officer has no fidelity bond)}, remitToLO (collections remitted to the Liquidating Officer, not deposited), lastExamDate, lastExamSource, caRestFund (fund of the beginning cash advance not itemized),
 //                   balances{ key: { amount, source } }, endBalances{} (filled later by the examination) }
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
@@ -287,7 +287,7 @@ function listHtml(refs, cer) {
 function blankExam(lgu) {
   const brgy = isBrgy(lgu);
   return { examId: '', officerId: '', functions: brgy ? ['collecting', 'disbursing'] : [], forms: brgy ? ['af51b', 'ctci'] : [],
-    bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '' }, lastExamDate: '', balances: {}, depositRule: 'next', caRestFund: '' };
+    bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '' }, lastExamDate: '', balances: {}, depositRule: 'next', caRestFund: '', remitToLO: false };
 }
 function stateFrom(refs, cer, q) {
   const audit = cer.audits.find((x) => x.id === q.get('a')) || null;
@@ -302,7 +302,7 @@ function stateFrom(refs, cer, q) {
   };
   if (exam) {
     Object.assign(st, { examId: exam.id, officerId: exam.officerId, functions: [...(exam.functions || [])], forms: [...new Set((exam.forms || []).map((k) => fixBrgyForm(lgu, k)))],
-      bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '', depositRule: exam.depositRule || 'next', caRestFund: exam.caRestFund || '',
+      bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '', depositRule: exam.depositRule || 'next', caRestFund: exam.caRestFund || '', remitToLO: !!exam.remitToLO,
       balances: Object.fromEntries(Object.entries(exam.balances || {}).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, (() => { const x = v && v.lump !== undefined ? v.lump : v && v.amount; return x !== null && x !== undefined ? money(x) : ''; })()])) });
     ['maxCash', 'amount'].forEach((k) => { if (st.bond[k] !== '' && st.bond[k] !== null) st.bond[k] = money(st.bond[k]); });
   }
@@ -433,7 +433,8 @@ function officerHtml(refs, cer, st, edit) {
     </div>
     ${(st.functions || []).includes('collecting') ? `<fieldset class="field"><legend>Accountable forms used in collecting</legend>
       <div class="cer-chips">${formsForLgu(lgu).map(([k, label]) => `<label class="cer-chip"><input type="checkbox" data-form="${k}" ${chk(st.forms, k)} ${dis}> ${esc(label)}</label>`).join('')}</div></fieldset>
-      ${isBrgy(lgu) ? '<span class="hint">Deposits: within 5 banking days after receipt (Barangay Treasurer).</span>' : `<div class="field cer-deprule"><label for="cer-deprule">Deposit rule</label><select class="input" id="cer-deprule" ${dis}>
+      <fieldset class="field cer-tolo"><legend>Collections are</legend><div class="cer-chips"><label class="cer-chip"><input type="radio" name="cer-tolo" value="0" ${st.remitToLO ? '' : 'checked'} ${dis}> Deposited in the bank</label><label class="cer-chip"><input type="radio" name="cer-tolo" value="1" ${st.remitToLO ? 'checked' : ''} ${dis}> Remitted to the Liquidating Officer</label></div></fieldset>
+      ${st.remitToLO ? '<span class="hint">Remitted to the Liquidating Officer: no bank account or deposit rule for this officer; the remittances are entered in Collections &amp; Deposits, part 3.</span>' : isBrgy(lgu) ? '<span class="hint">Deposits: within 5 banking days after receipt (Barangay Treasurer).</span>' : `<div class="field cer-deprule"><label for="cer-deprule">Deposit rule</label><select class="input" id="cer-deprule" ${dis}>
         <option value="next" ${st.depositRule !== 'weekly' ? 'selected' : ''}>Daily, or not later than the next banking day</option>
         <option value="weekly" ${st.depositRule === 'weekly' ? 'selected' : ''}>At least once a week, or as soon as collections reach ₱10,000 (minimal collections / bank far)</option></select>
         <span class="hint">Used by Verification to flag late deposits. Banking days skip weekends and holidays (Holidays).</span></div>`}` : ''}`, opens.has('officer'))}
@@ -476,7 +477,7 @@ function officerHtml(refs, cer, st, edit) {
       ${(st.functions || []).includes('custodian') && rows.length ? '<span class="hint">Custodian accountability is kept in Accountable Forms by quantity, not in pesos.</span>' : ''}`, opens.has('bal'))}
 
     ${acc('forms', 'Beginning Inventory of Accountable Forms', h.forms, begBody, opens.has('forms'))}
-    ${acc('banks', 'Bank Accounts', [bankAccts.length ? `${bankAccts.length} account${bankAccts.length > 1 ? 's' : ''}: ${bankAccts.map((x) => x.fund).join(', ')}` : 'None yet', bankAccts.length ? 'ok' : 'need'], `
+    ${acc('banks', 'Bank Accounts', [bankAccts.length ? `${bankAccts.length} account${bankAccts.length > 1 ? 's' : ''}: ${bankAccts.map((x) => x.fund).join(', ')}` : st.remitToLO && !(st.functions || []).some((k) => ['disbursing', 'special', 'pettycash', 'liquidating'].includes(k)) ? 'Not needed: remitted to the Liquidating Officer' : 'None yet', bankAccts.length || (st.remitToLO && !(st.functions || []).some((k) => ['disbursing', 'special', 'pettycash', 'liquidating'].includes(k))) ? 'ok' : 'need'], `
       ${bankAccts.length ? `<div class="cer-tbl"><table class="cer-bal"><thead><tr><th scope="col">Bank</th><th scope="col">Account No.</th><th scope="col">Fund</th></tr></thead>
         <tbody>${bankAccts.map((x) => `<tr><td>${esc(x.bank || '')}</td><td class="mono">${esc(x.accountNo || '')}</td><td>${esc(x.fund || '')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="cer-wait">No bank account yet.</p>'}
       <div class="btn-row"><button class="btn sm" type="button" id="cer-banks" ${st.lguId ? '' : 'disabled'}>${edit ? 'Edit Bank Accounts' : 'View Bank Accounts'}</button></div>
@@ -542,6 +543,7 @@ function wireSetup(refs, cer, q, rerender) {
       touch(); drawOfficer();
     }; });
     const dr = $('#cer-deprule'); if (dr) dr.onchange = () => { st.depositRule = dr.value; touch(); };
+    $$('[name="cer-tolo"]').forEach((r) => { r.onchange = () => { st.remitToLO = r.value === '1'; touch(); drawOfficer(); }; });
     $$('[data-form]').forEach((c) => { c.onchange = () => { st.forms = $$('[data-form]').filter((x) => x.checked).map((x) => x.dataset.form); touch(); drawOfficer(); }; });
     const nb = $('#b-none'); if (nb) nb.onchange = () => { st.bond.none = nb.checked; $$('.b-det').forEach((x) => { x.disabled = nb.checked; }); touch(); $('#cer-warn').innerHTML = warnHtml(st); flag(); };
     $$('[data-bond]').forEach((i) => {
@@ -732,7 +734,7 @@ async function saveSetup(refs, cer, st) {
   const examId = st.examId || newId('cere');
   const oldExam = cer.exams.find((e) => e.id === examId);
   await store.save('cer_exams', examId, { auditId, officerId: st.officerId, functions: st.functions, forms: st.functions.includes('collecting') ? st.forms : [],
-    bond, lastExamDate, lastExamSource: prev ? 'system' : 'typed', balances, depositRule: st.depositRule || 'next', caRestFund: st.caRestFund || '', endBalances: oldExam ? (oldExam.endBalances || {}) : {} }, by(refs));
+    bond, lastExamDate, lastExamSource: prev ? 'system' : 'typed', balances, depositRule: st.depositRule || 'next', caRestFund: st.caRestFund || '', remitToLO: !!st.remitToLO && (st.functions || []).includes('collecting'), endBalances: oldExam ? (oldExam.endBalances || {}) : {} }, by(refs));
   DRAFT = null;
   toast('Audit Setup saved.', 'ok');
   location.hash = `#/cer/setup?a=${auditId}&o=${examId}`;
