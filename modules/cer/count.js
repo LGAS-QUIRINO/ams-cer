@@ -16,7 +16,7 @@ import { store, newId } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
 import { loadForms, unusedFormsOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges } from './forms.js';
-import { figuresOf, fundsOf, kindOfForm, tagSameDay } from './collections.js';
+import { figuresOf, fundsOf, kindOfForm, tagSameDay, ctcSplit, ctcBalance, ctcBegShare } from './collections.js';
 import { accountsOf, caFund, restFund, fundOrder } from './funds.js';
 
 const canCount = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
@@ -47,6 +47,12 @@ export function booksOf(refs, f, o, exam, audit, advs, liqs) {
       if (!used && fig.kinds.length > 1) return;
       const bal = r2(chains.reduce((n, c) => n + c.pend.end, 0));
       const label = kind === 'SCD' ? 'AF 51 (SCD)' : kind === 'SCR' ? 'CTC (SCR)' : fns.includes('liquidating') && !fns.includes('collecting') ? 'Collections (Liquidating)' : 'Collections (RCD)';
+      if (kind === 'RCD' && ctcSplit(lgu, exam, f, o)) {   // LGU: AF 51 and CTC in one RCD, each its own column
+        const c = ctcBalance(fig, ctcBegShare(exam.balances));
+        out.push({ key: 'col-RCD', kind, part: 'or', label: 'AF 51 (RCD)', books: r2(bal - c), note: 'Undeposited AF 51 collections, from Collections & Deposits' });
+        out.push({ key: 'col-CTC', kind, part: 'ctc', label: 'CTC (RCD)', books: c, note: 'Undeposited CTC collections, from Collections & Deposits (deposits split by each RCD\'s CTC share)' });
+        return;
+      }
       out.push({ key: 'col-' + kind, kind, label, books: bal, note: kind === 'SCR' ? 'Unremitted CTC, from Collections & Deposits' : 'Undeposited collections, from Collections & Deposits' });
     });
   }

@@ -17,7 +17,7 @@ import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
 import { bankFindings } from './banks.js';
 import { loadForms, orIn, cutoffFindings, checkUsage, exportXlsx } from './forms.js';
-import { figuresOf, fundsOf, kindOfForm, repName, tagSameDay } from './collections.js';
+import { figuresOf, fundsOf, kindOfForm, repName, tagSameDay, partOk, ctcBegShare, ctcAlloc, depPart } from './collections.js';
 import { booksOf, compute } from './count.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -56,14 +56,15 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
       advs.filter((a) => a.officerId === o.id && !a.beg && inScope(a.date)).forEach((a) => m.push({ date: a.date, debit: +a.amount || 0, credit: 0 }));
       liqs.filter((l) => l.officerId === o.id && liqIn(l)).forEach((l) => m.push({ date: l.date, debit: 0, credit: +l.amount || 0 }));
     } else {
-      const kind = b.kind;
-      // Beginning: the collection balances in Audit Setup of the forms that go to this report type.
-      beg = Object.entries(bal).filter(([k]) => k.startsWith('col-') && kindOfForm(lgu, k.slice(4)) === kind).reduce((n, [, v]) => n + (+v?.amount || 0), 0)
-        + (kind === 'RCD' || (exam.functions || []).includes('liquidating') ? (+(bal.liq?.amount) || 0) : 0);
-      f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && kindOfForm(lgu, x.form) === kind && orOk(x)).forEach((x) => m.push({ date: x.date, debit: +x.amount || 0, credit: 0 }));
+      const kind = b.kind, part = b.part || '', bs = ctcBegShare(bal);
+      // Beginning: the collection balances in Audit Setup of the forms that go to this report type (LGU: CTC apart from AF 51).
+      beg = Object.entries(bal).filter(([k]) => k.startsWith('col-') && kindOfForm(lgu, k.slice(4)) === kind && partOk(part, k.slice(4))).reduce((n, [, v]) => n + (+v?.amount || 0), 0)
+        + ((kind === 'RCD' || (exam.functions || []).includes('liquidating')) && part !== 'ctc' ? (+(bal.liq?.amount) || 0) : 0);
+      f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && kindOfForm(lgu, x.form) === kind && partOk(part, x.form) && orOk(x)).forEach((x) => m.push({ date: x.date, debit: +x.amount || 0, credit: 0 }));
       Object.values(fig.chains).filter((c) => c.kind === kind).forEach((c) => [...c.figs, c.pend].forEach((g) => {
-        (g.rec?.deposits || []).filter((d) => inScope(d.date)).forEach((d) => m.push({ date: d.date, debit: 0, credit: +d.amount || 0 }));
-        (g.rec?.remittances || []).filter((d) => inScope(d.date)).forEach((d) => m.push({ date: d.date, debit: +d.amount || 0, credit: 0 }));
+        const s = part ? ctcAlloc(c, bs) : null;
+        (g.rec?.deposits || []).filter((d) => inScope(d.date)).forEach((d) => { const a = part ? depPart(part, d, s) : +d.amount || 0; if (a || !part) m.push({ date: d.date, debit: 0, credit: a }); });
+        if (part !== 'ctc') (g.rec?.remittances || []).filter((d) => inScope(d.date)).forEach((d) => m.push({ date: d.date, debit: +d.amount || 0, credit: 0 }));
       }));
     }
     moves[b.key] = { beg: r2(beg), list: m.sort((x, y) => x.date.localeCompare(y.date)) };

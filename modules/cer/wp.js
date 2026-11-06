@@ -7,7 +7,7 @@ import { cnpSheet } from './cnp.js';
 import { store } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, fmtDate, money, num } from './cer.js';
-import { kindOfForm, depRefText } from './collections.js';
+import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart } from './collections.js';
 import { accountsOf, caFund, begByFund, restFund, fundOrder } from './funds.js';
 import { saafRows, unusedFormsOf, countRanges, FORM_SHORT } from './forms.js';
 
@@ -17,10 +17,11 @@ const BILLS = [1000, 500, 200, 100, 50, 20];
 export const WP = { a1a: 'Annex A.1a', a1b: 'Annex A.1b', a2a: 'Annex A.2a' };
 
 /* ---------- the lines of each working paper ---------- */
-// book: the column of the statement of accountability (col-SCD / col-RCD → A.1a, col-SCR → A.1b, ca → A.2a).
+// book: the column of the statement of accountability (col-SCD / col-RCD → A.1a, col-SCR / col-CTC (LGU) → A.1b, ca → A.2a).
+export const isCtcKey = (k) => k === 'col-SCR' || k === 'col-CTC';
 export function wpBook(A, paper) {
   if (paper === 'a2a') return A.books.find((b) => b.key === 'ca') || null;
-  if (paper === 'a1b') return A.books.find((b) => b.key === 'col-SCR') || null;
+  if (paper === 'a1b') return A.books.find((b) => isCtcKey(b.key)) || null;
   return A.books.find((b) => b.key === 'col-SCD' || b.key === 'col-RCD') || null;
 }
 export function wpLines(c, paper, ver) {
@@ -37,14 +38,15 @@ export function wpLines(c, paper, ver) {
       lines.push({ key: `lq|${l.id}`, date: l.date, part, no: '', d: 0, c: +l.amount || 0, ord: 1 });
     });
   } else {
-    const kind = book.kind;
-    f.ors.filter((x) => x.officerId === o.id && kindOfForm(lgu, x.form) === kind && orOk(x)).forEach((x) => {
+    const kind = book.kind, part = book.part || '', bs = ctcBegShare(exam.balances);
+    f.ors.filter((x) => x.officerId === o.id && kindOfForm(lgu, x.form) === kind && partOk(part, x.form) && orOk(x)).forEach((x) => {
       const cx = x.status === 'cancelled';
       lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : (x.items || []).map((i) => i.p).filter(Boolean).join('; '), no: x.range ? `${x.serial}–${x.serialTo}` : String(x.serial), d: cx ? 0 : +x.amount || 0, c: 0, ord: 0, sn: +x.serial || 0 });
     });
     Object.values(A.fig.chains).filter((ch) => ch.kind === kind).forEach((ch) => [...ch.figs, ch.pend].forEach((g) => {
-      (g.rec?.remittances || []).filter((m) => inScope(m.date)).forEach((m, i) => lines.push({ key: `rem|${g.id}|${i}|${m.date}|${m.amount}`, date: m.date, part: `Remittance from ${c.f.officers.find((x) => x.id === m.collectorId)?.name || 'collector'}${m.reportNo ? ', ' + m.reportNo : ''}`, no: '', d: +m.amount || 0, c: 0, ord: 0 }));
-      (g.rec?.deposits || []).filter((d) => inScope(d.date)).forEach((d, i) => lines.push({ key: `dep|${g.id}|${i}|${d.date}|${d.amount}`, date: d.date, part: kind === 'SCR' ? `Remittance to MTO${depRefText(d, true) ? ', ' + depRefText(d, true) : ''}` : d.toLO ? `Remittance to the Liquidating Officer${d.ref ? ', ' + d.ref : ''}` : `Deposit${depRefText(d) ? ', ' + depRefText(d) : ''}`, no: '', d: 0, c: +d.amount || 0, ord: 1 }));
+      const s = part ? ctcAlloc(ch, bs) : null, share = (d) => (part ? depPart(part, d, s) : +d.amount || 0);
+      if (part !== 'ctc') (g.rec?.remittances || []).filter((m) => inScope(m.date)).forEach((m, i) => lines.push({ key: `rem|${g.id}|${i}|${m.date}|${m.amount}`, date: m.date, part: `Remittance from ${c.f.officers.find((x) => x.id === m.collectorId)?.name || 'collector'}${m.reportNo ? ', ' + m.reportNo : ''}`, no: '', d: +m.amount || 0, c: 0, ord: 0 }));
+      (g.rec?.deposits || []).filter((d) => inScope(d.date) && (!part || share(d))).forEach((d, i) => lines.push({ key: `dep|${g.id}|${i}|${d.date}|${d.amount}`, date: d.date, part: kind === 'SCR' ? `Remittance to MTO${depRefText(d, true) ? ', ' + depRefText(d, true) : ''}` : d.toLO ? `Remittance to the Liquidating Officer${d.ref ? ', ' + d.ref : ''}` : `Deposit${depRefText(d) ? ', ' + depRefText(d) : ''}${part && share(d) !== r2(+d.amount || 0) ? ` (${part === 'ctc' ? 'CTC' : 'AF 51'} part of ₱${money(d.amount)})` : ''}`, no: '', d: 0, c: share(d), ord: 1 }));
     }));
   }
   lines.sort((x, y) => String(x.date).localeCompare(String(y.date)) || x.ord - y.ord || (x.sn || 0) - (y.sn || 0));
@@ -104,9 +106,9 @@ export function wpHtml(c, paper, ver, edit) {
   const w = wpLines(c, paper, ver);
   const { A, agency, station, prep, rev, sign } = c;
   const title = paper === 'a2a' ? ['DETAILED STATEMENT OF CASH ADVANCES AND LIQUIDATIONS', 'Cash Advances', 'Check No.', 'Cash Advances', 'Liquidations']
-    : paper === 'a1b' ? ['DETAILED STATEMENT OF COLLECTIONS AND REMITTANCES', 'CTC', 'CTC No.', 'Collections', 'Remittance']
+    : paper === 'a1b' ? (w?.book.kind === 'RCD' ? ['DETAILED STATEMENT OF COLLECTIONS AND DEPOSITS', 'CTC', 'CTC No.', 'Collections', 'Deposits'] : ['DETAILED STATEMENT OF COLLECTIONS AND REMITTANCES', 'CTC', 'CTC No.', 'Collections', 'Remittance'])
       : ['DETAILED STATEMENT OF COLLECTIONS AND DEPOSITS', 'OFFICIAL RECEIPTS', 'OR No.', 'Collections', 'Deposits'];
-  if (!w) return `<div class="rp-page"><p class="c">${paper === 'a2a' ? 'No cash advance accountability for this officer.' : paper === 'a1b' ? 'No CTC (SCR) collections for this officer.' : 'No collection accountability for this officer.'}</p></div>`;
+  if (!w) return `<div class="rp-page"><p class="c">${paper === 'a2a' ? 'No cash advance accountability for this officer.' : paper === 'a1b' ? 'No CTC collections for this officer.' : 'No collection accountability for this officer.'}</p></div>`;
   const cell = (l, f2, v) => (edit ? `<button type="button" class="wp-cb${l.edited ? ' wp-ed' : ''}" data-cb="${esc(l.key)}" data-f="${f2}" title="Click to type what the cashbook shows">${amt(v)}</button>` : amt(v));
   return `<div class="rp-page rp-wide wp-page"><div class="rp-top"><span></span><span class="r"><b>${WP[paper]}</b></span></div>
     <h2 class="rp-title">${title[0]}</h2><p class="c"><b>${title[1]}</b><br>${esc(fmtDate(A.from))} to ${esc(fmtDate(A.to))}</p>
@@ -269,8 +271,8 @@ export async function downloadReport(c, ver) {
   set(ws, 'A64', o.name); set(ws, 'X64', des); set(ws, 'AM64', agency);
   // GF 74-A back: columns AF51 / CTC / Cash Advance (LGU: Collections)
   ws = wb.getWorksheet('GF-74A Back');
-  const colOf = (k) => (k === 'ca' ? 'AE' : k === 'col-SCR' ? 'T' : 'M');
-  const lbl = { M: A.st.some((x) => x.key === 'col-RCD') ? 'Collections' : 'AF51', T: 'CTC', AE: 'Cash Advance' };
+  const colOf = (k) => (k === 'ca' ? 'AE' : isCtcKey(k) ? 'T' : 'M');
+  const lbl = { M: A.st.some((x) => x.key === 'col-RCD' && !x.part) ? 'Collections' : 'AF51', T: 'CTC', AE: 'Cash Advance' };
   set(ws, 'M2', lbl.M); set(ws, 'T2', lbl.T); set(ws, 'AE2', lbl.AE); set(ws, 'A4', fmtDate(A.from));
   const tot = { beg: 0, d: 0, c: 0, bal: 0, inv: 0, sh: 0 };
   A.st.forEach((x) => {
@@ -337,8 +339,8 @@ export async function downloadReport(c, ver) {
   if (!colBooks.length) wb.removeWorksheet(ws.id);
   else {
     heads(ws);
-    const bA = colBooks.find((x) => x.key !== 'col-SCR'), bC = colBooks.find((x) => x.key === 'col-SCR');
-    if (bA && bA.key === 'col-RCD') set(ws, 'D12', 'Collections');
+    const bA = colBooks.find((x) => !isCtcKey(x.key)), bC = colBooks.find((x) => isCtcKey(x.key));
+    if (bA && bA.key === 'col-RCD' && !bA.part) set(ws, 'D12', 'Collections');
     const keys = colBooks.map((x) => x.key);
     const pa = bA ? preOf(bA.key) : { d: 0, c: 0 }, pc = bC ? preOf(bC.key) : { d: 0, c: 0 };
     const run = { a: bA ? r2(bA.beg + pa.d - pa.c) : 0, c: bC ? r2(bC.beg + pc.d - pc.c) : 0 };
@@ -394,6 +396,8 @@ export async function downloadWp(c, ver, bank) {
     const ws = wb.getWorksheet(name); const w = wpLines(c, paper, ver);
     if (!w) { wb.removeWorksheet(ws.id); return; }
     set(ws, sc, scope);
+    // LGU: the CTC go into the RCD, so its column is deposits, not remittances.
+    if (paper === 'a1b' && w.book.kind === 'RCD') for (let rr = 1; rr <= 9; rr++) ws.getRow(rr).eachCell((cl) => { if (typeof cl.value === 'string' && /remittance/i.test(cl.value)) cl.value = cl.value.replace(/REMITTANCES/g, 'DEPOSITS').replace(/REMITTANCE/g, 'DEPOSIT').replace(/Remittances/g, 'Deposits').replace(/Remittance/g, 'Deposit'); });
     set(ws, 'B9', D(A.from)); ws.getCell('B9').numFmt = 'mm/dd/yyyy'; set(ws, 'C9', 'Beginning Balance'); set(ws, 'G9', w.beg); set(ws, 'J9', w.beg); set(ws, 'K9', 0);
     let r = first;
     // More than one fund: a heading, a beginning and a subtotal line per fund.

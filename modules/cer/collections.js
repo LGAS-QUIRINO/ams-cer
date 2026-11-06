@@ -27,6 +27,48 @@ const isBrgy = (l) => !!l && l.data.kind === 'barangay';
 // LGU and PLGU: one RCD for all forms.
 export const kindsOf = (l) => (isBrgy(l) ? ['SCD', 'SCR'] : ['RCD']);
 export const kindOfForm = (l, form) => (isBrgy(l) ? (String(form).startsWith('ctc') ? 'SCR' : 'SCD') : 'RCD');
+// LGU (one RCD for all forms): CTC still has its own accountability column (AF 51 and CTC, as the barangays' SCD and SCR).
+export const isCtc = (form) => /^ctc/.test(String(form || ''));
+export const ctcSplit = (l, exam, f, o) => !isBrgy(l) && ((exam.forms || []).some(isCtc) || f.ors.some((x) => x.officerId === o.id && isCtc(x.form)));
+export const partOk = (part, form) => !part || (part === 'ctc') === isCtc(form);
+// Beginning share of CTC: the CTC collection balances in Audit Setup over all the collection balances.
+export function ctcBegShare(bal) {
+  const es = Object.entries(bal || {}).filter(([k]) => k.startsWith('col-'));
+  const c = es.filter(([k]) => isCtc(k.slice(4))).reduce((n, [, v]) => n + (+v?.amount || 0), 0), t = es.reduce((n, [, v]) => n + (+v?.amount || 0), 0) + (+bal?.liq?.amount || 0);
+  return t > 0.004 ? c / t : 0;
+}
+// Each deposit of a chain split between CTC and AF 51 by what is undeposited on its date (collections up to that date, less the earlier deposits).
+// Returns a Map: deposit → its CTC part. Remittances received from collectors are AF 51.
+const ALLOC = new WeakMap();
+export function ctcAlloc(ch, bs) {
+  const k = ALLOC.get(ch); if (k && k.bs === bs) return k.map;
+  const all = [...ch.figs, ch.pend], map = new Map();
+  const b0 = all[0]?.beg || 0; let uT = b0, uC = r2(b0 * bs);
+  const ev = [];
+  all.forEach((g) => {
+    (g.ors || []).filter((x) => x.status !== 'cancelled').forEach((x) => ev.push({ date: x.date || '', o: 0, t: orAmount(x), c: isCtc(x.form) ? orAmount(x) : 0 }));
+    (g.rec?.remittances || []).filter((m) => !m.beg).forEach((m) => ev.push({ date: m.date || '', o: 0, t: +m.amount || 0, c: 0 }));
+    (g.rec?.deposits || []).forEach((d) => ev.push({ date: d.date || '', o: 1, d }));
+  });
+  ev.sort((x, y) => x.date.localeCompare(y.date) || x.o - y.o).forEach((e) => {
+    if (!e.o) { uT = r2(uT + e.t); uC = r2(uC + e.c); return; }
+    const a = +e.d.amount || 0, c = uT > 0.004 ? r2(Math.min(a, Math.max(0, a * Math.min(1, Math.max(0, uC / uT))))) : 0;
+    map.set(e.d, c); uC = r2(uC - c); uT = r2(uT - a);
+  });
+  ALLOC.set(ch, { bs, map });
+  return map;
+}
+// The part of deposit d that goes to the column (part 'ctc' or 'or').
+export const depPart = (part, d, map) => { const c = map.get(d) || 0; return part === 'ctc' ? c : r2((+d.amount || 0) - c); };
+// Undeposited CTC of the officer, from the reports (the rest of the RCD balance is AF 51).
+export function ctcBalance(fig, bs) {
+  return r2(Object.values(fig.chains).filter((ch) => ch.kind === 'RCD').reduce((n, ch) => {
+    const all = [...ch.figs, ch.pend], map = ctcAlloc(ch, bs);
+    const c = all.reduce((m, g) => m + (g.ors || []).filter((x) => x.status !== 'cancelled' && isCtc(x.form)).reduce((k, x) => k + orAmount(x), 0), 0);
+    return n + (all[0]?.beg || 0) * bs + c - [...map.values()].reduce((m, v) => m + v, 0);
+  }, 0));
+}
+
 const kindOf = (l) => kindsOf(l)[0];
 // A report's name: its number, or (barangay SCDs often have none) its date, with (2), (3)… for a second unnumbered one of the same date and fund.
 // Unnumbered reports of the same date: told apart by their OR series ("SCR of 01/15/2026 · 20630801–20630850"), not (2).
