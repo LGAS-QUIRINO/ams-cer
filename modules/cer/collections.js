@@ -457,6 +457,7 @@ function wireAll(c) {
     await store.save('cer_reports', id, { ...base, ...patch }, by(refs));
   };
   /* table editors (remittances, deposits) */
+  const tbodyOf = (tr) => ({ querySelectorAll: () => [tr] });
   const wireRows = (box) => $$('.cd-x', box).forEach((b) => { b.onclick = () => b.closest('tr').remove(); });
   const remBox = $('#cd-rems');
   if (remBox) {
@@ -481,10 +482,26 @@ function wireAll(c) {
     };
   }
   const depBox = $('#cd-deps');
+  // Cashbook only: typing the series fills the amount with the collections in it (the officer's ORs and lines by OR range,
+  // and for an LO who collects, the remittances received with their series in it). A typed amount is kept.
+  const nmx = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+  const seriesTotal = (a, z) => r2(f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && +x.serial >= a && (x.range ? +x.serialTo : +x.serial) <= z).reduce((n, x) => n + r2((x.items || []).reduce((m, i) => m + (+i.amt || 0), 0)), 0)
+    + [...f.reports.filter((r) => r.officerId === o.id).flatMap((r) => (r.remittances || []).filter((m) => m.from)),
+      ...f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.deposits || []).filter((d) => d.toLO && d.from && nmx(d.ref) === nmx(o.name)).map((d) => ({ ...d, collectorId: r.officerId })))]
+      .filter((m, i, all) => all.findIndex((y) => y.collectorId === m.collectorId && String(y.from) === String(m.from)) === i)
+      .filter((m) => +m.from >= a && +(m.to || m.from) <= z).reduce((n, m) => n + (+m.amount || 0), 0));
+  const wireSeries = (box) => $$('tr', box).forEach((tr) => {
+    const fi = $('[data-k="from"]', tr), ti = $('[data-k="to"]', tr), am = $('[data-k="amount"]', tr); if (!fi || !ti || !am) return;
+    const fill = () => { const a = +fi.value.replace(/\D/g, ''), z = +(ti.value.replace(/\D/g, '') || a); if (!a || z < a) return;
+      if (am.value.trim() && am.dataset.auto !== '1') return;
+      const t = seriesTotal(a, z); am.value = t ? money(t) : ''; am.dataset.auto = t ? '1' : ''; };
+    fi.addEventListener('change', fill); ti.addEventListener('change', fill); ti.addEventListener('input', () => { if (ti.value.replace(/\D/g, '').length >= fi.value.replace(/\D/g, '').length) fill(); });
+    am.addEventListener('input', () => { am.dataset.auto = ''; });
+  });
   if (depBox) {
-    wireRows(depBox);
+    wireRows(depBox); if (c.cbook) wireSeries(depBox);
     $('#cd-adddep').onclick = () => { const t = document.createElement('tbody'); t.innerHTML = depRowHtml(c.K === 'SCR' || c.toLO, c.toLO, c.cbook);
-      if (c.cbook) { const tos = $$('[data-k="to"]', depBox).map((i) => +i.value || 0); const nx = Math.max(+depBox.dataset.next || 0, ...tos.map((v) => (v ? v + 1 : 0))); const fi = $('[data-k="from"]', t.firstElementChild); if (fi && nx) fi.value = nx; } const tr = t.firstElementChild; depBox.appendChild(tr); wireRows(depBox); $('input', tr).focus(); };
+      if (c.cbook) { const tos = $$('[data-k="to"]', depBox).map((i) => +i.value || 0); const nx = Math.max(+depBox.dataset.next || 0, ...tos.map((v) => (v ? v + 1 : 0))); const fi = $('[data-k="from"]', t.firstElementChild); if (fi && nx) fi.value = nx; } const tr = t.firstElementChild; depBox.appendChild(tr); wireRows(depBox); if (c.cbook) wireSeries(tbodyOf(tr)); $('input', tr).focus(); };
     if (!depBox.children.length) $('#cd-adddep').click();
     $('#cd-savedep').onclick = async () => {
       const list = [];
