@@ -37,23 +37,22 @@ export function ctcBegShare(bal) {
   const c = es.filter(([k]) => isCtc(k.slice(4))).reduce((n, [, v]) => n + (+v?.amount || 0), 0), t = es.reduce((n, [, v]) => n + (+v?.amount || 0), 0) + (+bal?.liq?.amount || 0);
   return t > 0.004 ? c / t : 0;
 }
-// Each deposit of a chain split between CTC and AF 51 by what is undeposited on its date (collections up to that date, less the earlier deposits).
+// Each deposit of a chain split between CTC and AF 51 by the ORs it covers: the ORs in its own series (OR From–To);
+// without a series, the ORs of its report (its OR Range); a report with no ORs, the beginning balances.
 // Returns a Map: deposit → its CTC part. Remittances received from collectors are AF 51.
 const ALLOC = new WeakMap();
+const rawAmt = (x) => r2((x.items || []).reduce((n, i) => n + (+i.amt || 0), 0));
 export function ctcAlloc(ch, bs) {
   const k = ALLOC.get(ch); if (k && k.bs === bs) return k.map;
-  const all = [...ch.figs, ch.pend], map = new Map();
-  const b0 = all[0]?.beg || 0; let uT = b0, uC = r2(b0 * bs);
-  const ev = [];
-  all.forEach((g) => {
-    (g.ors || []).filter((x) => x.status !== 'cancelled').forEach((x) => ev.push({ date: x.date || '', o: 0, t: orAmount(x), c: isCtc(x.form) ? orAmount(x) : 0 }));
-    (g.rec?.remittances || []).filter((m) => !m.beg).forEach((m) => ev.push({ date: m.date || '', o: 0, t: +m.amount || 0, c: 0 }));
-    (g.rec?.deposits || []).forEach((d) => ev.push({ date: d.date || '', o: 1, d }));
-  });
-  ev.sort((x, y) => x.date.localeCompare(y.date) || x.o - y.o).forEach((e) => {
-    if (!e.o) { uT = r2(uT + e.t); uC = r2(uC + e.c); return; }
-    const a = +e.d.amount || 0, c = uT > 0.004 ? r2(Math.min(a, Math.max(0, a * Math.min(1, Math.max(0, uC / uT))))) : 0;
-    map.set(e.d, c); uC = r2(uC - c); uT = r2(uT - a);
+  const map = new Map();
+  [...ch.figs, ch.pend].forEach((g) => {
+    const own = (g.ors || []).filter((x) => x.status !== 'cancelled');
+    const T = own.reduce((n, x) => n + rawAmt(x), 0) + (g.remTotal || 0), C = own.filter((x) => isCtc(x.form)).reduce((n, x) => n + rawAmt(x), 0);
+    (g.rec?.deposits || []).forEach((d) => {
+      const s = g.serOf?.get(d), a = +d.amount || 0;
+      const share = s && s.tot > 0.004 ? s.ctc / s.tot : T > 0.004 ? C / T : bs;
+      map.set(d, r2(Math.min(a, Math.max(0, a * share))));
+    });
   });
   ALLOC.set(ch, { bs, map });
   return map;
@@ -163,6 +162,19 @@ export function figuresOf(f, o, funds, countDate, lgu) {
     rem.forEach((m) => {
       const cr = m.reportId ? f.reports.find((r) => r.id === m.reportId) : null;
       if (cr) { const cf = quickColl(f, cr); if (Math.abs(cf - (+m.amount || 0)) > 0.004) fig.issues.push(`Remittance of ${esc(f.officers.find((x) => x.id === m.collectorId)?.name || 'a collector')} (${esc(repName(cr))}) is ₱${money(m.amount)}; that report's collections are ₱${money(cf)}.`); }
+    });
+    // Each deposit / remittance with its own OR series: the ORs encoded in it (by form), those dated before the last cash exam,
+    // and the numbers of the officer's booklets not encoded; the amount is checked against them.
+    fig.serOf = new Map();
+    (rec?.deposits || []).filter((d) => d.from && !d.fromLO).forEach((d) => {
+      const a = +d.from, z = +(d.to || d.from); if (!(a > 0) || z < a || z - a > 5000) return;
+      const ins = ors.filter((x) => x.status !== 'cancelled' && +x.serial >= a && maxSer(x) <= z);
+      const tot = r2(ins.reduce((n, x) => n + rawAmt(x), 0)), ctc = r2(ins.filter((x) => isCtc(x.form)).reduce((n, x) => n + rawAmt(x), 0)), beg = r2(ins.filter((x) => x.beg).reduce((n, x) => n + rawAmt(x), 0));
+      const mineBk = f.booklets.filter((b) => b.officerId === o.id && !b.noSerial && b.from <= z && b.to >= a);
+      const miss = []; for (let n = a; n <= z; n++) if (mineBk.some((b) => b.from <= n && n <= b.to && !(encoded[b.form] && encoded[b.form].has(n)))) miss.push([n, n]);
+      const info = { a, z, tot, ctc, af: r2(tot - ctc), beg, miss: mergeRanges(miss), ok: Math.abs(tot - (+d.amount || 0)) <= 0.004 };
+      fig.serOf.set(d, info);
+      if (!info.ok && (tot > 0.004 || miss.length)) fig.issues.push(`Series ${a}–${z}: ₱${money(d.amount)} ${d.toLO ? 'remitted' : 'deposited'} on ${fmtDate(d.date)}; ORs encoded in it ₱${money(tot)}${beg ? ` (₱${money(beg)} of them dated before the last cash exam)` : ''}${miss.length ? `; not encoded: ${rangesText(info.miss)}` : ''}.`);
     });
     if (fig.end < -0.004) fig.issues.push('Deposits are more than the undeposited balance and the collections.');
     out[id] = fig;
@@ -406,15 +418,22 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const lo = isLO ? loDays(f, o, fig.chains, audit.countDate) : [];
   // Deposits register (SCD / RCD) and Remittances register (SCR), kept apart: those of the kind shown, oldest first; a row opens its report.
   const allDeps = [];
-  fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind) && (fig.chains[k].kind === 'SCR') === isRem).forEach((k) => { const ch = fig.chains[k]; [...ch.figs, ch.pend].forEach((g) => (g.rec?.deposits || []).forEach((d) => allDeps.push({ ...d, g, kind: ch.kind, fund: ch.fund }))); });
+  fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind) && (fig.chains[k].kind === 'SCR') === isRem).forEach((k) => { const ch = fig.chains[k]; [...ch.figs, ch.pend].forEach((g) => (g.rec?.deposits || []).forEach((d) => allDeps.push({ ...d, g, ch, src: d, kind: ch.kind, fund: ch.fund }))); });
+  // LGU with CTC: each deposit's AF 51 and CTC parts (from the ORs it covers); any line with a series: its check against the ORs in it.
+  const dSplit = !isRem && ctcSplit(lgu, exam, f, o), dBs = ctcBegShare(exam.balances);
+  const dHasSer = allDeps.some((d) => d.g.serOf?.get(d.src));
+  const dCtc = (d) => ctcAlloc(d.ch, dBs).get(d.src) || 0;
+  const dChk = (d) => { const s = d.g.serOf?.get(d.src); if (!s) return '<span class="dim">—</span>';
+    return s.ok ? '<span class="pill p-done" title="The ORs encoded in the series add up to the amount">✓</span>'
+      : `<span class="pill p-flag" title="${esc(`ORs encoded in ${s.a}–${s.z}: ₱${money(s.tot)}${s.beg ? `, ₱${money(s.beg)} of them dated before the last cash exam` : ''}${s.miss.length ? `; not encoded: ${rangesText(s.miss)}` : ''}`)}">₱${money(Math.abs(r2((+d.amount || 0) - s.tot)))} ${(+d.amount || 0) > s.tot ? 'not found' : 'more in the ORs'}</span>`; };
   allDeps.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.ref).localeCompare(String(b.ref)));
   const shownDeps = DEPSHOW.v === 'sel' ? allDeps.filter((d) => d.g.id === selId) : allDeps;
   const depReg = `<div class="cd-block cd-depreg"><div class="cd-orhead"><h3 class="cer-h3">${remish ? 'Remittances' : 'Deposits'} register</h3><span class="pill">${shownDeps.length}</span>
       <label class="sr-only" for="cd-depshow">Show</label><select class="input af-sm" id="cd-depshow"><option value="all" ${DEPSHOW.v !== 'sel' ? 'selected' : ''}>All of this officer</option><option value="sel" ${DEPSHOW.v === 'sel' ? 'selected' : ''}>${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</option></select>
       <button class="btn sm" type="button" id="cd-depxls">Export to Excel</button></div>
-    ${shownDeps.length ? `<div class="af-tbl cd-depscroll"><table class="af-reg cd-deptbl"><thead><tr><th scope="col">Date</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th><th scope="col" class="r">Amount (₱)</th><th scope="col">${isRem ? 'SCR' : usedKinds.filter((k) => k !== 'SCR').join(' / ')}</th><th scope="col">Fund</th></tr></thead>
-      <tbody>${shownDeps.map((d) => `<tr data-pickdep="${esc(d.g.id)}" tabindex="0" class="${d.g.id === selId ? 'cd-on' : ''}"><td>${esc(fmtDate(d.date))}</td><td class="mono">${esc(depRefText(d, d.kind === 'SCR'))}</td><td class="r">${money(+d.amount || 0)}</td><td>${esc(d.g.pending ? `Not yet in an ${d.kind}` : repName(d.g.rec, d.kind))}</td><td>${esc(d.fund)}</td></tr>`).join('')}</tbody>
-      <tfoot><tr class="cd-foot"><td colspan="2">Total</td><td class="r">${money(r2(shownDeps.reduce((n, d) => n + (+d.amount || 0), 0)))}</td><td colspan="2"></td></tr></tfoot></table></div>`
+    ${shownDeps.length ? `<div class="af-tbl cd-depscroll"><table class="af-reg cd-deptbl"><thead><tr><th scope="col">Date</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th><th scope="col" class="r">Amount (₱)</th>${dSplit ? '<th scope="col" class="r">AF 51</th><th scope="col" class="r">CTC</th>' : ''}${dHasSer ? '<th scope="col">Check</th>' : ''}<th scope="col">${isRem ? 'SCR' : usedKinds.filter((k) => k !== 'SCR').join(' / ')}</th><th scope="col">Fund</th></tr></thead>
+      <tbody>${shownDeps.map((d) => `<tr data-pickdep="${esc(d.g.id)}" tabindex="0" class="${d.g.id === selId ? 'cd-on' : ''}"><td>${esc(fmtDate(d.date))}</td><td class="mono">${esc(depRefText(d, d.kind === 'SCR'))}</td><td class="r">${money(+d.amount || 0)}</td>${dSplit ? `<td class="r">${money(r2((+d.amount || 0) - dCtc(d)))}</td><td class="r">${money(dCtc(d))}</td>` : ''}${dHasSer ? `<td>${dChk(d)}</td>` : ''}<td>${esc(d.g.pending ? `Not yet in an ${d.kind}` : repName(d.g.rec, d.kind))}</td><td>${esc(d.fund)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr class="cd-foot"><td colspan="2">Total</td><td class="r">${money(r2(shownDeps.reduce((n, d) => n + (+d.amount || 0), 0)))}</td>${dSplit ? `<td class="r">${money(r2(shownDeps.reduce((n, d) => n + (+d.amount || 0) - dCtc(d), 0)))}</td><td class="r">${money(r2(shownDeps.reduce((n, d) => n + dCtc(d), 0)))}</td>` : ''}${dHasSer ? '<td></td>' : ''}<td colspan="2"></td></tr></tfoot></table></div>`
       : `<div class="empty"><b>No ${remish ? 'remittance' : 'deposit'} encoded yet.</b></div>`}</div>`;
   const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : toLO ? 'Date Remitted to LO' : 'Deposit Date'}</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th>${remish ? '' : '<th scope="col">No.</th>'}${cbook ? '<th scope="col">OR From</th><th scope="col">OR To</th>' : ''}<th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
       <tbody id="cd-deps" data-next="${lastTo ? lastTo + 1 : isFinite(firstOr) ? firstOr : ''}">${(cur.rec?.deposits || []).filter((d) => !d.fromLO).map(depRow).join('')}</tbody></table></div>
@@ -430,7 +449,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <div><span>Add: Collections${isLO ? ' (ORs ₱' + money(cur.orsTotal) + ' + remittances ₱' + money(cur.remTotal) + ')' : ''}</span><span>${money(cur.coll)}</span></div>
       <div><span>Less: ${DEPS}</span><span>${money(cur.dep)}</span></div>
       <div class="cd-sumt"><span>${remish ? 'Unremitted' : 'Undeposited'}, end</span><span>${money(cur.end)}</span></div>
-      ${agree}</div>
+      ${agree}${cur.issues.filter((t) => t.startsWith('Series ')).map((t) => `<p class="cd-serchk">⚠ ${esc(t)}</p>`).join('')}</div>
     ${isLO ? `<div class="cd-block"><h3 class="cer-h3">Days with the LO · received → deposited</h3>
       ${lo.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th scope="col">Date Received</th><th scope="col">From</th><th scope="col">Collector's RCD No.</th><th scope="col">Fund</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Deposited</th><th scope="col">Deposit Reference</th><th scope="col" class="r">Days with LO</th></tr></thead>
         <tbody>${lo.map((x) => `<tr><td>${esc(fmtDate(x.date))}</td><td>${esc(x.from)}</td><td class="mono">${esc(x.no || '')}</td><td>${esc(x.fund)}</td><td class="r">${money(x.amount)}</td>

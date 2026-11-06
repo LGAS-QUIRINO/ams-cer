@@ -885,3 +885,5 @@ table.af-reg.tr-month{min-width:0}
 .cut-entry .cut-np { flex: 0 0 auto; align-self: center; padding-top: 18px; font-size: 13px; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap }
 .cut-nptbl { margin-top: 12px }
 .rp-note { font-size: 12px; margin: 6px 0 0 }
+/* Deposits: the check of a series against the ORs in it */
+.cd-sum .cd-serchk { margin: 8px 0 0; font-size: 12.5px; color: var(--warn-ink, #8a5300); line-height: 1.4 }
