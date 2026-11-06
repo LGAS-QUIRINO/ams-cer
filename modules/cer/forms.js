@@ -1532,14 +1532,15 @@ export function saafRows(f, officerId, exam, from, to, advs = []) {
       if (!beg.length && !rec.length && !end.length && !(count && count.length)) return;
       const issued = subtractRanges([...beg, ...rec], count || end);
       out.push({ id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, face: faceOf(b), beg, rec, issued, end, count,
-        diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || b.bankAccount || '' });
+        diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || b.bankAccount || '', date: b.receivedDate && !isBeg(b, from) ? b.issuedDate || b.receivedDate : b.issuedDate || '' });
     });
   lines.filter((l) => !l.bookletId).forEach((l) => out.push({ id: l.id, form: l.form, name: FORM_SHORT[l.form] || l.form, booklet: [l.from, l.to], ns: l.ns, face: faceOf({ form: l.form }), beg: [], rec: [], issued: [], end: [], count: l.ranges, diff: -countRanges(l.ranges), fund: '', other: true }));
-  // Within a form: the beginning balance first (starting inventory / AO's beginning), then those received, then forms not in the register.
+  // Within a form: the beginning balance first (starting inventory / AO's beginning), then those received (by date received), then forms not in the register.
   const rank = (r) => (r.other ? 2 : r.beg.length ? 0 : 1);
   // Forms with money value and the AF 51 first, then the CTCs, the checks last.
   const grp = (r) => (r.form === 'chk' ? 2 : /^ctc/.test(r.form) ? 1 : 0);
-  return out.sort((a, b) => grp(a) - grp(b) || a.form.localeCompare(b.form) || rank(a) - rank(b) || a.booklet[0] - b.booklet[0]);
+  // Received: in the order received (the first series received first); same date: by serial.
+  return out.sort((a, b) => grp(a) - grp(b) || a.form.localeCompare(b.form) || rank(a) - rank(b) || (rank(a) === 1 ? String(a.date || '').localeCompare(String(b.date || '')) : 0) || a.booklet[0] - b.booklet[0]);
 }
 
 // For Verification (once encoding is complete): the cut-off against the register and the ORs encoded.
