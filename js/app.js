@@ -6,6 +6,7 @@ import { startSync, syncNow, syncState } from './sync.js';
 import { $, toast, bottomBand } from './ui.js';
 import { loginHtml } from './views/login.js';
 import { dashboardHtml } from './views/dashboard.js';
+import { setScopeRefs } from './scope.js';
 import { MODULES } from './modules.js';
 import { DEMO_JO } from './seed.js';
 import { adminBar, notAdmin, roleLine, usersHtml, wireUsers, teamsHtml, wireTeams, lgusHtml, wireLgus } from './views/admin.js';
@@ -54,7 +55,7 @@ async function enter() {
       return showLogin(m === 'OFFLINE' || /fetch/i.test(m) ? 'No internet. The first sign-in on this device needs internet.' : m);
     }
   }
-  const refs = await loadRefs(auth.session.email);
+  const refs = await loadRefs(auth.session.email); setScopeRefs(refs);
   if (!DEMO && (!refs.me || refs.me.data.status === 'disabled')) {
     await auth.signOut(); await store.wipe();
     return showLogin('This Gmail is not registered in AMS. Ask the Admin to add it.');
@@ -67,7 +68,7 @@ async function enter() {
 
 async function render() {
   if (!signedIn) return;
-  const refs = await loadRefs(auth.session.email);
+  const refs = await loadRefs(auth.session.email); setScopeRefs(refs);
   const [path, qs] = (location.hash.replace(/^#/, '') || '/').split('?');
   const q = new URLSearchParams(qs || '');
   const part = path.split('/').filter(Boolean);

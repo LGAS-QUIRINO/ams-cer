@@ -8,6 +8,7 @@
 //   cer_exams     one officer's exam record inside a cash examination
 //                 { auditId, officerId, functions[], forms[], bond{maxCash, amount, riskNo, from, to, none (the officer has no fidelity bond)}, remitToLO (collections remitted to the Liquidating Officer, not deposited), records ('complete' | 'cashbook': no SCD / RCD, collections by OR range and deposits by OR series), lastExamDate, lastExamSource, caRestFund (fund of the beginning cash advance not itemized),
 //                   balances{ key: { amount, source } }, endBalances{} (filled later by the examination) }
+import { inScope } from '../../js/scope.js';
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { roleLine } from '../../js/views/admin.js';
@@ -40,8 +41,10 @@ const seesAll = (refs) => hasRole(refs, 'admin', 'sa', 'osa');
 export const isAuditor = (refs) => hasRole(refs, 'member', 'atl', 'sa', 'admin');
 export const by = (refs) => refs.me?.data.email || '';
 const munOf = (refs, lgu) => (lgu.data.kind === 'barangay' ? lgu.data.parentId : lgu.data.kind === 'municipality' ? lgu.id : '');
+// Visible to this person and within the working scope (AMS Dashboard, "Working on").
 export function mayView(refs, lgu) {
   if (!lgu) return false;
+  if (!inScope(refs, lgu)) return false;
   if (seesAll(refs)) return true;
   const d = refs.me?.data; if (!d || !(d.teamIds || []).includes(lgu.data.teamId)) return false;
   if ((d.roles || []).includes('atl')) return true;

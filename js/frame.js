@@ -1,5 +1,6 @@
 // The standard frame every AMS module uses (design approved 17 Oct 2026):
 // navy sidebar (module name, back to AMS, the module's parts, a Setup section, sync box) and a top bar (page name, user, Sign Out).
+import { scopeSelect } from './scope.js';
 import { DEMO } from './config.js';
 import { syncState } from './sync.js';
 import { esc, bottomBand } from './ui.js';
@@ -40,7 +41,7 @@ export function moduleFrame({ title, items, active, crumb, me, roleText, body })
       ${syncBox()}
     </aside>
     <div class="mmain">
-      <header class="mtop"><span class="crumb">${esc(crumb)}</span>
+      <header class="mtop"><span class="crumb">${esc(crumb)}</span>${scopeSelect('m-scope', 'in-top')}
         <div class="mwho"><div class="av">${esc(ini)}</div><div><b>${esc(name)}</b><small>${esc(roleText)}</small></div>
           <button class="btn" type="button" id="m-signout">Sign Out</button></div></header>
       <div class="mcontent">${body}</div>

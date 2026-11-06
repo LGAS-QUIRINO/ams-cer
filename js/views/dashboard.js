@@ -1,6 +1,7 @@
 // Dashboard (design approved 17 Oct 2026): seven module cards, centered; Urgent Reports pops out at the lower-right corner.
 import { esc, bottomBand } from '../ui.js';
 import { MODULES, iconSvg } from '../modules.js';
+import { scopeSelect } from '../scope.js';
 
 const BELL = '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>';
 const OUT = '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>';
@@ -49,6 +50,7 @@ export function dashboardHtml(session, roleLine, isAdmin = false, displayName = 
       <h1>AUDIT MANAGEMENT SYSTEM</h1><div class="tri wide"></div>
       <p class="office">COA QUIRINO</p>
       <p class="motto">INTEGRATED AUDIT OPERATIONS FOR GREATER ACCOUNTABILITY</p>
+      ${scopeSelect('d-scope', 'on-dash')}
     </div>
     <div class="cards">
       ${MODULES.map((m) => `<a class="card" href="${m.ready ? esc(m.path) : '#'}" data-mod="${m.id}" style="--k:${m.color}">

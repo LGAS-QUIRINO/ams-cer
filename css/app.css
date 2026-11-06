@@ -297,3 +297,9 @@ details.acc[open] > summary .acc-s{visibility:hidden}
   details.acc[open] > summary .acc-s{display:none}
   .acc-b{padding:4px 16px 16px}
 }
+/* Working scope ("Working on") */
+.scope-pick{display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--dim, #5b6475); font-weight:600}
+.scope-pick select.input{width:auto; min-width:220px; padding:6px 10px; font-size:13.5px}
+.scope-pick.on-dash{margin-top:14px; justify-content:center}
+.scope-pick.in-top{margin-left:6px}
+@media (max-width:760px){ .scope-pick.in-top{display:none} }
