@@ -357,9 +357,16 @@ function cashbookFindings(f, o, exam, from, to) {
     if (!f.ors.some((x) => x.officerId === o.id && x.range)) add(`cbsum|${o.id}`, 'collections verified at the summary level from the cashbook; the RCDs / SCDs and the ORs were not examined individually.');
     const deps = f.reports.filter((r) => r.officerId === o.id).flatMap((r) => (r.deposits || []).filter((d) => d.from && inS(d.date))).sort((a, b) => +a.from - +b.from);
     const mx = (x) => (x.range ? +x.serialTo : +x.serial);
+    // Remittances received with their series: typed in this officer's records, or typed by the collectors (remitted to this officer).
+    const nm = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+    const recv = [...f.reports.filter((r) => r.officerId === o.id).flatMap((r) => (r.remittances || []).filter((m) => m.from)),
+      ...f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.deposits || []).filter((d) => d.toLO && d.from && nm(d.ref) && nm(d.ref) === nm(o.name)).map((d) => ({ ...d, collectorId: r.officerId })))]
+      .filter((m, i, all) => all.findIndex((y) => y.collectorId === m.collectorId && String(y.from) === String(m.from)) === i);
     deps.forEach((d, i) => {
       const a = +d.from, z = +(d.to || d.from);
-      const c = r2(f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && +x.serial >= a && mx(x) <= z).reduce((n, x) => n + amt(x), 0));
+      // Collections of the series: the officer's own ORs in it, plus (an LO who also collects) the remittances received whose series is in it.
+      const c = r2(f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && +x.serial >= a && mx(x) <= z).reduce((n, x) => n + amt(x), 0)
+        + recv.filter((m) => +m.from >= a && +(m.to || m.from) <= z).reduce((n, m) => n + (+m.amount || 0), 0));
       if (Math.abs(c - (+d.amount || 0)) > 0.004) add(`serdiff|${o.id}|${d.date}|${a}`, `${a}–${z}: collections ₱${money(c)}, ${d.toLO ? 'remitted' : 'deposited'} ₱${money(d.amount)} on ${fmtDate(d.date)}.`);
       const p = deps[i - 1]; if (!p) return;
       const pz = +(p.to || p.from);
