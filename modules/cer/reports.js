@@ -5,6 +5,7 @@
 //   Annex C  Statement of Accountability – collections, by month (barangays: AF 51 (SCD) and CTC (SCR); LGU: RCD)
 //   Annex D  Statement of Accountability – cash advances, by month
 // Other reports follow.
+import { cnpHtml } from './cnp.js';
 import { listT } from '../src/journal.js';
 import { store } from '../../js/store.js';
 import { covOf, inCov, withLines, isPart } from './banks.js';
@@ -22,7 +23,7 @@ const BILLS = [1000, 500, 200, 100, 50, 20];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const REPORTS = [['74a', 'GF 74-A · Report of Cash Examination'], ['saaf', 'Annex B · SAAF'], ['soac', 'Annex C · Statement of Accountability (Collections)'], ['soad', 'Annex D · Statement of Accountability (Cash Advances)'],
   ['rsa', 'Annex E–G · Reconciliation Statements of Accountability'], ['a1a', 'Annex A.1a · Working paper: ORs, collections and deposits'],
-  ['a1b', 'Annex A.1b · Working paper: CTC, collections and remittances'], ['a2a', 'Annex A.2a · Working paper: cash advances and liquidations']];
+  ['a1b', 'Annex A.1b · Working paper: CTC, collections and remittances'], ['a2a', 'Annex A.2a · Working paper: cash advances and liquidations'], ['cnp', 'Working paper: Collections not presented at the last cash exam']];
 const amt = (n) => (n === null || n === undefined ? '' : n < -0.004 ? `(${money(-n)})` : money(n));
 
 // Amount in words, e.g. 35,000 → "Thirty Five Thousand Pesos Only".
@@ -79,7 +80,7 @@ export async function reportsView(ctx) {
   const isWp = WP[rep];
   const w = isWp ? wpLines(ctx2, rep, ver) : null;
   const doc = rep === '74a' ? gf74a(ctx2) : rep === 'saaf' ? saaf(ctx2) : rep === 'soac' ? soa(ctx2, 'col') : rep === 'soad' ? soa(ctx2, 'ca')
-    : rep === 'rsa' ? { html: rsaHtml(ctx2, ver) } : { html: wpHtml(ctx2, rep, ver, true) };
+    : rep === 'rsa' ? { html: rsaHtml(ctx2, ver) } : rep === 'cnp' ? cnpHtml(ctx2) : { html: wpHtml(ctx2, rep, ver, true) };
   const miss = [!prepId && 'the ATM in Prepared by', !revId && 'the ATL in Reviewed by'].filter(Boolean);
   const who = miss.length ? `<div class="cd-info">Choose ${miss.join(' and ')} in Audit Setup; the reports show blank names until then.</div>` : '';
   const note = who + (!A.count && rep === '74a' ? '<div class="cd-info">No cash count saved yet for this officer: part B is blank. Save it in Cash Count.</div>' : '');

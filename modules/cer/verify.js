@@ -10,6 +10,7 @@
 // Records:
 //   cer_verify  id = examId  { examId, recon{ <column>: { cashbook, unrecBeg, unrecDebit, unrecCredit } },
 //                              decisions{ <finding key>: { decision, remarks } }, complete, completeBy, completeAt, ready, readyBy, readyAt }
+import { cnpData } from './cnp.js';
 import { listT } from '../src/journal.js';
 import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
@@ -118,6 +119,7 @@ export async function verifyView(ctx) {
   f.ors.filter((x) => x.officerId === o.id && x.date > to).slice(0, 1).forEach(() => add('afterct', 'Collections', `${f.ors.filter((x) => x.officerId === o.id && x.date > to).length} OR(s) dated after the cash count.`, '#/cer/collections'));
   // Collections by OR range (cashbooks): the collector's cashbook against the Liquidating Officer's, and the beginning.
   cashbookFindings(f, o, exam, from, to).forEach((x) => add(x.key, 'Collections', x.text, '#/cer/collections'));
+  { const np = cnpData(f, o, exam, from, to); if (np && np.notPresented > 0.004) add(`cnp|${np.notPresented}`, 'Collections', `₱${money(np.notPresented)} of collections dated before the last cash examination (${fmtDate(from)}) were not presented then; remitted only in this period (see the working paper: Collections not presented at the last cash exam).`, `#/cer/reports?a=${audit.id}&e=${exam.id}&rep=cnp`); }
   cutoffFindings(f, o, exam, from, to).forEach((x) => add(`af|${x.key}`, 'Accountable Forms', x.text, x.key === 'nocut' || x.key.startsWith('np|') || x.key.startsWith('nir|') ? `#/cer/count?a=${audit.id}&e=${exam.id}` : '#/cer/forms'));
   // Late deposits: collections deposited in date order (first in, first out) against the deadline of the officer's rule.
   const hol = await holidaysOf(refs, audit.lguId);
