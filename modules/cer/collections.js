@@ -753,15 +753,21 @@ function placeIn(chain, date, serial) {
 // ORs in a report with a range whose number is outside it (e.g. the range was corrected).
 const strays = (ch) => ch.figs.filter(hasRange).flatMap((g) => g.ors.filter((x) => !inRanges(g.rec.ranges, x.serial)));
 const byDate = (a, b) => String(a.date).localeCompare(String(b.date));
-const misplaced = (fig) => Object.values(fig.chains).some((ch) => ch.figs.length && (ch.pend.ors.some((x) => placeIn(ch, x.date, x.serial)) || strays(ch).length
+// An OR not yet in a report whose number is in the OR Range of a report of this officer (any fund or report type): it goes there.
+const rangeHome = (fig, x) => { for (const ch of Object.values(fig.chains)) { const g = ch.figs.find((y) => hasRange(y) && inRanges(y.rec.ranges, +x.serial)); if (g) return { ch, id: g.id }; } return null; };
+const pendOrs = (fig) => Object.values(fig.chains).flatMap((ch) => ch.pend.ors);
+const misplaced = (fig) => pendOrs(fig).some((x) => rangeHome(fig, x)) || Object.values(fig.chains).some((ch) => ch.figs.length && (ch.pend.ors.some((x) => placeIn(ch, x.date, x.serial)) || strays(ch).length
   || (ch.pend.rec?.deposits || []).some((d) => placeIn(ch, d.date)) || (ch.pend.rec?.remittances || []).some((m) => placeIn(ch, m.date))));
 // Moves the ORs, deposits and remittances not yet in a report into the report that covers their date.
 async function sweepChains(f, fig, refs) {
+  // First by OR Range, across funds and report types (e.g. ORs imported while another fund was selected).
+  const moved = new Set();
+  for (const x of pendOrs(fig)) { const h = rangeHome(fig, x); if (h) { moved.add(x.id); await store.save('cer_ors', x.id, { ...strip(x), reportId: h.id, fund: h.ch.fund }, by(refs), { quiet: true }); } }
   for (const ch of Object.values(fig.chains)) {
     if (!ch.figs.length) continue;
     const p = ch.pend;
     for (const x of strays(ch)) await store.save('cer_ors', x.id, { ...strip(x), reportId: placeIn(ch, x.date, x.serial) }, by(refs), { quiet: true });
-    for (const x of p.ors) { const to = placeIn(ch, x.date, x.serial); if (to) await store.save('cer_ors', x.id, { ...strip(x), reportId: to, fund: ch.fund }, by(refs), { quiet: true }); }
+    for (const x of p.ors.filter((y) => !moved.has(y.id))) { const to = placeIn(ch, x.date, x.serial); if (to) await store.save('cer_ors', x.id, { ...strip(x), reportId: to, fund: ch.fund }, by(refs), { quiet: true }); }
     const prec = p.rec && p.rec.lguId ? p.rec : null;
     if (!prec) continue;
     const moves = {};
