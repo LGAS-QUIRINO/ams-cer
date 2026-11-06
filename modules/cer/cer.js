@@ -6,7 +6,7 @@
 //   cer_officers  one accountable officer of an auditee           { lguId, name, designation }
 //   cer_audits    one cash examination = auditee + cash count date { lguId, countDate, preparedBy, reviewedBy }
 //   cer_exams     one officer's exam record inside a cash examination
-//                 { auditId, officerId, functions[], forms[], bond{maxCash, amount, riskNo, from, to}, lastExamDate, lastExamSource, caRestFund (fund of the beginning cash advance not itemized),
+//                 { auditId, officerId, functions[], forms[], bond{maxCash, amount, riskNo, from, to, none (the officer has no fidelity bond)}, lastExamDate, lastExamSource, caRestFund (fund of the beginning cash advance not itemized),
 //                   balances{ key: { amount, source } }, endBalances{} (filled later by the examination) }
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
@@ -98,6 +98,7 @@ function balanceRows(st) {
 export function bondChecks(st) {
   const b = st.bond || {}, out = [];
   const amt = num(b.amount), max = num(b.maxCash);
+  if (b.none) return [{ kind: 'warn', text: '<strong>The officer has no fidelity bond.</strong>' + (max !== null ? ` Maximum cash accountability ₱${money(max)}.` : '') }];
   if (!b.amount && !b.riskNo && !b.from && !b.to) out.push({ kind: 'warn', text: '<strong>No fidelity bond entered.</strong> Enter the bond details, or note that the officer has no bond.' });
   if (b.to && st.countDate && b.to < st.countDate) out.push({ kind: 'bad', text: `<strong>Expired fidelity bond.</strong> Bond ended ${fmtDate(b.to)}, before the cash count on ${fmtDate(st.countDate)}.` });
   if (b.from && st.countDate && b.from > st.countDate) out.push({ kind: 'warn', text: `<strong>Bond not yet effective.</strong> It starts ${fmtDate(b.from)}, after the cash count on ${fmtDate(st.countDate)}.` });
@@ -161,7 +162,7 @@ function heads(refs, cer, st) {
   const fnOk = st.officerId && (st.functions || []).length && (!(st.functions || []).includes('collecting') || (st.forms || []).length);
   h.officer = [o ? `${esc(o.name)}${(st.functions || []).length ? ' · ' + esc(st.functions.map((k) => FUNC_NAME[k]).join(', ')) : ''}` : 'Officer, functions and forms', fnOk ? 'ok' : 'need'];
   const b = st.bond || {}, w = bondChecks(st);
-  h.bond = [b.amount || b.to ? `${b.amount ? '₱' + esc(b.amount) + ' bond' : 'Bond'}${b.to ? ' · valid to ' + esc(fmtDate(b.to)) : ''}${w.length ? ' · ' + w.length + ' to check' : ''}` : (w.length ? 'No bond entered' : 'Bond details'), w.some((x) => x.kind === 'bad') ? 'warn' : b.amount || b.riskNo || b.from || b.to ? 'ok' : 'need'];
+  h.bond = b.none ? ['No fidelity bond (noted)', 'ok'] : [b.amount || b.to ? `${b.amount ? '₱' + esc(b.amount) + ' bond' : 'Bond'}${b.to ? ' · valid to ' + esc(fmtDate(b.to)) : ''}${w.length ? ' · ' + w.length + ' to check' : ''}` : (w.length ? 'No bond entered' : 'Bond details'), w.some((x) => x.kind === 'bad') ? 'warn' : b.amount || b.riskNo || b.from || b.to ? 'ok' : 'need'];
   h.period = [lastExam && st.countDate ? `${esc(fmtDate(lastExam))} to ${esc(fmtDate(st.countDate))}` : 'Last cash exam date', lastExam && st.countDate ? 'ok' : 'need'];
   const rows = balanceRows(st);
   if (!rows.length) h.bal = [(st.functions || []).length ? 'None (forms only)' : 'Tick the officer\'s functions first', (st.functions || []).length ? 'ok' : 'need'];
@@ -440,11 +441,12 @@ function officerHtml(refs, cer, st, edit) {
     ${acc('bond', 'Bond and Limits', h.bond, `
       <div class="cer-g5">
         <div class="field"><label for="b-max">Max. Cash Accountability (₱)</label><input class="input amt" id="b-max" data-bond="maxCash" inputmode="decimal" value="${esc(st.bond.maxCash)}" ${dis}></div>
-        <div class="field"><label for="b-amt">Amount of Bond (₱)</label><input class="input amt" id="b-amt" data-bond="amount" inputmode="decimal" value="${esc(st.bond.amount)}" ${dis}></div>
-        <div class="field"><label for="b-risk">Risk No.</label><input class="input" id="b-risk" data-bond="riskNo" value="${esc(st.bond.riskNo)}" ${dis}></div>
-        <div class="field"><label for="b-from">Bond Effective From</label><input class="input" type="date" id="b-from" data-bond="from" value="${esc(st.bond.from)}" ${dis}></div>
-        <div class="field"><label for="b-to">Bond Effective To</label><input class="input" type="date" id="b-to" data-bond="to" value="${esc(st.bond.to)}" ${dis}></div>
+        <div class="field"><label for="b-amt">Amount of Bond (₱)</label><input class="input amt b-det" id="b-amt" data-bond="amount" inputmode="decimal" value="${esc(st.bond.amount)}" ${dis || (st.bond.none ? 'disabled' : '')}></div>
+        <div class="field"><label for="b-risk">Risk No.</label><input class="input b-det" id="b-risk" data-bond="riskNo" value="${esc(st.bond.riskNo)}" ${dis || (st.bond.none ? 'disabled' : '')}></div>
+        <div class="field"><label for="b-from">Bond Effective From</label><input class="input b-det" type="date" id="b-from" data-bond="from" value="${esc(st.bond.from)}" ${dis || (st.bond.none ? 'disabled' : '')}></div>
+        <div class="field"><label for="b-to">Bond Effective To</label><input class="input b-det" type="date" id="b-to" data-bond="to" value="${esc(st.bond.to)}" ${dis || (st.bond.none ? 'disabled' : '')}></div>
       </div>
+      <label class="cer-tick b-none"><input type="checkbox" id="b-none" ${st.bond.none ? 'checked' : ''} ${dis}> The officer has no fidelity bond</label>
       <div id="cer-warn">${warnHtml(st)}</div>`, opens.has('bond'))}
 
     ${acc('period', 'Examination Period', h.period, `
@@ -541,6 +543,7 @@ function wireSetup(refs, cer, q, rerender) {
     }; });
     const dr = $('#cer-deprule'); if (dr) dr.onchange = () => { st.depositRule = dr.value; touch(); };
     $$('[data-form]').forEach((c) => { c.onchange = () => { st.forms = $$('[data-form]').filter((x) => x.checked).map((x) => x.dataset.form); touch(); drawOfficer(); }; });
+    const nb = $('#b-none'); if (nb) nb.onchange = () => { st.bond.none = nb.checked; $$('.b-det').forEach((x) => { x.disabled = nb.checked; }); touch(); $('#cer-warn').innerHTML = warnHtml(st); flag(); };
     $$('[data-bond]').forEach((i) => {
       i.oninput = () => { st.bond[i.dataset.bond] = i.value; touch(); $('#cer-warn').innerHTML = warnHtml(st); flag(); };
       if (i.classList.contains('amt')) i.onblur = () => { const v = num(i.value); if (v !== null) { i.value = money(v); st.bond[i.dataset.bond] = i.value; } };
@@ -716,7 +719,7 @@ async function saveSetup(refs, cer, st) {
   if (!lastExamDate) return bad('Enter the last cash exam date.');
   if (lastExamDate >= st.countDate) return bad('The last cash exam must be before this cash count date.');
   const b = st.bond;
-  const bond = { maxCash: num(b.maxCash), amount: num(b.amount), riskNo: String(b.riskNo || '').trim(), from: b.from || '', to: b.to || '' };
+  const bond = b.none ? { maxCash: num(b.maxCash), amount: null, riskNo: '', from: '', to: '', none: true } : { maxCash: num(b.maxCash), amount: num(b.amount), riskNo: String(b.riskNo || '').trim(), from: b.from || '', to: b.to || '' };
   const balances = {};
   balanceRows(st).forEach((r) => {
     const carried = prev && prev.endBalances && prev.endBalances[r.key] !== undefined && prev.endBalances[r.key] !== null;

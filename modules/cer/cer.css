@@ -873,3 +873,4 @@ table.af-reg.cc-catbl{table-layout:fixed}
 table.af-reg.tr-sched{min-width:0; margin-bottom:6px} .tr-sched .input.af-sm{width:110px; margin-left:auto}
 table.af-reg.tr-month{min-width:0}
 .tr-entry{margin:8px 0 12px}
+.cer-tick.b-none{margin:10px 0 4px; font-weight:600}

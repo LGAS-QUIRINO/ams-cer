@@ -125,7 +125,7 @@ function gf74a(c) {
     <h2 class="rp-title">REPORT OF CASH EXAMINATION</h2>
     <table class="rp-kv"><tr><td>Name of Accountable Officer</td><td><b>${esc(o.name)}</b></td><td>Position</td><td><b>${esc(o.designation || '')}</b></td></tr>
       <tr><td>Agency</td><td><b>${esc(agency)}</b></td><td>Station</td><td><b>${esc(station)}</b></td></tr>
-      <tr><td>Maximum Cash Accountability</td><td>${b.maxCash ? money(b.maxCash) : ''}</td><td>Amount of Bond</td><td>${b.amount ? money(b.amount) : ''}</td></tr>
+      <tr><td>Maximum Cash Accountability</td><td>${b.maxCash ? money(b.maxCash) : ''}</td><td>Amount of Bond</td><td>${b.none ? 'None (no fidelity bond)' : b.amount ? money(b.amount) : ''}</td></tr>
       <tr><td>Risk No.</td><td>${esc(b.riskNo || '')}</td><td>Effective Date</td><td>${b.from || b.to ? `${esc(fmtDate(b.from))} to ${esc(fmtDate(b.to))}` : ''}</td></tr>
       <tr><td>Auditor / Examiner</td><td><b>${esc(prep.name)}</b></td><td>Official Designation</td><td>${esc(prep.pos)}</td></tr></table>`;
   const front = `${head}
