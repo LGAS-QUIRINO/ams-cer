@@ -10,7 +10,7 @@ import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, hasRole, mayView, agencyName, fmtDate, money, num } from './cer.js';
 import { loadForms, orIn, FORM_SHORT } from './forms.js';
-import { listT, loadJournal, checkAmountOf, chkNo, transfersInto } from '../src/journal.js';
+import { listT, loadJournal, checkAmountOf, chkNo, transfersInto, typedTransfer } from '../src/journal.js';
 import { tagSameDay, depRefText } from './collections.js';
 import { accountability } from './verify.js';
 import { accountsOf, caAcct, begByFund, restFund, sameFund, colFundOf } from './funds.js';
@@ -70,9 +70,9 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
   const liqOfAcct = (l) => { const a = advs.find((x) => x.id === l.advanceId); return a ? ofAcct(a) : restFund(exam, fx) === acct.fund; };
   liqs.filter((l) => l.officerId === o.id && (inS(l.date) || l.countAnyway) && liqOfAcct(l)).forEach((l) => row(l.date, l.type === 'refund' ? 'Refund of cash advance' : `Liquidation${l.particulars && !/^liquidation$/i.test(l.particulars) ? ' · ' + l.particulars : ''}`, l.ref || '', { ca: -(+l.amount || 0) }));
   // Transfers into this account: checks of another account paid to this fund (e.g. the 5% BDRRM share from the General Fund).
-  // One typed as a bank credit of the same date and amount is not doubled.
+  // One typed as a bank credit (same amount; names the check No. or within 15 days) is not doubled.
   const typedCr = (cb.other || []).filter((x) => x.type === 'bankCr');
-  transfersInto(jr, acct, audit.lguId).filter((c) => inS(c.date) && !typedCr.some((x) => x.date === c.date && Math.abs((+x.amount || 0) - checkAmountOf(c)) < 0.005))
+  transfersInto(jr, acct, audit.lguId).filter((c) => inS(c.date) && !typedCr.some((x) => typedTransfer(c, { date: x.date, amount: x.amount, text: [x.part, x.ref].join(' ') })))
     .forEach((c) => row(c.date, `Transfer in · ${[c.payee, c.particulars].filter(Boolean).join(' · ')}`, `Check No. ${c.checkNo}`, { cibD: checkAmountOf(c) }));
   // Typed here: bank credits and debits, petty cash payments.
   (cb.other || []).filter((x) => inS(x.date)).forEach((x) => row(x.date, x.part || OTHER[x.type], x.ref || '',

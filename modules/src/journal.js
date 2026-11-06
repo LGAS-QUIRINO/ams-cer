@@ -102,3 +102,7 @@ export function transfersInto(jr, acct, lguId) {
   const has = (t) => fcore(t).includes(k);
   return jr.filter((c) => c.lguId === lguId && c.acctId && c.acctId !== acct.id && !c.cancelled && (has(c.payee) || (/transfer/i.test(c.particulars || '') && has(c.particulars))));
 }
+// A transfer already typed as a bank credit (Cashbook "Other entry"): same amount, and its text names the check No. or its
+// date is within 15 days of the check (the bank credits it a day or more later). Not counted twice.
+export const typedTransfer = (c, x) => Math.abs((+x.amount || 0) - checkAmountOf(c)) < 0.005
+  && (String(x.text || '').match(/\d+/g) || []).map(Number).includes(chkNo(c.checkNo)) || (Math.abs((+x.amount || 0) - checkAmountOf(c)) < 0.005 && Math.abs(Date.parse(x.date) - Date.parse(c.date)) <= 15 * 86400000);
