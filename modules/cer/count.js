@@ -8,13 +8,16 @@
 //   4. Split by Accountability counted together, then split: Collections | Cash Advance, against the balance per books.
 //
 // Records:
-//   cer_cashcount  id = examId  { examId, bills{ '1000': pcs, … }, coins, items[{ particulars, appliesTo: 'col'|'ca', presented, allowed }], split{ col, ca } (typed; blank = automatic) }
+//   cer_cashcount  id = examId  { examId, bills{ '1000': pcs, … }, coins, items[{ particulars, appliesTo: 'col'|'ca', presented, allowed, advanceId }], split{ col, ca } (typed; blank = automatic) }
+// Cash items of the cash advance: one line per check of the AO still unliquidated as of the cut-off (both funds; liquidations
+// and refunds dated after the cut-off not counted), already listed; only what is typed as presented counts (advanceId).
 import { listT } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
 import { loadForms, unusedFormsOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, tagSameDay } from './collections.js';
+import { accountsOf, caFund, restFund, fundOrder } from './funds.js';
 
 const canCount = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
 const BILLS = [1000, 500, 200, 100, 50, 20];
@@ -27,6 +30,8 @@ const DRAFT = { key: '', data: null, editSplit: false };
 const OPEN = { cut: true, cash: false };   // which tab is shown; 1 Remaining Forms when the screen is opened
 export const resetTabs = () => { OPEN.cut = true; OPEN.cash = false; };   // unsaved count survives a screen refresh; split boxes shown
 
+// A liquidation counts in the cash exam when dated from the last cash exam to the count, or ticked "count even if outside the scope".
+const liqCounts = (exam, audit) => { const from = exam.lastExamDate || '', to = audit.countDate; return (l) => (!!l.date && (!from || l.date >= from) && l.date <= to) || !!l.countAnyway; };
 // Balance per books of each accountability, as of the cash count.
 export function booksOf(refs, f, o, exam, audit, advs, liqs) {
   const out = [];
@@ -48,7 +53,8 @@ export function booksOf(refs, f, o, exam, audit, advs, liqs) {
   const mine = advs.filter((a) => a.officerId === o.id && !a.beg);   // beginning checks are inside the beginning balance
   if (fns.some((k) => ['disbursing', 'special', 'pettycash'].includes(k)) || mine.length) {
     const beg = BEG_CA.reduce((n, k) => n + (+(exam.balances?.[k]?.amount) || 0), 0);
-    const bal = r2(beg + mine.reduce((n, a) => n + (+a.amount || 0), 0) - liqs.filter((l) => l.officerId === o.id).reduce((n, l) => n + (+l.amount || 0), 0));
+    const liqIn = liqCounts(exam, audit);   // as in Verification: dated within the scope, or "count even if outside the scope"
+    const bal = r2(beg + mine.reduce((n, a) => n + (+a.amount || 0), 0) - liqs.filter((l) => l.officerId === o.id && liqIn(l)).reduce((n, l) => n + (+l.amount || 0), 0));
     out.push({ key: 'ca', label: fns.includes('pettycash') && !fns.includes('disbursing') ? 'Petty Cash Fund' : 'Cash Advance', books: bal, note: 'Unliquidated, from Cash Advances' });
   }
   return out;
@@ -86,6 +92,12 @@ export async function countView(ctx) {
   const enc = canCount(refs);
   const dis = enc ? '' : 'disabled';
   const caChecks = advs.filter((a) => a.officerId === o.id).map((a) => a.checkNo);
+  // The AO's cash advances unliquidated as of the cut-off, by fund.
+  const caKey = books.find((b) => b.key === 'ca') ? 'ca' : '';
+  const open = caKey ? openAdvances(f, o, exam, audit, advs, liqs) : [];
+  const itemOf = (id) => d.items.find((it) => it.advanceId === id);
+  const orphans = d.items.filter((it) => it.advanceId && !open.some((a) => a.id === it.advanceId));
+  const unliqTot = r2(open.reduce((n, a) => n + a.unliq, 0));
   const auditor = isAuditor(refs);
   const editSplit = DRAFT.editSplit || Object.values(d.split || {}).some((v) => v !== '' && v !== null && v !== undefined);
   const choices = cutoffChoices(f, o.id, audit.countDate, exam.id);
@@ -134,13 +146,14 @@ export async function countView(ctx) {
       <section class="panel" aria-labelledby="cc-h2"><div class="cc-head"><h2 id="cc-h2">Cash Items</h2><span class="crumb-i" title="Checks, paid vouchers or payrolls not yet liquidated, and the like, presented in place of cash. The auditor decides what is allowed; disallowed = presented − allowed. Only allowed items count as inventory.">ⓘ</span></div>
         <div class="cd-body">
           ${enc ? `<div class="cd-entry cc-entry">
-            <div class="field"><label for="ci-part">Particulars</label><input class="input" id="ci-part" list="ci-list" autocomplete="off"><datalist id="ci-list">${caChecks.map((c) => `<option value="Paid vouchers / payroll, Check No. ${esc(c)}">`).join('')}</datalist></div>
+            <div class="field"><label for="ci-part">${open.length ? 'Other cash item: particulars' : 'Particulars'}</label><input class="input" id="ci-part" list="ci-list" autocomplete="off"><datalist id="ci-list">${caChecks.map((c) => `<option value="Paid vouchers / payroll, Check No. ${esc(c)}">`).join('')}</datalist></div>
             <div class="field"><label for="ci-to">Applies to</label><select class="input" id="ci-to">${books.map((b) => `<option value="${b.key}" ${b.key === 'ca' ? 'selected' : ''}>${esc(b.label)}</option>`).join('') || '<option value="col">Collections</option>'}</select></div>
             <div class="field"><label for="ci-amt">Amount Presented (₱)</label><input class="input r" id="ci-amt" inputmode="decimal" autocomplete="off"></div>
             <button class="btn primary" type="button" id="ci-enter">Enter</button></div>` : ''}
-          ${d.items.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Particulars</th><th scope="col">Applies to</th><th scope="col" class="r">Presented (₱)</th><th scope="col" class="r">Allowed (₱)</th><th scope="col" class="r">Disallowed (₱)</th><th scope="col"></th></tr></thead>
-            <tbody>${d.items.map(itemRow).join('')}<tr class="cc-tot"><td colspan="2">Total cash items</td><td class="r">${money(d.items.reduce((n, x) => n + (+x.presented || 0), 0))}</td><td class="r" id="cc-alt"></td><td class="r" id="cc-dist"></td><td></td></tr></tbody></table></div>`
-            : '<p class="af-note">No cash item yet.</p>'}
+          ${open.length || orphans.length ? caLinesHtml(open, orphans, itemOf, audit, enc, unliqTot) : ''}
+          ${d.items.some((it) => !it.advanceId) ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Particulars</th><th scope="col">Applies to</th><th scope="col" class="r">Presented (₱)</th><th scope="col" class="r">Allowed (₱)</th><th scope="col" class="r">Disallowed (₱)</th><th scope="col"></th></tr></thead>
+            <tbody>${d.items.map((it, i) => (it.advanceId ? '' : itemRow(it, i))).join('')}<tr class="cc-tot"><td colspan="2">Total cash items (with the cash advance lines)</td><td class="r">${money(d.items.reduce((n, x) => n + (+x.presented || 0), 0))}</td><td class="r" id="cc-alt"></td><td class="r" id="cc-dist"></td><td></td></tr></tbody></table></div>`
+            : open.length ? '' : '<p class="af-note">No cash item yet.</p>'}
         </div>
       </section>
     </div>
@@ -162,7 +175,42 @@ export async function countView(ctx) {
     </div></section>
     <div id="cer-print" class="af-print" hidden></div>`;
 
-  return { crumb, body, wire: () => { wireTop(); wireCount({ rerender: ctx.rerender, refs, audit, exam, o, d, books, forms, saved, enc, lgu: refs.lgu[audit.lguId], f, choices, auditor }); } };
+  return { crumb, body, wire: () => { wireTop(); wireCount({ rerender: ctx.rerender, refs, audit, exam, o, d, books, forms, saved, enc, lgu: refs.lgu[audit.lguId], f, choices, auditor, open, caKey }); } };
+}
+
+// The AO's cash advances still unliquidated as of the cut-off: the checks of the period, the beginning checks and the
+// beginning balance not itemized; liquidations and refunds dated after the cut-off are not counted. With their fund.
+function openAdvances(f, o, exam, audit, advs, liqs) {
+  const ctx = { booklets: f.booklets, accounts: accountsOf(f.settings, audit.lguId) };
+  const cut = audit.countDate;
+  const liqIn = liqCounts(exam, audit);
+  const L = liqs.filter((l) => l.officerId === o.id && liqIn(l));
+  const liqOf = (id) => r2(L.filter((l) => l.advanceId === id).reduce((n, l) => n + (+l.amount || 0), 0));
+  const begChecks = advs.filter((a) => a.officerId === o.id && a.beg && a.begExamId === exam.id);
+  const beg = r2(BEG_CA.reduce((n, k) => n + (+(exam.balances?.[k]?.amount) || 0), 0));
+  const rest = r2(beg - begChecks.reduce((n, a) => n + (+a.amount || 0), 0));
+  const list = [...begChecks, ...advs.filter((a) => a.officerId === o.id && !a.beg && a.date && a.date <= cut)].map((a) => ({ ...a, fund: caFund(a, ctx), unliq: r2((+a.amount || 0) - liqOf(a.id)) }));
+  if (rest > 0.004 || L.some((l) => l.advanceId === '__beg')) list.unshift({ id: '__beg', rest: true, checkNo: '', date: exam.lastExamDate || '', particulars: 'Beginning balance (not itemized)', amount: Math.max(rest, 0), fund: restFund(exam, ctx), unliq: r2(Math.max(rest, 0) - liqOf('__beg')) });
+  const ord = fundOrder(ctx);
+  return list.filter((a) => a.unliq > 0.004).sort((a, b) => ord(a.fund, b.fund) || (b.rest ? 1 : 0) - (a.rest ? 1 : 0) || String(a.date).localeCompare(String(b.date)));
+}
+const caLabel = (a) => (a.rest ? 'Beginning balance (not itemized)' : `Check No. ${a.checkNo}${a.beg ? ' (beginning)' : ''} · ${fmtDate(a.date)}${a.particulars ? ' · ' + a.particulars : ''}`);
+function caLinesHtml(open, orphans, itemOf, audit, enc, unliqTot) {
+  const dis = enc ? '' : 'disabled';
+  const v = (x) => (x === '' || x === undefined || x === null ? '' : esc(money(x)));
+  let lastF = '';
+  const rows = open.map((a) => { const it = itemOf(a.id) || {};
+    const fh = a.fund !== lastF ? `<tr class="cc-sec"><td colspan="5">${esc(a.fund)}</td></tr>` : ''; lastF = a.fund;
+    return `${fh}<tr data-ca="${esc(a.id)}"><td><b>${a.rest ? 'Beginning balance' : `Check No. ${esc(a.checkNo)}`}</b><br><small class="dim">${a.rest ? 'not itemized' : `${esc(fmtDate(a.date))}${a.beg ? ' · beginning' : ''}${a.particulars ? ' · ' + esc(a.particulars) : ''}`}</small>${enc ? ` <button class="cc-fill" type="button" data-cafill="${esc(a.id)}" title="Presented = the unliquidated amount">Fill</button>` : ''}<span class="cc-caflag"></span></td><td class="r">${money(a.unliq)}</td>
+      <td class="r"><input class="input af-sm r cc-cap" inputmode="decimal" aria-label="Presented: ${esc(caLabel(a))}" value="${v(it.presented)}" placeholder="—" ${dis}></td>
+      <td class="r"><input class="input af-sm r cc-caa" inputmode="decimal" aria-label="Allowed: ${esc(caLabel(a))}" value="${it.presented !== undefined && it.presented !== '' ? v(it.allowed ?? it.presented) : ''}" ${dis}></td>
+      <td class="r cc-cad"></td></tr>`; }).join('');
+  const orph = orphans.map((it) => `<tr data-caorph="${esc(it.advanceId)}"><td>${esc(it.particulars)} <span class="pill p-flag">Liquidated on or before the cut-off: remove?</span></td><td class="r">–</td><td class="r">${money(it.presented)}</td><td class="r">${money(it.allowed ?? it.presented)}</td>
+      <td class="r">${enc ? `<button class="btn sm" type="button" data-carm="${esc(it.advanceId)}">Remove</button>` : ''}</td></tr>`).join('');
+  return `<div class="cc-cahead"><b>Cash Advance</b> · unliquidated as of the cut-off (${esc(fmtDate(audit.countDate))}): <b>₱${money(unliqTot)}</b> <span class="dim" id="cc-canot"></span></div>
+    <div class="af-tbl"><table class="af-reg cc-catbl"><colgroup><col style="width:34%"><col style="width:16%"><col style="width:18%"><col style="width:18%"><col style="width:14%"></colgroup><thead><tr><th scope="col">Check</th><th scope="col" class="r">Unliqui&shy;dated</th><th scope="col" class="r">Presented</th><th scope="col" class="r">Allowed</th><th scope="col" class="r">Disal&shy;lowed</th></tr></thead>
+    <tbody>${rows}${orph}</tbody></table></div>
+    <p class="af-note">Type what the officer presents for each check (paid vouchers, payrolls…). A line left blank counts as nothing presented.</p>`;
 }
 
 export function compute(d, books) {
@@ -227,6 +275,33 @@ function wireCount(c) {
   if (es) es.onclick = () => { if (es.textContent === 'Edit split') DRAFT.editSplit = true; else { DRAFT.editSplit = false; d.split = {}; } refresh(); };
   $$('.cc-sp').forEach((i) => { i.oninput = () => { d.split[i.dataset.sp] = i.value.trim(); paint(); }; i.onblur = () => { const v = num(i.value); if (v !== null) i.value = money(v); }; });
   $$('[data-rmit]').forEach((b) => { b.onclick = () => { d.items.splice(+b.dataset.rmit, 1); refresh(); }; });
+  // Cash advance lines: typing Presented adds the cash item (Allowed follows it until typed); blank removes it.
+  const caPaint = () => {
+    let notYet = 0;
+    $$('tr[data-ca]').forEach((tr) => { const a = c.open.find((x) => x.id === tr.dataset.ca), it = d.items.find((x) => x.advanceId === a.id);
+      const p = it ? +it.presented || 0 : 0, al = it ? num(it.allowed ?? it.presented) || 0 : 0;
+      $('.cc-cad', tr).textContent = it ? money(r2(p - al)) : ''; notYet += Math.max(0, r2(a.unliq - p));
+      $('.cc-caflag', tr).innerHTML = p > a.unliq + 0.004 ? '<br><span class="pill p-flag">More than unliquidated</span>' : ''; });
+    const n = $('#cc-canot'); if (n) n.textContent = notYet > 0.004 ? `· not yet presented ₱${money(r2(notYet))}` : '· all presented';
+  };
+  const setCa = (id, pres, allowedTxt) => {
+    const a = c.open.find((x) => x.id === id); let it = d.items.find((x) => x.advanceId === id);
+    if (pres === null) { if (it) d.items.splice(d.items.indexOf(it), 1); return null; }
+    if (!it) { it = { advanceId: id, particulars: `Paid vouchers / payroll, ${caLabel(a)}`, appliesTo: c.caKey, presented: pres, allowed: pres }; d.items.push(it); }
+    else { const synced = r2(num(it.allowed ?? it.presented) || 0) === r2(+it.presented || 0); it.presented = pres; if (allowedTxt !== undefined) it.allowed = allowedTxt; else if (synced) it.allowed = pres; }
+    return it;
+  };
+  $$('tr[data-ca]').forEach((tr) => {
+    const id = tr.dataset.ca, pi = $('.cc-cap', tr), ai = $('.cc-caa', tr);
+    pi.oninput = () => { const v = num(pi.value); const it = setCa(id, v && v > 0 ? v : null); ai.value = it ? money(num(it.allowed ?? it.presented) || 0) : ''; paint(); caPaint(); };
+    pi.onblur = () => { const v = num(pi.value); if (v !== null) pi.value = money(v); };
+    ai.oninput = () => { const it = d.items.find((x) => x.advanceId === id); if (!it) { ai.value = ''; return; } it.allowed = ai.value; paint(); caPaint(); };
+    ai.onblur = () => { const v = num(ai.value); if (v !== null) ai.value = money(v); };
+  });
+  $$('[data-cafill]').forEach((b) => { b.onclick = () => { const a = c.open.find((x) => x.id === b.dataset.cafill), tr = b.closest('tr'); const it = setCa(a.id, a.unliq); it.allowed = a.unliq;
+    $('.cc-cap', tr).value = money(a.unliq); $('.cc-caa', tr).value = money(a.unliq); paint(); caPaint(); }; });
+  $$('[data-carm]').forEach((b) => { b.onclick = () => { const it = d.items.find((x) => x.advanceId === b.dataset.carm); if (it) d.items.splice(d.items.indexOf(it), 1); refresh(); }; });
+  caPaint();
   const ce = $('#ci-enter');
   if (ce) {
     const add = () => {
@@ -239,7 +314,7 @@ function wireCount(c) {
     ce.onclick = add; $('#ci-amt').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
   }
   const data = () => ({ examId: exam.id, bills: Object.fromEntries(Object.entries(d.bills).filter(([, v]) => v !== '' && v !== '0').map(([k, v]) => [k, parseInt(v, 10) || 0])),
-    coins: num(d.coins) || 0, items: d.items.map((it) => ({ particulars: it.particulars, appliesTo: it.appliesTo, presented: +it.presented || 0, allowed: num(it.allowed ?? it.presented) ?? 0 })),
+    coins: num(d.coins) || 0, items: d.items.map((it) => ({ particulars: it.particulars, appliesTo: it.appliesTo, presented: +it.presented || 0, allowed: num(it.allowed ?? it.presented) ?? 0, ...(it.advanceId ? { advanceId: it.advanceId } : {}) })),
     split: Object.fromEntries(Object.entries(d.split).filter(([, v]) => v !== '' && v !== null && v !== undefined).map(([k, v]) => [k, num(v) || 0])) });
   const save = $('#cc-save');
   if (save) save.onclick = async () => {
