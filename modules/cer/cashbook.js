@@ -10,10 +10,10 @@ import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, hasRole, mayView, agencyName, fmtDate, money, num } from './cer.js';
 import { loadForms, orIn, FORM_SHORT } from './forms.js';
-import { listT, loadJournal, checkAmountOf, chkNo } from '../src/journal.js';
+import { listT, loadJournal, checkAmountOf, chkNo, transfersInto } from '../src/journal.js';
 import { tagSameDay, depRefText } from './collections.js';
 import { accountability } from './verify.js';
-import { accountsOf, caAcct, begByFund, restFund } from './funds.js';
+import { accountsOf, caAcct, begByFund, restFund, sameFund, colFundOf } from './funds.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -34,17 +34,20 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
   // Cash advances of this account's fund only (the fund of each check's checkbook).
   const fx = { booklets: f.booklets, accounts: accountsOf(f.settings, audit.lguId) };
   const ofAcct = (a) => { const ac = caAcct(a, fx); return ac ? ac.id === acct.id : false; };
-  const beg = { clt: r2(Object.entries(A.moves).filter(([k]) => k.startsWith('col-')).reduce((n, [, m]) => n + (m.beg || 0), 0)), cib: r2(num(cb.begBank) || 0), ca: r2(begByFund(exam, advs, fx, A.moves.ca ? A.moves.ca.beg : 0).get(acct.fund) || 0), pc: r2(num(cb.begPc) || 0) };
+  // Cash in Local Treasury: the collections, deposits and remittances of this account's fund (each OR's or report's fund;
+  // none: the General Fund). The beginning undeposited collections: in the General Fund's Cashbook.
+  const defF = colFundOf(fx.accounts), ofF = (fund) => sameFund(fund || defF, acct.fund), cltHere = sameFund(defF, acct.fund);
+  const beg = { clt: !cltHere ? 0 : r2(Object.entries(A.moves).filter(([k]) => k.startsWith('col-')).reduce((n, [, m]) => n + (m.beg || 0), 0)), cib: r2(num(cb.begBank) || 0), ca: r2(begByFund(exam, advs, fx, A.moves.ca ? A.moves.ca.beg : 0).get(acct.fund) || 0), pc: r2(num(cb.begPc) || 0) };
   const rows = [];
   const row = (date, part, ref, v) => rows.push({ date, part, ref, cltC: 0, cltD: 0, cibD: 0, cibK: 0, ca: 0, pc: 0, ...v });
   // Collections: one line per day and form, with the OR numbers.
   const byDay = {};
-  f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && orIn(f, x, from, to)).forEach((x) => { const k = `${x.date}|${x.form}`; (byDay[k] = byDay[k] || []).push(x); });
+  f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && orIn(f, x, from, to) && ofF(x.fund)).forEach((x) => { const k = `${x.date}|${x.form}`; (byDay[k] = byDay[k] || []).push(x); });
   Object.entries(byDay).forEach(([k, xs]) => { const [date, form] = k.split('|'); const ns = xs.map((x) => +x.serial).sort((a, b) => a - b);
     row(date, `Collections (${SHORT[form] || FORM_SHORT[form] || form})`, `${ns[0]}${ns.length > 1 ? '–' + ns[ns.length - 1] : ''}`, { cltC: r2(xs.reduce((n, x) => n + (+x.amount || 0), 0)) }); });
   // Deposits (and, for the SCR, remittances to the MTO).
-  f.reports.filter((r) => r.officerId === o.id).forEach((r) => (r.deposits || []).filter((d) => inS(d.date)).forEach((d) => {
-    const rem = r.kind === 'SCR', toBank = !rem && r.fund === acct.fund;
+  f.reports.filter((r) => r.officerId === o.id && ofF(r.fund)).forEach((r) => (r.deposits || []).filter((d) => inS(d.date)).forEach((d) => {
+    const rem = r.kind === 'SCR', toBank = !rem;
     row(d.date, rem ? `Remittance to MTO${d.ref ? ' · ' + d.ref : ''}` : 'Deposit', rem ? '' : depRefText(d), { cltD: +d.amount || 0, cibD: toBank ? +d.amount || 0 : 0 });
   }));
   // Checks of this account (Check Disbursements Journal).
@@ -66,6 +69,11 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
   // Liquidations and refunds.
   const liqOfAcct = (l) => { const a = advs.find((x) => x.id === l.advanceId); return a ? ofAcct(a) : restFund(exam, fx) === acct.fund; };
   liqs.filter((l) => l.officerId === o.id && (inS(l.date) || l.countAnyway) && liqOfAcct(l)).forEach((l) => row(l.date, l.type === 'refund' ? 'Refund of cash advance' : `Liquidation${l.particulars && !/^liquidation$/i.test(l.particulars) ? ' · ' + l.particulars : ''}`, l.ref || '', { ca: -(+l.amount || 0) }));
+  // Transfers into this account: checks of another account paid to this fund (e.g. the 5% BDRRM share from the General Fund).
+  // One typed as a bank credit of the same date and amount is not doubled.
+  const typedCr = (cb.other || []).filter((x) => x.type === 'bankCr');
+  transfersInto(jr, acct, audit.lguId).filter((c) => inS(c.date) && !typedCr.some((x) => x.date === c.date && Math.abs((+x.amount || 0) - checkAmountOf(c)) < 0.005))
+    .forEach((c) => row(c.date, `Transfer in · ${[c.payee, c.particulars].filter(Boolean).join(' · ')}`, `Check No. ${c.checkNo}`, { cibD: checkAmountOf(c) }));
   // Typed here: bank credits and debits, petty cash payments.
   (cb.other || []).filter((x) => inS(x.date)).forEach((x) => row(x.date, x.part || OTHER[x.type], x.ref || '',
     { otherId: x.id, ...(x.type === 'bankCr' ? { cibD: +x.amount || 0 } : x.type === 'bankDr' ? { cibK: +x.amount || 0 } : { pc: -(+x.amount || 0) }) }));

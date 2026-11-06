@@ -5,6 +5,10 @@ const norm = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9%]/g, '');
 const core = (s) => norm(s).replace(/landbankofthephilippines|landbank|lbp|dbp|fund$/g, '');
 const chkNo = (v) => +String(v ?? '').replace(/\D/g, '') || 0;
 
+// Two fund names for the same fund ("General Fund" = "LBP - General Fund"; "5% BDRRM" = "5% BDRRM Fund").
+export const sameFund = (a, b) => { const x = core(a), y = core(b); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
+// The fund of the collections (ORs with no fund): the General Fund account's, else the first account's.
+export const colFundOf = (accounts) => (accounts.find((a) => sameFund(a.fund, 'General Fund')) || accounts[0])?.fund || 'General Fund';
 export const accountsOf = (settings, lguId) => (settings && settings['banks|' + lguId]?.list) || [];
 export function bookOfCheck(no, booklets) { const n = chkNo(no); return n ? booklets.find((b) => b.form === 'chk' && b.from <= n && n <= b.to) || null : null; }
 export function acctOfBook(b, accounts) {

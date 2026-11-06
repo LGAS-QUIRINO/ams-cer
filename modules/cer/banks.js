@@ -15,7 +15,7 @@
 //                  opening (bank balance at the last cash exam), account (account No. read from it), covFrom / covTo (coverage imported),
 //                  lineOf{ <item key>: line i } (which imported line each item matched; unmatched lines count as bank credits / debits),
 //                  noAuto[] (item keys unticked by hand: never matched again automatically) }
-import { listT, bankChecksOf, checkAmountOf, chkNo } from '../src/journal.js';
+import { listT, bankChecksOf, checkAmountOf, chkNo, transfersInto } from '../src/journal.js';
 import { caAcct } from './funds.js';
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
@@ -143,6 +143,10 @@ export async function banksView(ctx) {
   jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c), from: `Journal${c.payee ? ' · ' + c.payee : ''}` }));
   (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0, from: `Typed here${c.payee ? ' · ' + c.payee : ''}`, other: c }));
   items.push(...cashbookItems(settings0.map(flat), new Set(exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => e.id)), acct.id));
+  // Transfers into this account (a check of another account paid to this fund): a deposit in transit until in the statement.
+  { const cbCr = items.filter((x) => x.cb && x.kind === 'dep');
+    transfersInto(jr0.map(flat), acct, audit.lguId).filter((c) => !cbCr.some((x) => x.date === c.date && Math.abs(x.amount - checkAmountOf(c)) < 0.005))
+      .forEach((c) => items.push({ key: `tr|${c.id}`, kind: 'dep', label: 'Transfer in', date: c.date, ref: `Check No. ${c.checkNo}${c.payee ? ' · ' + c.payee : ''}`, amount: checkAmountOf(c), from: 'CkDJ' })); }
   // Matches kept in step with the books (a deposit edited or removed).
   const tidy = tidyFound(rec, items); rec.found = tidy.found; rec.lineOf = tidy.lineOf;
   const list = items.filter((x) => x.date && x.date <= asOf && !foundElsewhere.has(x.key)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.kind.localeCompare(b.kind));
@@ -554,6 +558,9 @@ export async function bankFindings(audit, refs) {
     jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c) }));
     (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0 }));
     items.push(...cashbookItems(settings0.map(flat), examIds, acct.id));
+    { const cbCr = items.filter((x) => x.cb && x.kind === 'dep');
+      transfersInto(jr0.map(flat), acct, audit.lguId).filter((c) => !cbCr.some((x) => x.date === c.date && Math.abs(x.amount - checkAmountOf(c)) < 0.005))
+        .forEach((c) => items.push({ key: `tr|${c.id}`, kind: 'dep', date: c.date, ref: `Check No. ${c.checkNo}`, amount: checkAmountOf(c) })); }
     const tidy = tidyFound(rec, items); const found = tidy.found; rec.found = tidy.found; rec.lineOf = tidy.lineOf;
     const list = items.filter((x) => x.date && x.date <= asOf);
     const after = (x) => { const n = +chqKey(x.ref); return x.kind === 'chk' && !x.cb && !!n && cuts.some((c) => n >= c.from && n <= c.to && n > c.last); };

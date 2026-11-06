@@ -93,3 +93,12 @@ export const listT = (t) => (t === 'cer_cashadv' ? listAdvances() : t === 'src_c
 
 // For Bank Statements: the journal's checks of a bank account that are not AO cash advances (those come with Cash Advances).
 export const bankChecksOf = (jr, acctId) => jr.filter((c) => c.acctId === acctId && !c.cancelled && !(isCa(c) && (c.aoId ?? c.officerId)));
+
+// A transfer into a bank account: a check of another account of the office paid to this account's fund (the payee names it,
+// e.g. "Brgy. Sta. Maria 5% BDRRM Fund", or the particulars say transfer … 5% BDRRM). For the Cashbook and the bank reconciliation.
+const fcore = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9%]/g, '').replace(/landbankofthephilippines|landbank|lbp|dbp|fund$/g, '');
+export function transfersInto(jr, acct, lguId) {
+  const k = fcore(acct.fund); if (k.length < 3 || k === 'general') return [];
+  const has = (t) => fcore(t).includes(k);
+  return jr.filter((c) => c.lguId === lguId && c.acctId && c.acctId !== acct.id && !c.cancelled && (has(c.payee) || (/transfer/i.test(c.particulars || '') && has(c.particulars))));
+}
