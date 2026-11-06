@@ -14,6 +14,7 @@ import { listT, loadJournal, checkAmountOf, chkNo, transfersInto, typedTransfer 
 import { tagSameDay, depRefText } from './collections.js';
 import { accountability } from './verify.js';
 import { accountsOf, caAcct, begByFund, restFund, sameFund, colFundOf } from './funds.js';
+import { remOf, remAcctId, remText } from '../src/taxrem.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -74,6 +75,9 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
   const typedCr = (cb.other || []).filter((x) => x.type === 'bankCr');
   transfersInto(jr, acct, audit.lguId).filter((c) => inS(c.date) && !typedCr.some((x) => typedTransfer(c, { date: x.date, amount: x.amount, text: [x.part, x.ref].join(' ') })))
     .forEach((c) => row(c.date, `Transfer in · ${[c.payee, c.particulars].filter(Boolean).join(' · ')}`, `Check No. ${c.checkNo}`, { cibD: checkAmountOf(c) }));
+  // Taxes withheld paid to the BIR (Source Documents, Tax Remittances) from this account.
+  (remOf(f.settings, audit.lguId).list || []).filter((r) => inS(r.date) && remAcctId(r, fx.accounts) === acct.id)
+    .forEach((r) => row(r.date, remText(r), r.ref || '', { cibK: +r.amount || 0 }));
   // Typed here: bank credits and debits, petty cash payments.
   (cb.other || []).filter((x) => inS(x.date)).forEach((x) => row(x.date, x.part || OTHER[x.type], x.ref || '',
     { otherId: x.id, ...(x.type === 'bankCr' ? { cibD: +x.amount || 0 } : x.type === 'bankDr' ? { cibK: +x.amount || 0 } : { pc: -(+x.amount || 0) }) }));

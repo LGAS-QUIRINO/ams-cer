@@ -12,6 +12,7 @@ import { accountsModal, DEFAULT_FUNDS } from '../cer/banks.js';
 import { rciSpec, outButtons, wireOut } from './rciout.js';
 import { liqView } from './liq.js';
 import { unliqView } from './unliq.js';
+import { taxRemView } from './taxrem.js';
 import { focusAfter } from './focus.js';
 import { loadCoa, loadJournal, matchAo, CA_CODES, grossOf, taxOf, checkAmountOf, isCa, isTaxable, chkNo, hasEntry, tallies, hasAmount } from './journal.js';
 
@@ -140,6 +141,7 @@ async function journalView(ctx) {
           <td>${enc ? `<button class="btn sm" type="button" data-sdtax="${esc(c.id)}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
         <tfoot><tr class="cd-foot"><td colspan="7">Total</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).main, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).one, 0)))}</td><td class="r">${money(r2(tl.reduce((n, c) => n + taxOf(c).amount, 0)))}</td><td></td></tr></tfoot></table></div>`
         : '<div class="empty"><b>No taxable check this month.</b></div>'}</div>`;
+    const tv = await taxRemView({ lgu, accounts, jr, settings, enc, refs }); inner += tv.html; lqWire = tv.wire;
   }
   const body = top + tabs + inner;
 

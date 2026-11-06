@@ -22,6 +22,7 @@
 // (a deposit in transit then, too).
 import { listT, bankChecksOf, checkAmountOf, chkNo, transfersInto, typedTransfer } from '../src/journal.js';
 import { caAcct } from './funds.js';
+import { remOf, remAcctId, remText, recordFromLine } from '../src/taxrem.js';
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
@@ -152,6 +153,8 @@ export async function banksView(ctx) {
   { const cbCr = items.filter((x) => x.cb && x.kind === 'dep');
     transfersInto(jr0.map(flat), acct, audit.lguId).filter((c) => !cbCr.some((x) => typedTransfer(c, { date: x.date, amount: x.amount, text: x.ref })))
       .forEach((c) => items.push({ key: `tr|${c.id}`, kind: 'dep', label: 'Transfer in', date: c.date, ref: `Check No. ${c.checkNo}${c.payee ? ' · ' + c.payee : ''}`, amount: checkAmountOf(c), from: 'CkDJ' })); }
+  // Taxes withheld paid to the BIR from this account (ETPS / eFPS debits; no check).
+  (remOf(settings, audit.lguId).list || []).filter((r) => remAcctId(r, accounts) === acct.id).forEach((r) => items.push({ key: `tx|${r.id}`, kind: 'chk', cb: true, win: 3, label: 'Tax payment', date: r.date, ref: remText(r).replace('Remittance of taxes withheld · ', ''), amount: +r.amount || 0, from: 'Tax Remittances' }));
   // Matches kept in step with the books (a deposit edited or removed).
   const tidy = tidyFound(rec, items); rec.found = tidy.found; rec.lineOf = tidy.lineOf;
   const list = items.filter((x) => x.date && x.date <= asOf && !foundElsewhere.has(x.key)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.kind.localeCompare(b.kind));
@@ -250,7 +253,8 @@ export async function banksView(ctx) {
     if (!rec.lineOf && l.matched) return '<span class="pill p-done">Matched</span>';
     const k = esc(lineKey(l));
     if (begSet.has(l.i)) return `<span class="pill p-beg" title="Issued before the last cash exam: already in the beginning book balance">${l.credit ? 'Deposit in transit at the last cash exam' : 'Outstanding at the last cash exam'}</span>${enc ? ` <button type="button" class="bk-lnk" data-begmk="${k}" data-v="0" title="Not outstanding at the last cash exam">undo</button>` : ''}`;
-    const mk = enc ? ` <button type="button" class="bk-lnk" data-begmk="${k}" data-v="1" title="${l.credit ? 'A deposit in transit at the last cash exam' : 'A check outstanding at the last cash exam'}: already in the beginning book balance">at last exam?</button>` : '';
+    const tx = enc && l.debit && !l.chq ? ` <button type="button" class="bk-lnk" data-taxln="${l.i}" title="An online payment of taxes withheld (ETPS / eFPS)">record as tax payment</button>` : '';
+    const mk = tx + (enc ? ` <button type="button" class="bk-lnk" data-begmk="${k}" data-v="1" title="${l.credit ? 'A deposit in transit at the last cash exam' : 'A check outstanding at the last cash exam'}: already in the beginning book balance">at last exam?</button>` : '');
     if (nmByLine[l.i]) return `<span class="pill p-nm" title="Check ${esc(nmByLine[l.i].ref)}: ₱${money(nmByLine[l.i].amount)} in the books">Not Matched</span>${mk}`;
     return (l.debit && l.chq ? '<span class="pill p-stock">Check, not yet encoded</span>' : '<span class="pill p-stock">Not in the books</span>') + mk; };
   const shown = lns.filter((l) => l.date <= asOf).filter((l) => !UI.only || unmatched.includes(l));
@@ -333,7 +337,7 @@ export async function banksView(ctx) {
     ['dc', 'Deposits and Checks', `${nFound} of ${list.length} found in the bank`, dcBody],
     ['rc', 'Reconciliation', diff === null ? 'Type the cashbook balance' : Math.abs(diff) < 0.005 ? 'Agrees' : `Difference ₱${money(diff)}`, rcBody]]);
 
-  const ctxw = { refs, audit, acct, recId, rec, rec0, list, auto, asOf, enc, cov, unmatched, accounts, funds, credits, debits, dit, oc, adjBank, adjBook, diff };
+  const ctxw = { refs, audit, acct, recId, rec, rec0, list, auto, asOf, enc, cov, unmatched, accounts, funds, settings, credits, debits, dit, oc, adjBank, adjBook, diff };
   return { crumb, body, wire: () => { wireTop(); wireBanks(ctxw); } };
 }
 const acctLabel = (x) => `${x.bank || 'Bank'} · ${x.accountNo || '—'} · ${x.fund}`;
@@ -405,6 +409,7 @@ function wireBanks(c) {
     if (out) save({ otherChecks: [...(rec.otherChecks || []), out] }, `Check No. ${out.checkNo} added.`);
   };
   $('#bk-import').onclick = () => importStatement(c, save);
+  $$('[data-taxln]').forEach((b) => { b.onclick = () => recordFromLine({ refs, lguId: audit.lguId, settings: c.settings, accounts: c.accounts, acct, line: (rec.lines || []).find((l) => l.i === +b.dataset.taxln) }); });
   $$('[data-begmk]').forEach((b) => { b.onclick = () => save({ begMark: { ...(rec.begMark || {}), [b.dataset.begmk]: +b.dataset.v } }, +b.dataset.v ? 'Marked as outstanding at the last cash exam.' : 'Unmarked.'); });
   if (c.auto && !UI.edit) save({ found: c.auto.found, lineOf: c.auto.lineOf }, c.auto.n ? `${c.auto.n} matched with the uploaded statement.` : '');
 }
@@ -440,7 +445,7 @@ function matchItems(list, lines, found, lineOf, used) {
   const take = (x, l) => { used.add(l.i); found[x.key] = l.date; lineOf[x.key] = l.i; n++; };
   const tryMatch = (x, pick) => {
     if (found[x.key]) return;
-    const cands = lines.filter((l) => !used.has(l.i) && Math.abs((x.kind === 'dep' ? l.credit : l.debit) - x.amount) < 0.005 && l.date && (!x.date || (days(x.date, l.date) >= -1 && days(x.date, l.date) <= (x.kind === 'dep' ? 15 : 366))));
+    const cands = lines.filter((l) => !used.has(l.i) && Math.abs((x.kind === 'dep' ? l.credit : l.debit) - x.amount) < 0.005 && l.date && (!x.date || (days(x.date, l.date) >= -(x.win || 1) && days(x.date, l.date) <= (x.win || (x.kind === 'dep' ? 15 : 366)))));
     const l = pick(cands, x); if (l) take(x, l);
   };
   list.filter((x) => x.kind === 'chk' && !x.cb && !found[x.key]).forEach((x) => {
@@ -601,6 +606,7 @@ export async function bankFindings(audit, refs) {
     jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c) }));
     (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0 }));
     items.push(...cashbookItems(settings0.map(flat), examIds, acct.id));
+    (remOf(Object.fromEntries(settings0.map((x) => [x.id, x.data])), audit.lguId).list || []).filter((r) => remAcctId(r, accounts) === acct.id).forEach((r) => items.push({ key: `tx|${r.id}`, kind: 'chk', cb: true, win: 3, date: r.date, ref: remText(r), amount: +r.amount || 0 }));
     { const cbCr = items.filter((x) => x.cb && x.kind === 'dep');
       transfersInto(jr0.map(flat), acct, audit.lguId).filter((c) => !cbCr.some((x) => typedTransfer(c, { date: x.date, amount: x.amount, text: x.ref })))
         .forEach((c) => items.push({ key: `tr|${c.id}`, kind: 'dep', date: c.date, ref: `Check No. ${c.checkNo}`, amount: checkAmountOf(c) })); }
