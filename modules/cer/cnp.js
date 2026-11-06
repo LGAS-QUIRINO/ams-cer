@@ -18,6 +18,8 @@ const titleOf = (k) => TITLE[k] || String(FORM_SHORT[k] || k).toUpperCase();
 const shortOf = (k) => SHORT[k] || FORM_SHORT[k] || k;
 const serHead = (k) => (/^ctc/.test(k) ? 'CTC Series' : 'OR Series');
 const LET = 'ABCDEFGHIJ';
+// "9394901-9394911; 9394915" → [[9394901, 9394911], [9394915, 9394915]]
+const parseSer = (t) => String(t || '').split(/[;,]/).map((p) => p.trim()).filter(Boolean).map((p) => { const m = p.replace(/\s/g, '').match(/^(\d+)(?:[-–](\d+))?$/); if (!m) return null; const a = +m[1], z = +(m[2] || m[1]); return z >= a ? [a, z] : null; }).filter(Boolean);
 
 export function cnpData(f, o, exam, from, to) {
   if (!from) return null;
@@ -34,13 +36,30 @@ export function cnpData(f, o, exam, from, to) {
     return rm ? { form: x.form || '', bookletId: x.bookletId || '', reportId: x.reportId || '', date: x.date, a: +x.serial, z: mx(x), amount: amt(x), rem: rm, held: days(x.date, rm.date) } : null;
   }).filter(Boolean).sort((a, b) => a.date.localeCompare(b.date) || a.a - b.a);
   const bal = exam.balances || {};
-  const keys = [...new Set(lines.map((l) => l.form))].sort((a, b) => ((ORDER.indexOf(a) + 1) || 99) - ((ORDER.indexOf(b) + 1) || 99) || a.localeCompare(b));
+  // The OR series of a beginning balance (Audit Setup, when known): those ORs were presented at the last cash exam, so they are
+  // left out here; only the part of the balance they do not cover is deducted.
+  const begSer = {}; Object.entries(bal).forEach(([k, v]) => { if (k.startsWith('col-') && v && v.series) { const rs = parseSer(v.series); if (rs.length) begSer[k.slice(4)] = rs; } });
+  const begIn = {};   // per form: amount of the remitted lines inside the beginning series
+  const kept = [];
+  lines.forEach((l) => {
+    const rs = begSer[l.form]; if (!rs) { kept.push(l); return; }
+    const n = l.z - l.a + 1, cov = rs.reduce((t, [a, z]) => t + Math.max(0, Math.min(z, l.z) - Math.max(a, l.a) + 1), 0);
+    const inAmt = r2(l.amount * Math.min(1, cov / n)); begIn[l.form] = r2((begIn[l.form] || 0) + inAmt);
+    if (cov < n) kept.push(cov ? { ...l, amount: r2(l.amount - inAmt), partBeg: cov } : l);
+  });
+  const keys = [...new Set(kept.map((l) => l.form))].sort((a, b) => ((ORDER.indexOf(a) + 1) || 99) - ((ORDER.indexOf(b) + 1) || 99) || a.localeCompare(b));
   const groups = keys.map((k) => {
-    const ls = lines.filter((l) => l.form === k), total = r2(ls.reduce((n, l) => n + l.amount, 0)), beg = r2(+bal['col-' + k]?.amount || 0);
-    return { form: k, title: titleOf(k), short: shortOf(k), ser: serHead(k), lines: ls, total, beg, notPresented: r2(Math.max(0, total - beg)) };
+    const ls = kept.filter((l) => l.form === k), total = r2(ls.reduce((n, l) => n + l.amount, 0)), begAll = r2(+bal['col-' + k]?.amount || 0);
+    const beg = begSer[k] ? r2(Math.max(0, begAll - (begIn[k] || 0))) : begAll;
+    return { form: k, title: titleOf(k), short: shortOf(k), ser: serHead(k), lines: ls, total, beg, begAll, series: begSer[k] || null, notPresented: r2(Math.max(0, total - beg)) };
+  });
+  // Each beginning series against the ORs encoded in it (for Verification).
+  const begCheck = Object.entries(begSer).map(([k, rs]) => {
+    const ors = f.ors.filter((x) => x.officerId === o.id && x.form === k && x.status !== 'cancelled' && rs.some(([a, z]) => +x.serial >= a && mx(x) <= z));
+    return { form: k, short: shortOf(k), text: rangesText(rs), beg: r2(+bal['col-' + k]?.amount || 0), ors: r2(ors.reduce((n, x) => n + amt(x), 0)) };
   });
   const T = (k) => r2(groups.reduce((n, g) => n + g[k], 0));
-  return { lines, groups, total: T('total'), beg: T('beg'), notPresented: T('notPresented'), from, to };
+  return { lines: kept, groups, begSer, begCheck, total: T('total'), beg: T('beg'), notPresented: T('notPresented'), from, to };
 }
 
 export function cnpHtml(c) {
@@ -55,7 +74,7 @@ export function cnpHtml(c) {
       <tr class="tot"><td colspan="2">Subtotal, ${esc(g.short)}</td><td class="r">${money(g.total)}</td><td colspan="4"></td></tr></tbody></table>
     <table class="rp-t cnp-calc"><tbody>
       <tr><td>Collections before the last cash examination, remitted this period</td><td class="r">${money(g.total)}</td></tr>
-      <tr><td>Less: ${esc(g.short)} balance at the last cash examination (Audit Setup)</td><td class="r">${money(g.beg)}</td></tr>
+      <tr><td>Less: ${esc(g.short)} balance at the last cash examination (Audit Setup)${g.series ? `, not covered by its series ${esc(rangesText(g.series))}` : ''}</td><td class="r">${money(g.beg)}</td></tr>
       <tr class="tot"><td>${esc(g.short)} collections not presented at the last cash examination</td><td class="r">${money(g.notPresented)}</td></tr></tbody></table>`;
   const sum = `<h3 class="cnp-h">SUMMARY</h3><table class="rp-t cnp-calc"><thead><tr><th>Form</th><th class="r">Before last exam, remitted now</th><th class="r">Balance at last exam</th><th class="r">Not presented</th></tr></thead>
     <tbody>${d.groups.map((g) => `<tr><td>${esc(g.short)}</td><td class="r">${money(g.total)}</td><td class="r">${money(g.beg)}</td><td class="r">${money(g.notPresented)}</td></tr>`).join('')}
@@ -82,7 +101,7 @@ export function cnpSheet(wb, c) {
     g.lines.forEach((l) => { put(r++, [fmtDate(l.date), l.a === l.z ? String(l.a) : `${l.a} – ${l.z}`, l.amount, fmtDate(l.rem.date), l.rem.to, `${l.rem.a}–${l.rem.z}`, l.held], { box: true }); });
     put(r++, [`Subtotal, ${g.short}`, '', g.total, '', '', '', ''], { bold: true, box: true });
     put(r++, ['Collections before the last cash examination, remitted this period', '', '', '', '', '', g.total], { money: true, nowrap: true });
-    put(r++, [`Less: ${g.short} balance at the last cash examination (Audit Setup)`, '', '', '', '', '', g.beg], { money: true, nowrap: true });
+    put(r++, [`Less: ${g.short} balance at the last cash examination (Audit Setup)${g.series ? `, not covered by its series ${rangesText(g.series)}` : ''}`, '', '', '', '', '', g.beg], { money: true, nowrap: true });
     put(r++, [`${g.short} collections not presented at the last cash examination`, '', '', '', '', '', g.notPresented], { bold: true, money: true, nowrap: true });
     r++;
   });
@@ -94,40 +113,37 @@ export function cnpSheet(wb, c) {
 }
 
 /* ---------- Accountable forms not presented at the last cash examination (design approved 7 Nov 2026) ----------
-   The forms side of the schedule above: the same ORs (issued before the last cash exam, remitted this period),
-   by form and booklet, with their dates of issue and the report / remittance they came in. */
-const repLabel = (f, id) => { const r = id && f.reports.find((x) => x.id === id && !x.pending); return r ? `${r.kind || 'RCD'} ${String(r.no || '').trim() ? 'No. ' + r.no : 'of ' + fmtDate(r.date)}` : ''; };
+   The forms side of the schedule above: the same ORs (issued before the last cash exam, remitted this period), by form,
+   as series From / To / Qty. Left out: the ORs of the beginning balance, by its series in Audit Setup; without a series,
+   the latest ORs before the last exam up to the beginning amount (assumed: what is on hand at a count is the latest). */
 export function fnpData(f, o, exam, from, to) {
   const d = cnpData(f, o, exam, from, to); if (!d || !d.lines.length) return null;
   const groups = d.groups.map((g) => {
-    const by = {};
-    g.lines.forEach((l) => {
-      const b = f.booklets.find((x) => x.id === l.bookletId) || f.booklets.find((x) => x.officerId === o.id && x.form === l.form && x.from <= l.a && l.z <= x.to);
-      const k = b ? b.id : `${l.form}|${l.a}`;
-      const e = (by[k] = by[k] || { booklet: b ? [b.from, b.to] : null, rs: [], dates: [], ins: new Set() });
-      e.rs.push([l.a, l.z]); e.dates.push(l.date);
-      e.ins.add(repLabel(f, l.reportId) || `Remitted to ${l.rem.to}, ${fmtDate(l.rem.date)}`);
-    });
-    const rows = Object.values(by).map((e) => { const rs = mergeRanges(e.rs), ds = e.dates.sort();
-      return { booklet: e.booklet, rs, text: rangesText(rs), qty: countRanges(rs), d1: ds[0], d2: ds[ds.length - 1], ins: [...e.ins].join('; ') }; })
-      .sort((a, b) => (a.booklet ? a.booklet[0] : a.rs[0][0]) - (b.booklet ? b.booklet[0] : b.rs[0][0]));
-    return { form: g.form, title: g.title, short: g.short, rows, qty: rows.reduce((n, r) => n + r.qty, 0) };
-  });
-  return { groups, qty: groups.reduce((n, g) => n + g.qty, 0), from, to };
+    let ls = g.lines, assumed = [];
+    if (!g.series && g.begAll > 0.004) {
+      let cum = 0; const take = new Set();
+      [...ls].sort((a, b) => b.date.localeCompare(a.date) || b.a - a.a).some((l) => { if (cum + l.amount > g.begAll + 0.004) return true; cum = r2(cum + l.amount); take.add(l); return false; });
+      assumed = mergeRanges([...take].map((l) => [l.a, l.z])); ls = ls.filter((l) => !take.has(l));
+    }
+    const rs = mergeRanges(ls.map((l) => [l.a, l.z]));
+    return { form: g.form, title: g.title, short: g.short, rows: rs.map(([a, z]) => ({ a, z, qty: z - a + 1 })), qty: countRanges(rs),
+      note: g.series ? `Not listed: ${rangesText(g.series)}, in the beginning balance at the last cash examination (series per Audit Setup).`
+        : assumed.length ? `Not listed: ${rangesText(assumed)}, assumed in the beginning balance of ₱${money(g.begAll)} (the latest before the last cash examination; no series in Audit Setup).` : '' };
+  }).filter((g) => g.qty || g.note);
+  const qty = groups.reduce((n, g) => n + g.qty, 0);
+  return qty ? { groups: groups.filter((g) => g.qty), all: groups, qty, from, to } : null;
 }
-const dRange = (r) => (r.d1 === r.d2 ? fmtDate(r.d1) : `${fmtDate(r.d1)} – ${fmtDate(r.d2)}`);
-const bkText = (r) => (r.booklet ? `${r.booklet[0]} – ${r.booklet[1]}` : '—');
 
 export function fnpHtml(c) {
   const { f, o, exam, A, agency } = c;
   const d = fnpData(f, o, exam, A.from, A.to);
   const head = `<h2 class="rp-title">SCHEDULE OF ACCOUNTABLE FORMS NOT PRESENTED AT THE LAST CASH EXAMINATION</h2>
     <p class="c"><b>${esc(o.name)}</b>${o.designation ? ' · ' + esc(o.designation) : ''} · ${esc(agency)}<br>Last cash examination: ${esc(fmtDate(A.from)) || '—'} · Cash count: ${esc(fmtDate(A.to))}</p>`;
-  if (!d) return { html: `<div class="rp-page rp-wide">${head}<p class="c dim">None: no OR issued before the last cash examination was remitted in this period.</p></div>` };
+  if (!d) return { html: `<div class="rp-page rp-wide">${head}<p class="c dim">None: every OR issued before the last cash examination and remitted in this period was in the beginning balance.</p></div>` };
   const sec = (g, i) => `<h3 class="cnp-h">${LET[i] || ''}. ${esc(g.title)}</h3>
-    <table class="rp-t"><thead><tr><th>Booklet</th><th>${/^ctc/.test(g.form) ? 'CTCs' : 'ORs'} Issued Before Last Exam</th><th class="r">Qty.</th><th>Dates of Issue</th><th>Remitted / Reported in</th></tr></thead>
-    <tbody>${g.rows.map((r) => `<tr><td class="mono">${bkText(r)}</td><td class="mono">${esc(r.text)}</td><td class="r">${r.qty}</td><td>${esc(dRange(r))}</td><td>${esc(r.ins)}</td></tr>`).join('')}
-      <tr class="tot"><td colspan="2">Subtotal, ${esc(g.short)}</td><td class="r">${g.qty}</td><td colspan="2"></td></tr></tbody></table>`;
+    <table class="rp-t cnp-calc"><thead><tr><th>From</th><th>To</th><th class="r">Qty.</th></tr></thead>
+    <tbody>${g.rows.map((r) => `<tr><td class="mono">${r.a}</td><td class="mono">${r.z}</td><td class="r">${r.qty}</td></tr>`).join('')}
+      <tr class="tot"><td colspan="2">Subtotal, ${esc(g.short)}</td><td class="r">${g.qty}</td></tr></tbody></table>${g.note ? `<p class="rp-note">${esc(g.note)}</p>` : ''}`;
   const sum = `<h3 class="cnp-h">SUMMARY</h3><table class="rp-t cnp-calc"><thead><tr><th>Form</th><th class="r">Qty. (pcs)</th></tr></thead>
     <tbody>${d.groups.map((g) => `<tr><td>${esc(g.short)}</td><td class="r">${g.qty}</td></tr>`).join('')}<tr class="tot"><td>Total</td><td class="r">${d.qty}</td></tr></tbody></table>`;
   return { html: `<div class="rp-page rp-wide">${head}${d.groups.map(sec).join('')}${sum}</div>` };
@@ -137,17 +153,18 @@ export function fnpSheet(wb, c) {
   const { f, o, exam, A, agency } = c;
   const d = fnpData(f, o, exam, A.from, A.to); if (!d) return;
   const ws = wb.addWorksheet('WP-FORMS NOT PRESENTED');
-  ws.columns = [22, 30, 9, 26, 34].map((width) => ({ width }));
+  ws.columns = [18, 18, 10, 40].map((width) => ({ width }));
   const B = { style: 'thin', color: { argb: 'FF000000' } }, box = { top: B, left: B, bottom: B, right: B };
-  const put = (r, vals, o2 = {}) => vals.forEach((v, i) => { const cl = ws.getCell(r, i + 1); cl.value = v; cl.font = { name: 'Arial', size: 10, bold: !!o2.bold }; if (o2.box) cl.border = box; cl.alignment = { vertical: 'top', wrapText: !o2.nowrap }; });
+  const put = (r, vals, o2 = {}) => vals.forEach((v, i) => { const cl = ws.getCell(r, i + 1); cl.value = v; cl.font = { name: 'Arial', size: 10, bold: !!o2.bold, italic: !!o2.italic }; if (o2.box) cl.border = box; cl.alignment = { vertical: 'top', wrapText: !o2.nowrap }; });
   [['SCHEDULE OF ACCOUNTABLE FORMS NOT PRESENTED AT THE LAST CASH EXAMINATION', true], [`${o.name}${o.designation ? ' · ' + o.designation : ''} · ${agency}`], [`Last cash examination: ${fmtDate(A.from)} · Cash count: ${fmtDate(A.to)}`]]
-    .forEach(([t, bold], i) => { ws.mergeCells(i + 1, 1, i + 1, 5); put(i + 1, [t], { bold }); ws.getCell(i + 1, 1).alignment = { horizontal: 'center' }; });
+    .forEach(([t, bold], i) => { ws.mergeCells(i + 1, 1, i + 1, 4); put(i + 1, [t], { bold }); ws.getCell(i + 1, 1).alignment = { horizontal: 'center' }; });
   let r = 5;
   d.groups.forEach((g, i) => {
     put(r++, [`${LET[i] || ''}. ${g.title}`], { bold: true, nowrap: true });
-    put(r++, ['Booklet', `${/^ctc/.test(g.form) ? 'CTCs' : 'ORs'} Issued Before Last Exam`, 'Qty.', 'Dates of Issue', 'Remitted / Reported in'], { bold: true, box: true });
-    g.rows.forEach((x) => put(r++, [bkText(x), x.text, x.qty, dRange(x), x.ins], { box: true }));
-    put(r++, [`Subtotal, ${g.short}`, '', g.qty, '', ''], { bold: true, box: true });
+    put(r++, ['From', 'To', 'Qty.'], { bold: true, box: true });
+    g.rows.forEach((x) => put(r++, [x.a, x.z, x.qty], { box: true }));
+    put(r++, [`Subtotal, ${g.short}`, '', g.qty], { bold: true, box: true });
+    if (g.note) { ws.mergeCells(r, 1, r, 4); put(r++, [g.note], { italic: true }); }
     r++;
   });
   put(r++, ['SUMMARY'], { bold: true });

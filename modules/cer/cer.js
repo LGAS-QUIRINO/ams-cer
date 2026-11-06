@@ -290,7 +290,7 @@ function listHtml(refs, cer) {
 function blankExam(lgu) {
   const brgy = isBrgy(lgu);
   return { examId: '', officerId: '', functions: brgy ? ['collecting', 'disbursing'] : [], forms: brgy ? ['af51b', 'ctci'] : [],
-    bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '' }, lastExamDate: '', balances: {}, depositRule: 'next', caRestFund: '', remitToLO: false, records: 'complete' };
+    bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '' }, lastExamDate: '', balances: {}, begSer: {}, depositRule: 'next', caRestFund: '', remitToLO: false, records: 'complete' };
 }
 function stateFrom(refs, cer, q) {
   const audit = cer.audits.find((x) => x.id === q.get('a')) || null;
@@ -306,7 +306,8 @@ function stateFrom(refs, cer, q) {
   if (exam) {
     Object.assign(st, { examId: exam.id, officerId: exam.officerId, functions: [...(exam.functions || [])], forms: [...new Set((exam.forms || []).map((k) => fixBrgyForm(lgu, k)))],
       bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '', depositRule: exam.depositRule || 'next', caRestFund: exam.caRestFund || '', remitToLO: !!exam.remitToLO, records: exam.records || 'complete',
-      balances: Object.fromEntries(Object.entries(exam.balances || {}).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, (() => { const x = v && v.lump !== undefined ? v.lump : v && v.amount; return x !== null && x !== undefined ? money(x) : ''; })()])) });
+      balances: Object.fromEntries(Object.entries(exam.balances || {}).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, (() => { const x = v && v.lump !== undefined ? v.lump : v && v.amount; return x !== null && x !== undefined ? money(x) : ''; })()])),
+      begSer: Object.fromEntries(Object.entries(exam.balances || {}).filter(([, v]) => v && v.series).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, v.series])) });
     ['maxCash', 'amount'].forEach((k) => { if (st.bond[k] !== '' && st.bond[k] !== null) st.bond[k] = money(st.bond[k]); });
   }
   return { st, audit, exams, exam };
@@ -472,7 +473,9 @@ function officerHtml(refs, cer, st, edit) {
           const bl = BEG_CA[r.key] ? `<div class="cer-begline"><span data-begline="${r.key}">${begLine(st, r.key, carried ? prev.endBalances[r.key] : num(st.balances[r.key]))}</span>
             <button class="btn sm" type="button" data-begchk="${r.key}" data-edit="${edit ? 1 : 0}">${edit ? 'Beginning checks' : 'View checks'}</button>
             ${r.key === 'ca' && bankAccts.length > 1 ? `<label class="cer-restfund">Not itemized · Fund <select class="input af-sm" data-restfund ${dis}>${bankAccts.map((x) => `<option ${x.fund === (st.caRestFund || bankAccts[0].fund) ? 'selected' : ''}>${esc(x.fund)}</option>`).join('')}</select></label>` : ''}</div>` : '';
-          return `<tr><td><b>${esc(r.label)}</b>${bl}</td><td class="dim">${esc(r.fn)}</td>
+          // Collections: the OR series of the ORs making up the balance (presented at the last cash exam), when known.
+          const ser = r.key.startsWith('col-') ? `<div class="cer-begser"><label class="sr-only" for="bser-${r.key}">${esc(r.label)}: OR series in the balance</label><input class="input mono af-sm" id="bser-${r.key}" data-begser="${r.key}" value="${esc(st.begSer?.[r.key] || '')}" placeholder="OR series in this balance (optional)" title="e.g. 9394901-9394911; several: 9394901-9394905; 9394910" autocomplete="off" ${dis}></div>` : '';
+          return `<tr><td><b>${esc(r.label)}</b>${bl}${ser}</td><td class="dim">${esc(r.fn)}</td>
             <td class="r"><label class="sr-only" for="bal-${r.key}">${esc(r.label)} balance</label><input class="input amt" id="bal-${r.key}" data-bal="${r.key}" inputmode="decimal" value="${esc(val)}" ${carried ? 'readonly disabled' : dis}></td>
             <td>${carried ? '<span class="pill ok">Carried from last exam</span>' : `<span class="pill blue">${lastFromPrev ? 'Typed' : 'Typed (first exam)'}</span>`}</td></tr>`;
         }).join('')}${moneyForms ? `<tr class="cer-mvrow"><td><b>Unused accountable forms with money value</b></td><td class="dim">Forms</td><td class="r"><b>${money(moneyForms)}</b></td><td><span class="pill">From Beginning Inventory</span></td></tr>` : ''}</tbody></table></div>
@@ -555,6 +558,7 @@ function wireSetup(refs, cer, q, rerender) {
       i.oninput = () => { st.bond[i.dataset.bond] = i.value; touch(); $('#cer-warn').innerHTML = warnHtml(st); flag(); };
       if (i.classList.contains('amt')) i.onblur = () => { const v = num(i.value); if (v !== null) { i.value = money(v); st.bond[i.dataset.bond] = i.value; } };
     });
+    $$('[data-begser]').forEach((i) => { i.oninput = () => { st.begSer = st.begSer || {}; st.begSer[i.dataset.begser] = i.value; touch(); }; });
     $$('[data-bal]').forEach((i) => {
       i.oninput = () => { st.balances[i.dataset.bal] = i.value; touch(); const k = i.dataset.bal, ln = $(`[data-begline="${k}"]`); if (ln) ln.innerHTML = begLine(st, k, num(i.value)); };
       i.onblur = () => { const v = num(i.value); if (v !== null) { i.value = money(v); st.balances[i.dataset.bal] = i.value; } };
@@ -733,6 +737,7 @@ async function saveSetup(refs, cer, st) {
     balances[r.key] = carried ? { amount: prev.endBalances[r.key], source: 'carried' } : { amount: num(st.balances[r.key]) ?? 0, source: 'typed' };
     if (BEG_CA[r.key]) { const lump = carried ? Number(prev.endBalances[r.key]) : num(st.balances[r.key]); const s = sumOf(begChecksOf(st, r.key));
       balances[r.key] = { ...balances[r.key], lump, amount: Math.max(lump || 0, s) }; }
+    const ser = String(st.begSer?.[r.key] || '').trim(); if (ser && r.key.startsWith('col-')) balances[r.key].series = ser;
   });
   const oldAudit = cer.audits.find((a) => a.id === auditId);
   await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy }, by(refs));
