@@ -106,6 +106,9 @@ const LASTC = { key: '', form: '', bookletId: '', serial: '', date: '', auto: tr
 /* ---------- figures ---------- */
 // An OR, or a summary line by OR range (range: serial–serialTo, one total; from a cashbook when the RCD is not available).
 // beg: dated before the last cash exam: its numbers are used, its amount is in the beginning balance (not this period's).
+// An OR (or range line) not inside a booklet received or issued to the officer, of its form.
+const NIB = 'Not in a booklet received or issued to this officer in the Forms Register';
+const outOfBooklets = (f, o, x) => !f.booklets.some((b) => b.officerId === o.id && b.form === x.form && !b.noSerial && b.from <= +x.serial && (x.range ? +x.serialTo : +x.serial) <= b.to);
 const orAmount = (o) => (o.status === 'cancelled' || o.beg ? 0 : r2((o.items || []).reduce((n, i) => n + (+i.amt || 0), 0)));
 const maxSer = (x) => (x.range ? +x.serialTo : +x.serial);
 export const serialsOf = (x) => { const out = []; for (let n = +x.serial, z = maxSer(x); n <= z && out.length < 5001; n++) out.push(n); return out; };
@@ -157,8 +160,10 @@ export function figuresOf(f, o, funds, countDate, lgu) {
       if (hi - lo < 5000) for (let n = lo; n <= hi; n++) if (!encoded[k].has(n)) miss.push([n, n]);
       if (miss.length) fig.issues.push(`Missing ${FORM_SHORT[k] || k} in the range: ${rangesText(mergeRanges(miss))}.`);
     });
-    const outside = list.filter((x) => { const b = f.booklets.find((y) => y.id === x.bookletId); return !b || b.officerId !== o.id; });
-    if (outside.length) fig.issues.push(`${outside.length} OR${outside.length > 1 ? 's' : ''} not in a booklet issued to this officer in the Forms Register: ${outside.slice(0, 6).map((x) => x.serial).join(', ')}${outside.length > 6 ? '…' : ''}.`);
+    // ORs whose numbers are in no booklet of this officer (same form) in the Forms Register: never received, or a typing mistake.
+    const outside = list.filter((x) => outOfBooklets(f, o, x));
+    const byF = {}; outside.forEach((x) => { (byF[x.form] = byF[x.form] || []).push([+x.serial, maxSer(x)]); });
+    Object.entries(byF).forEach(([k, rs]) => fig.issues.push(`${NIB}: ${FORM_SHORT[k] || k} ${rangesText(mergeRanges(rs))}. Add the booklet in Accountable Forms (Receive / Starting Inventory) or check the number.`));
     rem.forEach((m) => {
       const cr = m.reportId ? f.reports.find((r) => r.id === m.reportId) : null;
       if (cr) { const cf = quickColl(f, cr); if (Math.abs(cf - (+m.amount || 0)) > 0.004) fig.issues.push(`Remittance of ${esc(f.officers.find((x) => x.id === m.collectorId)?.name || 'a collector')} (${esc(repName(cr))}) is ₱${money(m.amount)}; that report's collections are ₱${money(cf)}.`); }
@@ -321,8 +326,10 @@ export async function collectionsView(ctx) {
     const what = [p.nOrs ? `${p.nOrs} OR${p.nOrs > 1 ? 's' : ''} (₱ ${money(p.orsTotal)})` : '', p.dep ? `₱ ${money(p.dep)} ${ch.kind === 'SCR' ? 'remitted' : 'deposits'}` : '', p.remTotal ? `₱ ${money(p.remTotal)} remittances received` : ''].filter(Boolean).join(' and ');
     return `<div>${what} of ${esc(ch.fund)}${!last ? '' : ch.figs.some(hasRange) ? ` outside the OR ranges of the ${ch.kind}s encoded` : ` dated after ${esc(fmtDate(last.rec.date))}`} ${p.nOrs + (p.rec?.deposits || []).length > 1 ? 'are not yet in an ' + ch.kind + '. They go' : 'is not yet in an ' + ch.kind + '. It goes'} into the next ${ch.kind} when you add it.</div>`; }).join('');
   const isNew = cur.pending;
+  // A report with a series not matching its ORs, or ORs outside the received booklets: flagged in the list (details under its summary).
+  const chkPill = (g) => { const t = g.issues.filter((x) => x.startsWith('Series ') || x.startsWith(NIB)); return t.length ? ` <span class="pill p-flag" title="${esc(t.join('\n'))}">⚠ Check</span>` : ''; };
   const sumTable = (pick) => realFigs.length ? `<div class="af-tbl"><table class="af-reg cd-sumtbl"><thead><tr><th scope="col">${KS0}</th><th scope="col">Fund</th><th scope="col">Date</th><th scope="col">Period</th><th scope="col">OR Range</th><th scope="col" class="r">ORs</th><th scope="col" class="r">Collections</th><th scope="col" class="r">${isRem ? 'Remitted' : 'Deposited'}</th><th scope="col" class="r">${isRem ? 'Unremitted' : 'Undeposited'}</th>${pick && enc ? '<th scope="col"></th>' : ''}</tr></thead>
-      <tbody>${realFigs.map((g) => `<tr ${pick ? `data-pick="${esc(g.id)}" tabindex="0"` : ''} class="${g.id === selId ? 'cd-on' : ''}"><td><b>${esc(repName({ ...g.rec, sameDay: false, dupe: 0 }, g.kind))}</b></td><td>${esc(g.rec.fund)}</td><td>${esc(fmtDate(g.rec.date))}</td>
+      <tbody>${realFigs.map((g) => `<tr ${pick ? `data-pick="${esc(g.id)}" tabindex="0"` : ''} class="${g.id === selId ? 'cd-on' : ''}"><td><b>${esc(repName({ ...g.rec, sameDay: false, dupe: 0 }, g.kind))}</b>${chkPill(g)}</td><td>${esc(g.rec.fund)}</td><td>${esc(fmtDate(g.rec.date))}</td>
         <td>${g.from ? esc(`${fmtDate(g.from)}–${fmtDate(g.to)}`) : '<span class="dim">—</span>'}</td><td class="cd-rng">${hasRange(g) ? `<span class="cd-rngt" title="${esc(rangesTyped(g.rec.ranges).replace(/-/g, ' – '))}">${esc(rangesTyped(g.rec.ranges).replace(/-/g, ' – '))}</span> <small class="dim">· ${g.rangeIn} of ${g.rangeN}</small>` : `<span class="cd-rngt">${esc(g.range.replace(/Accountable Form 51 – (Barangay|LGU) /g, 'AF 51 ')) || '—'}</span> <small class="dim">· no range</small>`}</td><td class="r">${g.nOrs}${g.nCancelled ? ` <span class="dim">(${g.nCancelled} cancelled)</span>` : ''}</td>
         <td class="r">${money(g.coll)}</td><td class="r">${money(g.dep)}</td><td class="r">${money(g.end)}</td>
 ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.id)}">Edit</button></td>` : ''}</tr>`).join('')}</tbody>
@@ -393,7 +400,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         <span class="cd-total">Total <b>₱ ${money(listOrs.reduce((n, x) => n + orAmount(x), 0))}</b></span>
         ${enc && forms.length ? '<a href="#" class="cd-link cd-tpl" id="cd-ortpl">Template</a><button class="btn" type="button" id="cd-orimp">Import from Excel</button>' : ''}<button class="btn" type="button" id="cd-xls">Export to Excel</button></div>
       ${listOrs.length ? `<div class="af-tbl cd-orscroll"><table class="af-reg cd-ors"><thead><tr><th scope="col">No.</th><th scope="col">OR No.</th><th scope="col">Date</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Status</th><th scope="col">${K}</th><th scope="col" class="r"></th></tr></thead>
-        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => p.p).join(' ')).toLowerCase())}"><td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.range ? `${x.serial}–${x.serialTo} <small class="dim">${maxSer(x) - x.serial + 1} ORs</small>` : x.serial}${x.beg ? ' <span class="pill p-beg" title="Dated before the last cash exam: in the beginning balance">Before the period</span>' : ''}</td><td>${esc(fmtDate(x.date))}</td>
+        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => p.p).join(' ')).toLowerCase())}"><td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.range ? `${x.serial}–${x.serialTo} <small class="dim">${maxSer(x) - x.serial + 1} ORs</small>` : x.serial}${x.beg ? ' <span class="pill p-beg" title="Dated before the last cash exam: in the beginning balance">Before the period</span>' : ''}${outOfBooklets(f, o, x) ? ' <span class="pill p-flag" title="Its number is in no booklet received or issued to this officer in the Forms Register">Not in a received booklet</span>' : ''}</td><td>${esc(fmtDate(x.date))}</td>
           ${(() => { const one = enc && x.status !== 'cancelled' && (x.items || []).length <= 1, p = (x.items || [])[0]?.p || '';
             return `<td ${one ? `class="cd-ed" data-ip="${esc(x.id)}" tabindex="0" title="Click to change the particular"` : ''}>${x.status === 'cancelled' ? '<span class="dim">—</span>' : (x.items || []).length > 1 ? esc(x.items.map((q) => q.p).join('; ')) : p === NO_PART || !p ? `<span class="cd-nopart">${NO_PART}</span>` : esc(p)}</td>
             <td class="r ${one ? 'cd-ed' : ''}" ${one ? `data-ia="${esc(x.id)}" tabindex="0" title="Click to change the amount"` : ''}>${x.beg ? `<span class="dim" title="In the beginning balance, not this period's">${money(+x.amount || 0)}</span>` : money(orAmount(x))}</td>`; })()}
@@ -452,7 +459,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <div><span>Add: Collections${isLO ? ' (ORs ₱' + money(cur.orsTotal) + ' + remittances ₱' + money(cur.remTotal) + ')' : ''}</span><span>${money(cur.coll)}</span></div>
       <div><span>Less: ${DEPS}</span><span>${money(cur.dep)}</span></div>
       <div class="cd-sumt"><span>${remish ? 'Unremitted' : 'Undeposited'}, end</span><span>${money(cur.end)}</span></div>
-      ${agree}${cur.issues.filter((t) => t.startsWith('Series ')).map((t) => `<p class="cd-serchk">⚠ ${esc(t)}</p>`).join('')}</div>
+      ${agree}${cur.issues.filter((t) => t.startsWith('Series ') || t.startsWith(NIB)).map((t) => `<p class="cd-serchk">⚠ ${esc(t)}</p>`).join('')}</div>
     ${isLO ? `<div class="cd-block"><h3 class="cer-h3">Days with the LO · received → deposited</h3>
       ${lo.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th scope="col">Date Received</th><th scope="col">From</th><th scope="col">Collector's RCD No.</th><th scope="col">Fund</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Deposited</th><th scope="col">Deposit Reference</th><th scope="col" class="r">Days with LO</th></tr></thead>
         <tbody>${lo.map((x) => `<tr><td>${esc(fmtDate(x.date))}</td><td>${esc(x.from)}</td><td class="mono">${esc(x.no || '')}</td><td>${esc(x.fund)}</td><td class="r">${money(x.amount)}</td>
