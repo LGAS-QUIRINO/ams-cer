@@ -217,6 +217,21 @@ function clean(v) {
   if (typeof v === 'string') return v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '');
   return String(v);
 }
+// One row of a template table made a single centred box (e.g. "None"): the row's small merges are undone, the whole
+// width merged, the outer borders kept.
+const colNo = (L) => [...L].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+function wideBox(ws, r, c1, c2, text) {
+  const a = colNo(c1), z = colNo(c2);
+  const first = ws.getCell(r, a), last = ws.getCell(r, z);
+  const bd = { ...(first.border || {}), right: (last.border || {}).right || (first.border || {}).right };
+  Object.keys(ws._merges || {}).forEach((k) => { const m = ws._merges[k]; const mm = m.model || m; if (mm.top === r && mm.bottom === r && mm.left >= a && mm.right <= z) ws.unMergeCells(r, mm.left, r, mm.right); });
+  for (let k = a; k <= z; k++) ws.getCell(r, k).value = null;
+  ws.mergeCells(r, a, r, z);
+  const cl = ws.getCell(r, a); cl.value = text;
+  const ref = ws.getCell(r, 1).font || {}; if (ref.size) cl.font = { ...(cl.font || {}), name: ref.name || (cl.font || {}).name, size: ref.size, bold: false };   // the table's own font
+  cl.alignment = { ...(cl.alignment || {}), horizontal: 'center', vertical: 'middle' };
+  cl.border = bd;
+}
 const hideRows = (ws, from, to) => { for (let r = from; r <= to; r++) ws.getRow(r).hidden = true; };
 async function save(wb, file) {
   // Excel refuses a file whose first tab (from the original workbook) is past the last sheet, or whose filters point to a removed sheet.
@@ -255,6 +270,8 @@ export async function downloadReport(c, ver) {
   const fit = (list, n, join) => (list.length <= n ? list : [...list.slice(0, n - 1), join(list.slice(n - 1))]);
   fit(items, 7, (xs) => ({ p: `${xs.length} other items`, pr: r2(xs.reduce((s, x) => s + x.pr, 0)), a: r2(xs.reduce((s, x) => s + x.a, 0)), d: r2(xs.reduce((s, x) => s + x.d, 0)) }))
     .forEach((x, i) => { set(ws, `S${28 + i}`, x.p); set(ws, `AG${28 + i}`, x.pr); set(ws, `AN${28 + i}`, x.a); set(ws, `AU${28 + i}`, x.d); });
+  // As on screen: no cash item → one box across the table reading None.
+  if (!items.length) wideBox(ws, 28, 'S', 'BA', 'None');
   const tA = r2(items.reduce((s, x) => s + x.a, 0)), tD = r2(items.reduce((s, x) => s + x.d, 0));
   set(ws, 'AG35', r2(tA + tD)); set(ws, 'AN35', tA); set(ws, 'AU35', tD); set(ws, 'AU36', r2(cash + tA));
   // Short names: the Name of Form columns of GF 74-A are narrow.
@@ -267,9 +284,9 @@ export async function downloadReport(c, ver) {
     .forEach((x, i) => { set(ws, `AF${41 + i}`, x.name); set(ws, `AN${41 + i}`, x.qty); set(ws, `AR${41 + i}`, x.text.replace(/ – /g, '- ')); });
   // Nothing counted: see the SAAF; booklets not presented: noted on the next free line.
   const nps = notPresentedOf(c.f, exam, A.to);
-  if (!nomv.length) set(ws, 'AF41', 'See Annex B (SAAF)');
-  else if (nps.length && nomv.length < 7) set(ws, `AF${41 + nomv.length}`, 'Not presented: see Annex B (SAAF)');
-  if (!mv.length && nps.some((x) => faceOf({ form: x.form }))) set(ws, 'A41', 'See Annex B (SAAF)');
+  if (!nomv.length) wideBox(ws, 41, 'AF', 'BA', 'See Annex B (SAAF)');
+  else if (nps.length && nomv.length < 7) wideBox(ws, 41 + nomv.length, 'AF', 'BA', 'Not presented: see Annex B (SAAF)');
+  if (!mv.length) wideBox(ws, 41, 'A', 'AE', nps.some((x) => faceOf({ form: x.form })) ? 'See Annex B (SAAF)' : 'None');
   const mvAmt = mv.reduce((s, x) => s + x.amount, 0), pcs = nomv.reduce((s, x) => s + x.qty, 0);
   set(ws, 'AA48', mvAmt); set(ws, 'AN48', pcs);
   set(ws, 'D53', fmtDate(audit.countDate)); set(ws, 'AQ55', r2(cash + tA)); set(ws, 'AQ56', mvAmt); set(ws, 'AQ57', pcs); set(ws, 'J59', tD);
