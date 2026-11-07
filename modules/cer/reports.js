@@ -23,7 +23,7 @@ const BILLS = [1000, 500, 200, 100, 50, 20];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const REPORTS = [['74a', 'GF 74-A · Report of Cash Examination'], ['saaf', 'Annex B · SAAF'], ['soac', 'Annex C · Statement of Accountability (Collections)'], ['soad', 'Annex D · Statement of Accountability (Cash Advances)'],
   ['rsa', 'Annex E–G · Reconciliation Statements of Accountability'], ['a1a', 'Annex A.1a · Working paper: ORs, collections and deposits'],
-  ['a1b', 'Annex A.1b · Working paper: CTC, collections and remittances'], ['a2a', 'Annex A.2a · Working paper: cash advances and liquidations'], ['cnp', 'Working paper: Collections not presented at the last cash exam'], ['fnp', 'Working paper: Accountable forms not presented at the last cash exam']];
+  ['a1b', 'Annex A.1b · Working paper: CTC, collections and remittances'], ['a2a', 'Annex A.2a · Working paper: cash advances and liquidations'], ['cnp', 'Working paper: Collections not remitted as of the last cash exam'], ['fnp', 'Working paper: Accountable forms not presented at the last cash exam']];
 const amt = (n) => (n === null || n === undefined ? '' : n < -0.004 ? `(${money(-n)})` : money(n));
 
 // Amount in words, e.g. 35,000 → "Thirty Five Thousand Pesos Only".

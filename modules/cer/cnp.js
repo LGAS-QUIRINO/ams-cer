@@ -1,6 +1,6 @@
 // CER · Working paper: Schedule of Collections Not Presented at the Last Cash Examination (design approved 6 Nov 2026).
 // Collections dated before the last cash exam whose OR series was remitted (or deposited) in this period: what the officer
-// still held at the last exam. Less the balance accounted for then (Audit Setup) = collections not presented at that exam.
+// still held at the last exam. Less the balance accounted for then (Audit Setup) = collections not remitted as of that exam.
 // The GF 74-A stays as is; this working paper is the one place it is shown (with a finding in the Auditor's Notes).
 import { esc } from '../../js/ui.js';
 import { fmtDate, money } from './cer.js';
@@ -66,7 +66,7 @@ export function cnpData(f, o, exam, from, to) {
 export function cnpHtml(c) {
   const { f, o, exam, A, agency } = c;
   const d = cnpData(f, o, exam, A.from, A.to);
-  const head = `<h2 class="rp-title">SCHEDULE OF COLLECTIONS NOT PRESENTED AT THE LAST CASH EXAMINATION</h2>
+  const head = `<h2 class="rp-title">SCHEDULE OF COLLECTIONS NOT REMITTED AS OF THE LAST CASH EXAMINATION</h2>
     <p class="c"><b>${esc(o.name)}</b>${o.designation ? ' · ' + esc(o.designation) : ''} · ${esc(agency)}<br>Last cash examination: ${esc(fmtDate(A.from)) || '—'} · Cash count: ${esc(fmtDate(A.to))}</p>`;
   if (!d || !d.lines.length) return { html: `<div class="rp-page rp-wide">${head}<p class="c dim">None: no collection dated before the last cash examination was remitted in this period (collections by OR range with the remittance series, Cashbook only).</p></div>` };
   const sec = (g, i) => `<h3 class="cnp-h">${LET[i] || ''}. ${esc(g.title)}</h3>
@@ -76,8 +76,8 @@ export function cnpHtml(c) {
     <table class="rp-t cnp-calc"><tbody>
       <tr><td>Collections before the last cash examination, remitted this period</td><td class="r">${money(g.total)}</td></tr>
       <tr><td>Less: ${esc(g.short)} balance at the last cash examination (Audit Setup)${g.series ? `, not covered by its series ${esc(rangesText(g.series))}` : ''}</td><td class="r">${money(g.beg)}</td></tr>
-      <tr class="tot"><td>${esc(g.short)} collections not presented at the last cash examination</td><td class="r">${money(g.notPresented)}</td></tr></tbody></table>`;
-  const sum = `<h3 class="cnp-h">SUMMARY</h3><table class="rp-t cnp-calc"><thead><tr><th>Form</th><th class="r">Before last exam, remitted now</th><th class="r">Balance at last exam</th><th class="r">Not presented</th></tr></thead>
+      <tr class="tot"><td>${esc(g.short)} collections not remitted as of the last cash examination</td><td class="r">${money(g.notPresented)}</td></tr></tbody></table>`;
+  const sum = `<h3 class="cnp-h">SUMMARY</h3><table class="rp-t cnp-calc"><thead><tr><th>Form</th><th class="r">Before last exam, remitted now</th><th class="r">Balance at last exam</th><th class="r">Not remitted</th></tr></thead>
     <tbody>${d.groups.map((g) => `<tr><td>${esc(g.short)}</td><td class="r">${money(g.total)}</td><td class="r">${money(g.beg)}</td><td class="r">${money(g.notPresented)}</td></tr>`).join('')}
       <tr class="tot"><td>Total</td><td class="r">${money(d.total)}</td><td class="r">${money(d.beg)}</td><td class="r">${money(d.notPresented)}</td></tr></tbody></table>`;
   return { html: `<div class="rp-page rp-wide">${head}${d.groups.map(sec).join('')}${sum}</div>` };
@@ -88,11 +88,11 @@ export function cnpSheet(wb, c) {
   const { f, o, exam, A, agency } = c;
   const d = cnpData(f, o, exam, A.from, A.to);
   if (!d || !d.lines.length) return;
-  const ws = wb.addWorksheet('WP-NOT PRESENTED');
+  const ws = wb.addWorksheet('WP-NOT REMITTED');
   ws.columns = [14, 24, 15, 14, 28, 24, 11].map((width) => ({ width }));
   wpPage(ws, true);
   const H = { b: true, box: true, al: 'center', fill: 'FFF0F0F0' }, T = { b: true, box: true, fill: 'FFF3F4F6' };
-  wtitle(ws, 1, 7, 'SCHEDULE OF COLLECTIONS NOT PRESENTED AT THE LAST CASH EXAMINATION', { b: true, sz: 12 });
+  wtitle(ws, 1, 7, 'SCHEDULE OF COLLECTIONS NOT REMITTED AS OF THE LAST CASH EXAMINATION', { b: true, sz: 12 });
   wtitle(ws, 2, 7, `${o.name}${o.designation ? ' · ' + o.designation : ''} · ${agency}`);
   wtitle(ws, 3, 7, `Last cash examination: ${fmtDate(A.from)} · Cash count: ${fmtDate(A.to)}`);
   // A line across columns a–b (merged), the rest as given.
@@ -104,14 +104,14 @@ export function cnpSheet(wb, c) {
     g.lines.forEach((l) => { [fmtDate(l.date), l.a === l.z ? String(l.a) : `${l.a} – ${l.z}`, l.amount, fmtDate(l.rem.date), l.rem.to, `${l.rem.a}–${l.rem.z}`, l.held].forEach((v, k) => wcell(ws, r, k + 1, v, { box: true, ...(k === 6 ? { n: '0' } : {}), ...([0, 1, 3, 5].includes(k) ? { al: 'center' } : {}) })); r++; });
     span(r, 1, 2, `Subtotal, ${g.short}`, T); wcell(ws, r, 3, g.total, T); span(r, 4, 7, null, T); r++;
     r++;
-    // The amounts in F–G, the same column as Not presented in the summary.
+    // The amounts in F–G, the same column as Not remitted in the summary.
     span(r, 1, 5, 'Collections before the last cash examination, remitted this period', { box: true }); span(r++, 6, 7, g.total, { box: true });
     span(r, 1, 5, `Less: ${g.short} balance at the last cash examination (Audit Setup)${g.series ? `, not covered by its series ${rangesText(g.series)}` : ''}`, { box: true }); span(r++, 6, 7, g.beg, { box: true });
-    span(r, 1, 5, `${g.short} collections not presented at the last cash examination`, T); span(r++, 6, 7, g.notPresented, T);
+    span(r, 1, 5, `${g.short} collections not remitted as of the last cash examination`, T); span(r++, 6, 7, g.notPresented, T);
     r++;
   });
   wcell(ws, r++, 1, 'SUMMARY', { b: true });
-  span(r, 1, 2, 'Form', H); span(r, 3, 4, 'Before last exam, remitted now', H); wcell(ws, r, 5, 'Balance at last exam', H); span(r++, 6, 7, 'Not presented', H);
+  span(r, 1, 2, 'Form', H); span(r, 3, 4, 'Before last exam, remitted now', H); wcell(ws, r, 5, 'Balance at last exam', H); span(r++, 6, 7, 'Not remitted', H);
   const sumRow = (vals, o2) => { span(r, 1, 2, vals[0], o2); span(r, 3, 4, vals[1], o2); wcell(ws, r, 5, vals[2], o2); span(r++, 6, 7, vals[3], o2); };
   d.groups.forEach((g) => sumRow([g.short, g.total, g.beg, g.notPresented], { box: true }));
   sumRow(['Total', d.total, d.beg, d.notPresented], T);
@@ -130,8 +130,8 @@ export function fnpData(f, o, exam, from, to) {
       [...ls].sort((a, b) => b.date.localeCompare(a.date) || b.a - a.a).some((l) => { if (cum + l.amount > g.begAll + 0.004) return true; cum = r2(cum + l.amount); take.add(l); return false; });
       assumed = mergeRanges([...take].map((l) => [l.a, l.z])); assumedAmt = cum; ls = ls.filter((l) => !take.has(l));
     }
-    // Rows: the series merged per date reported (the RCD's date, or the remittance date when not yet in an RCD).
-    const repDate = (l) => { const r = l.reportId && f.reports.find((x) => x.id === l.reportId && !x.pending); return (r && r.date) || l.rem.date || ''; };
+    // Rows: the series merged per date remitted (the remittance / deposit whose series has them).
+    const repDate = (l) => l.rem.date || '';
     const byDate = {}; ls.forEach((l) => { (byDate[repDate(l)] = byDate[repDate(l)] || []).push([l.a, l.z]); });
     // Amount of a row: the collections of the lines in its series and date (as in the collections schedule).
     const rows = Object.entries(byDate).flatMap(([dt, rr]) => mergeRanges(rr).map(([a, z]) => ({ a, z, qty: z - a + 1, date: dt,
@@ -156,7 +156,7 @@ export function fnpHtml(c) {
   if (!d) return { portrait: true, html: `<div class="rp-page">${head}<p class="c dim">None: every OR issued before the last cash examination and remitted in this period was in the beginning balance.</p></div>` };
   // Centred on the page, every block the same width so the headings and tables line up.
   const sec = (g, i) => `<div class="fnp-blk"><h3 class="cnp-h">${LET[i] || ''}. ${esc(g.title)}</h3>
-    <table class="rp-t fnp-t"><thead><tr><th class="c">From</th><th class="c">To</th><th class="r">Qty.</th><th class="r">Amount</th><th class="c">Date Reported</th></tr></thead>
+    <table class="rp-t fnp-t"><thead><tr><th class="c">From</th><th class="c">To</th><th class="r">Qty.</th><th class="r">Amount</th><th class="c">Date Remitted</th></tr></thead>
     <tbody>${g.rows.map((r) => `<tr><td class="mono c">${r.a}</td><td class="mono c">${r.z}</td><td class="r">${r.qty}</td><td class="r">${money(r.amount)}</td><td class="c">${esc(fmtDate(r.date))}</td></tr>`).join('')}
       <tr class="tot"><td colspan="2">Subtotal, ${esc(g.short)}</td><td class="r">${g.qty}</td><td class="r">${money(g.amount)}</td><td></td></tr>
       ${Math.abs(g.diff) > 0.004 ? `<tr><td colspan="3"><i>Difference from the collections schedule (beginning balance not matched to whole ORs)</i></td><td class="r"><i>${money(g.diff)}</i></td><td></td></tr>` : ''}</tbody></table>${g.note ? `<p class="rp-note">${esc(g.note)}</p>` : ''}</div>`;
@@ -180,7 +180,7 @@ export function fnpSheet(wb, c) {
   let r = 5;
   d.groups.forEach((g, i) => {
     wcell(ws, r++, 2, `${LET[i] || ''}. ${g.title}`, { b: true, wrap: false });
-    ['From', 'To', 'Qty.', 'Amount', 'Date Reported'].forEach((t, k) => wcell(ws, r, k + 2, t, H)); r++;
+    ['From', 'To', 'Qty.', 'Amount', 'Date Remitted'].forEach((t, k) => wcell(ws, r, k + 2, t, H)); r++;
     g.rows.forEach((x) => { [String(x.a), String(x.z), x.qty, x.amount, fmtDate(x.date)].forEach((v, k) => wcell(ws, r, k + 2, v, { box: true, ...(k === 2 ? { n: '0' } : k === 3 ? {} : { al: 'center' }) })); r++; });
     span(r, 2, 3, `Subtotal, ${g.short}`, T); wcell(ws, r, 4, g.qty, { ...T, n: '0' }); wcell(ws, r, 5, g.amount, T); wcell(ws, r++, 6, null, T);
     if (Math.abs(g.diff) > 0.004) { span(r, 2, 4, 'Difference from the collections schedule (beginning balance not matched to whole ORs)', { i: true, box: true }); wcell(ws, r, 5, g.diff, { i: true, box: true }); wcell(ws, r, 6, null, { box: true }); ws.getRow(r).height = 28; r++; }
