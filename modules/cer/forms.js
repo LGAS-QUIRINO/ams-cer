@@ -1220,6 +1220,8 @@ function readFund(f, lguId, v) {
   const hit = fundsOf(f, lguId).find((x) => x.toUpperCase() === t.toUpperCase());
   return hit ? { fund: hit } : { error: `Fund "${t}" is not in this LGU's fund list. Add it with the Funds button first.` };
 }
+// Safeguard: the same numbers already in this LGU's register under another form (checks are a separate series).
+const otherFormOf = (f, lguId, form, x, y) => (form === 'chk' ? null : f.booklets.find((b) => b.lguId === lguId && b.form !== form && b.form !== 'chk' && !b.noSerial && b.from <= y && x <= b.to) || null);
 function planReceive(XLSX, sheet, f, refs, lguId, form) {
   const M = sheet.map, get = (row, k) => (M[k] === undefined ? '' : row[M[k]]);
   const offs = officersOf(refs, f, lguId);
@@ -1247,6 +1249,7 @@ function planReceive(XLSX, sheet, f, refs, lguId, form) {
     const parts = splitRange(a, z, p), items = [];
     let why = '';
     for (const [x, y] of parts) {
+      const other = otherFormOf(f, lguId, form, x, y); if (other) { why = `${rangeText(x, y)} is already in the register as ${FORM_SHORT[other.form] || other.form}. Check the Form Type.`; break; }
       const hit = taken.filter((b) => b.from <= y && x <= b.to);
       const exact = hit.length === 1 && hit[0].from === x && hit[0].to === y ? hit[0] : null;
       if (exact && exact.receivedDate) { plan.same.push({ line, text: rangeText(x, y) }); continue; }
@@ -1291,6 +1294,7 @@ function planIssue(XLSX, sheet, f, refs, lguId, form) {
     const un = parseRanges(get(row, 'unused'), a, z);
     if (un.error) { bad(`Unused on Hand: ${un.error}`); continue; }
     if (un.ranges.length && exh) { bad('Unused on Hand and Date Exhausted cannot both be filled.'); continue; }
+    const other = otherFormOf(f, lguId, form, a, z); if (other) { bad(`Already in the register as ${FORM_SHORT[other.form] || other.form}. Check the Form Type.`); continue; }
     const key = nameKey(nm);
     let o = known.get(key) || newOff.get(key);
     const hit = taken.filter((b) => b.from <= z && a <= b.to);
@@ -1323,7 +1327,7 @@ async function importModal(refs, f, lguId, kind) {
   const ok = await modal({ title: K.title, wide: true,
     body: `<p class="hint" style="margin:0">Forms Register of <b>${esc(agencyName(refs, lgu))}</b>. Booklets already in the register are skipped, so the same file can be imported again after new rows are added. Use the <b>${esc(K.file.replace('.xlsx', ''))}</b>.</p>
       <div class="two">
-        <div class="field"><label for="i-form">Form Type</label><select class="input" id="i-form">${AF_FORMS.map(([k, l]) => `<option value="${k}" ${k === LAST.form ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+        <div class="field"><label for="i-form">Form Type</label><select class="input" id="i-form"><option value="">— Choose the form —</option>${AF_FORMS.map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></div>
         <div class="field"><label for="i-file">Excel file (.xlsx, .xls or .csv)</label><input class="input" type="file" id="i-file" accept=".xlsx,.xls,.csv"></div>
       </div>
       <p class="hint" style="margin:0">Headings read: ${esc(K.heads.join(', '))}.</p>
@@ -1333,6 +1337,8 @@ async function importModal(refs, f, lguId, kind) {
       const run = async () => {
         plan = null;
         const file = fileIn.files[0]; if (!file) { prev.innerHTML = ''; return; }
+        // No default form: the file is read only once the Form Type is chosen.
+        if (!formIn.value) { prev.innerHTML = '<div class="msg bad">Choose the Form Type first: the booklets in this file are saved under it.</div>'; return; }
         prev.innerHTML = '<p class="hint">Reading the file…</p>';
         try {
           const XLSX = await loadXlsx();
@@ -1346,7 +1352,7 @@ async function importModal(refs, f, lguId, kind) {
       fileIn.onchange = run; formIn.onchange = run;
     },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Import New Booklets', cls: 'primary', value: 'go', check: () => {
-      if (!plan) { toast('Choose the Excel file first.', 'bad'); return false; }
+      if (!plan) { toast($('#i-form').value ? 'Choose the Excel file first.' : 'Choose the Form Type first.', 'bad'); return false; }
       if (!plan.add.length) { toast('Nothing new to import.', 'bad'); return false; }
       return true;
     } }] });
@@ -1394,10 +1400,10 @@ function previewHtml(refs, f, plan) {
   let boxes;
   if (plan.kind === 'receive') {
     const direct = plan.add.filter((x) => x.officerId).length, matched = plan.add.filter((x) => x.match).length;
-    boxes = `<div><b>${plan.add.length}</b><span>booklets to import</span><small>${plan.add.length - direct} to the custodian · ${direct} received directly${matched ? ` · ${matched} matched to earlier entries` : ''}</small></div>`;
+    boxes = `<div><b>${plan.add.length}</b><span>booklets of <b class="af-impform">${esc(FORM_SHORT[plan.form] || plan.form)}</b> to import</span><small>${plan.add.length - direct} to the custodian · ${direct} received directly${matched ? ` · ${matched} matched to earlier entries` : ''}</small></div>`;
   } else {
     const stock = plan.add.filter((x) => x.fromStock).length, past = plan.add.length - stock, exh = plan.add.filter((x) => x.exh).length, part = plan.add.filter((x) => x.unused.length).length;
-    boxes = `<div><b>${plan.add.length}</b><span>booklets to import</span><small>${stock} issued from stock · ${past} past issuances${part ? ` (${part} with unused on hand)` : ''}${exh ? ` · ${exh} exhausted` : ''}</small></div>`;
+    boxes = `<div><b>${plan.add.length}</b><span>booklets of <b class="af-impform">${esc(FORM_SHORT[plan.form] || plan.form)}</b> to import</span><small>${stock} issued from stock · ${past} past issuances${part ? ` (${part} with unused on hand)` : ''}${exh ? ` · ${exh} exhausted` : ''}</small></div>`;
   }
   return `<div class="af-imp">${boxes}
       <div><b>${plan.same.length}</b><span>already in the register</span><small>or repeated in the file · skipped</small></div>

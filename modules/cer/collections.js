@@ -916,7 +916,7 @@ async function importOrs(c) {
     const iss = p.add.filter((x) => !x.cancelled), cx = p.add.length - iss.length;
     const np = iss.filter((x) => x.items.some((i) => i.p === NO_PART)).length, nb = p.add.filter((x) => !x.bookletId).length;
     const ns = p.add.filter((x) => !x.reportId).length;
-    box.innerHTML = `<div class="oi-sum"><b>${p.add.length} OR${p.add.length === 1 ? '' : 's'} to add</b> · ₱ ${money(r2(iss.reduce((t, x) => t + x.items.reduce((u, i) => u + i.amt, 0), 0)))}
+    box.innerHTML = `<div class="oi-sum"><b>${p.add.length} OR${p.add.length === 1 ? '' : 's'} of ${esc(FORM_SHORT[p.form] || p.form)} to add</b> · ₱ ${money(r2(iss.reduce((t, x) => t + x.items.reduce((u, i) => u + i.amt, 0), 0)))}
         ${cx ? `<span>${cx} read as Cancelled</span>` : ''}${np ? `<span class="warn-t">${np} with No particular</span>` : ''}${nb ? `<span class="warn-t">${nb} not in a booklet of this officer</span>` : ''}${ns ? `<span>${ns} not yet in an SCD</span>` : ''}</div>
       ${p.add.length ? `<div class="af-tbl oi-prev"><table class="af-reg"><thead><tr><th>OR No.</th><th>Date</th><th>Particular</th><th class="r">Amount</th></tr></thead><tbody>${p.add.slice(0, 200).map((x) => `<tr><td class="mono">${x.n}</td><td>${esc(fmtDate(x.date))}</td><td>${x.cancelled ? '<span class="pill p-stock">Cancelled</span>' : esc(x.items.map((i) => i.p).join('; '))}</td><td class="r">${x.cancelled ? '0.00' : money(r2(x.items.reduce((t, i) => t + i.amt, 0)))}</td></tr>`).join('')}</tbody></table></div>` : ''}
       ${p.problems.length ? `<div class="af-probs"><b>Rows not imported (${p.problems.length})</b>${p.problems.slice(0, 60).map((q) => `<div>Row ${q.line}${q.no ? ` · OR ${q.no}` : ''} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
