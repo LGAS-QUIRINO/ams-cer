@@ -52,7 +52,7 @@ export function cnpData(f, o, exam, from, to) {
   const groups = keys.map((k) => {
     const ls = kept.filter((l) => l.form === k), total = r2(ls.reduce((n, l) => n + l.amount, 0)), begAll = r2(+bal['col-' + k]?.amount || 0);
     const beg = begSer[k] ? r2(Math.max(0, begAll - (begIn[k] || 0))) : begAll;
-    return { form: k, title: titleOf(k), short: shortOf(k), ser: serHead(k), lines: ls, total, beg, begAll, series: begSer[k] || null, notPresented: r2(Math.max(0, total - beg)) };
+    return { form: k, title: titleOf(k), short: shortOf(k), ser: serHead(k), lines: ls, total, beg, begAll, begIn: begIn[k] || 0, series: begSer[k] || null, notPresented: r2(Math.max(0, total - beg)) };
   });
   // Each beginning series against the ORs encoded in it (for Verification).
   const begCheck = Object.entries(begSer).map(([k, rs]) => {
@@ -124,23 +124,28 @@ export function cnpSheet(wb, c) {
 export function fnpData(f, o, exam, from, to) {
   const d = cnpData(f, o, exam, from, to); if (!d || !d.lines.length) return null;
   const groups = d.groups.map((g) => {
-    let ls = g.lines, assumed = [];
+    let ls = g.lines, assumed = [], assumedAmt = 0;
     if (!g.series && g.begAll > 0.004) {
       let cum = 0; const take = new Set();
       [...ls].sort((a, b) => b.date.localeCompare(a.date) || b.a - a.a).some((l) => { if (cum + l.amount > g.begAll + 0.004) return true; cum = r2(cum + l.amount); take.add(l); return false; });
-      assumed = mergeRanges([...take].map((l) => [l.a, l.z])); ls = ls.filter((l) => !take.has(l));
+      assumed = mergeRanges([...take].map((l) => [l.a, l.z])); assumedAmt = cum; ls = ls.filter((l) => !take.has(l));
     }
     // Rows: the series merged per date reported (the RCD's date, or the remittance date when not yet in an RCD).
     const repDate = (l) => { const r = l.reportId && f.reports.find((x) => x.id === l.reportId && !x.pending); return (r && r.date) || l.rem.date || ''; };
     const byDate = {}; ls.forEach((l) => { (byDate[repDate(l)] = byDate[repDate(l)] || []).push([l.a, l.z]); });
-    const rows = Object.entries(byDate).flatMap(([dt, rr]) => mergeRanges(rr).map(([a, z]) => ({ a, z, qty: z - a + 1, date: dt }))).sort((x, y) => x.a - y.a);
+    // Amount of a row: the collections of the lines in its series and date (as in the collections schedule).
+    const rows = Object.entries(byDate).flatMap(([dt, rr]) => mergeRanges(rr).map(([a, z]) => ({ a, z, qty: z - a + 1, date: dt,
+      amount: r2(ls.filter((l) => repDate(l) === dt && l.a >= a && l.z <= z).reduce((n, l) => n + l.amount, 0)) }))).sort((x, y) => x.a - y.a);
     const rs = mergeRanges(ls.map((l) => [l.a, l.z]));
-    return { form: g.form, title: g.title, short: g.short, rows, qty: countRanges(rs),
-      note: g.series ? `Not listed: ${rangesText(g.series)}, in the beginning balance at the last cash examination (series per Audit Setup).`
-        : assumed.length ? `Not listed: ${rangesText(assumed)}, assumed in the beginning balance of ₱${money(g.begAll)} (the latest before the last cash examination; no series in Audit Setup).` : '' };
+    const amount = r2(rows.reduce((n, x) => n + x.amount, 0));
+    // Ties to the collections schedule; a difference only from a beginning balance not matched to whole ORs.
+    const diff = r2(amount - g.notPresented);
+    return { form: g.form, title: g.title, short: g.short, rows, qty: countRanges(rs), amount, diff,
+      note: g.series ? `Not listed: ${rangesText(g.series)} (₱${money(g.begIn)}), in the beginning balance at the last cash examination (series per Audit Setup).`
+        : assumed.length ? `Not listed: ${rangesText(assumed)} (₱${money(assumedAmt)}), assumed in the beginning balance of ₱${money(g.begAll)} (the latest before the last cash examination; no series in Audit Setup).` : '' };
   }).filter((g) => g.qty || g.note);
-  const qty = groups.reduce((n, g) => n + g.qty, 0);
-  return qty ? { groups: groups.filter((g) => g.qty), all: groups, qty, from, to } : null;
+  const qty = groups.reduce((n, g) => n + g.qty, 0), amount = r2(groups.reduce((n, g) => n + (g.qty ? g.amount : 0), 0));
+  return qty ? { groups: groups.filter((g) => g.qty), all: groups, qty, amount, from, to } : null;
 }
 
 export function fnpHtml(c) {
@@ -151,11 +156,12 @@ export function fnpHtml(c) {
   if (!d) return { portrait: true, html: `<div class="rp-page">${head}<p class="c dim">None: every OR issued before the last cash examination and remitted in this period was in the beginning balance.</p></div>` };
   // Centred on the page, every block the same width so the headings and tables line up.
   const sec = (g, i) => `<div class="fnp-blk"><h3 class="cnp-h">${LET[i] || ''}. ${esc(g.title)}</h3>
-    <table class="rp-t fnp-t"><thead><tr><th class="c">From</th><th class="c">To</th><th class="r">Qty.</th><th class="c">Date Reported</th></tr></thead>
-    <tbody>${g.rows.map((r) => `<tr><td class="mono c">${r.a}</td><td class="mono c">${r.z}</td><td class="r">${r.qty}</td><td class="c">${esc(fmtDate(r.date))}</td></tr>`).join('')}
-      <tr class="tot"><td colspan="2">Subtotal, ${esc(g.short)}</td><td class="r">${g.qty}</td><td></td></tr></tbody></table>${g.note ? `<p class="rp-note">${esc(g.note)}</p>` : ''}</div>`;
-  const sum = `<div class="fnp-blk"><h3 class="cnp-h">SUMMARY</h3><table class="rp-t fnp-t"><thead><tr><th>Form</th><th class="r">Qty. (pcs)</th></tr></thead>
-    <tbody>${d.groups.map((g) => `<tr><td>${esc(g.short)}</td><td class="r">${g.qty}</td></tr>`).join('')}<tr class="tot"><td>Total</td><td class="r">${d.qty}</td></tr></tbody></table></div>`;
+    <table class="rp-t fnp-t"><thead><tr><th class="c">From</th><th class="c">To</th><th class="r">Qty.</th><th class="r">Amount</th><th class="c">Date Reported</th></tr></thead>
+    <tbody>${g.rows.map((r) => `<tr><td class="mono c">${r.a}</td><td class="mono c">${r.z}</td><td class="r">${r.qty}</td><td class="r">${money(r.amount)}</td><td class="c">${esc(fmtDate(r.date))}</td></tr>`).join('')}
+      <tr class="tot"><td colspan="2">Subtotal, ${esc(g.short)}</td><td class="r">${g.qty}</td><td class="r">${money(g.amount)}</td><td></td></tr>
+      ${Math.abs(g.diff) > 0.004 ? `<tr><td colspan="3"><i>Difference from the collections schedule (beginning balance not matched to whole ORs)</i></td><td class="r"><i>${money(g.diff)}</i></td><td></td></tr>` : ''}</tbody></table>${g.note ? `<p class="rp-note">${esc(g.note)}</p>` : ''}</div>`;
+  const sum = `<div class="fnp-blk"><h3 class="cnp-h">SUMMARY</h3><table class="rp-t fnp-sum"><thead><tr><th>Form</th><th class="r">Qty. (pcs)</th><th class="r">Amount</th></tr></thead>
+    <tbody>${d.groups.map((g) => `<tr><td>${esc(g.short)}</td><td class="r">${g.qty}</td><td class="r">${money(g.amount)}</td></tr>`).join('')}<tr class="tot"><td>Total</td><td class="r">${d.qty}</td><td class="r">${money(d.amount)}</td></tr></tbody></table></div>`;
   return { portrait: true, html: `<div class="rp-page">${head}${d.groups.map(sec).join('')}${sum}</div>` };
 }
 
@@ -163,25 +169,26 @@ export function fnpSheet(wb, c) {
   const { f, o, exam, A, agency } = c;
   const d = fnpData(f, o, exam, A.from, A.to); if (!d) return;
   const ws = wb.addWorksheet('WP-FORMS NOT PRESENTED');
-  ws.columns = [6, 20, 20, 12, 20, 6].map((width) => ({ width }));   // the table in B–E, centred on the page
+  ws.columns = [5, 16, 16, 9, 16, 16, 5].map((width) => ({ width }));   // the table in B–F, centred on the page
   wpPage(ws, false);
   const H = { b: true, box: true, al: 'center', fill: 'FFF0F0F0' }, T = { b: true, box: true, fill: 'FFF3F4F6' };
-  wtitle(ws, 1, 6, 'SCHEDULE OF ACCOUNTABLE FORMS NOT PRESENTED AT THE LAST CASH EXAMINATION', { b: true, sz: 12 });
+  wtitle(ws, 1, 7, 'SCHEDULE OF ACCOUNTABLE FORMS NOT PRESENTED AT THE LAST CASH EXAMINATION', { b: true, sz: 12 });
   ws.getRow(1).height = 32;
-  wtitle(ws, 2, 6, `${o.name}${o.designation ? ' · ' + o.designation : ''} · ${agency}`);
-  wtitle(ws, 3, 6, `Last cash examination: ${fmtDate(A.from)} · Cash count: ${fmtDate(A.to)}`);
+  wtitle(ws, 2, 7, `${o.name}${o.designation ? ' · ' + o.designation : ''} · ${agency}`);
+  wtitle(ws, 3, 7, `Last cash examination: ${fmtDate(A.from)} · Cash count: ${fmtDate(A.to)}`);
   const span = (r, a, b, v, o2) => { wcell(ws, r, a, v, o2); for (let k = a + 1; k <= b; k++) wcell(ws, r, k, null, { ...o2, keep: true }); ws.mergeCells(r, a, r, b); };
   let r = 5;
   d.groups.forEach((g, i) => {
     wcell(ws, r++, 2, `${LET[i] || ''}. ${g.title}`, { b: true, wrap: false });
-    ['From', 'To', 'Qty.', 'Date Reported'].forEach((t, k) => wcell(ws, r, k + 2, t, H)); r++;
-    g.rows.forEach((x) => { [String(x.a), String(x.z), x.qty, fmtDate(x.date)].forEach((v, k) => wcell(ws, r, k + 2, v, { box: true, ...(k === 2 ? { n: '0' } : { al: 'center' }) })); r++; });
-    span(r, 2, 3, `Subtotal, ${g.short}`, T); wcell(ws, r, 4, g.qty, { ...T, n: '0' }); wcell(ws, r++, 5, null, T);
-    if (g.note) { span(r, 2, 5, g.note, { i: true }); ws.getRow(r).height = 28; r++; }
+    ['From', 'To', 'Qty.', 'Amount', 'Date Reported'].forEach((t, k) => wcell(ws, r, k + 2, t, H)); r++;
+    g.rows.forEach((x) => { [String(x.a), String(x.z), x.qty, x.amount, fmtDate(x.date)].forEach((v, k) => wcell(ws, r, k + 2, v, { box: true, ...(k === 2 ? { n: '0' } : k === 3 ? {} : { al: 'center' }) })); r++; });
+    span(r, 2, 3, `Subtotal, ${g.short}`, T); wcell(ws, r, 4, g.qty, { ...T, n: '0' }); wcell(ws, r, 5, g.amount, T); wcell(ws, r++, 6, null, T);
+    if (Math.abs(g.diff) > 0.004) { span(r, 2, 4, 'Difference from the collections schedule (beginning balance not matched to whole ORs)', { i: true, box: true }); wcell(ws, r, 5, g.diff, { i: true, box: true }); wcell(ws, r, 6, null, { box: true }); ws.getRow(r).height = 28; r++; }
+    if (g.note) { span(r, 2, 6, g.note, { i: true }); ws.getRow(r).height = 28; r++; }
     r++;
   });
   wcell(ws, r++, 2, 'SUMMARY', { b: true });
-  span(r, 2, 3, 'Form', H); span(r, 4, 5, 'Qty. (pcs)', H); r++;
-  d.groups.forEach((g) => { span(r, 2, 3, g.short, { box: true }); span(r, 4, 5, g.qty, { box: true, n: '0' }); r++; });
-  span(r, 2, 3, 'Total', T); span(r, 4, 5, d.qty, { ...T, n: '0' });
+  span(r, 2, 3, 'Form', H); wcell(ws, r, 4, 'Qty. (pcs)', H); span(r, 5, 6, 'Amount', H); r++;
+  d.groups.forEach((g) => { span(r, 2, 3, g.short, { box: true }); wcell(ws, r, 4, g.qty, { box: true, n: '0' }); span(r, 5, 6, g.amount, { box: true }); r++; });
+  span(r, 2, 3, 'Total', T); wcell(ws, r, 4, d.qty, { ...T, n: '0' }); span(r, 5, 6, d.amount, T);
 }

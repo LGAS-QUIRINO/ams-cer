@@ -896,3 +896,5 @@ table.af-reg.tr-month{min-width:0}
 .fnp-t th.c, .fnp-t td.c { text-align: center }
 .fnp-t { table-layout: fixed }
 .fnp-t th.c:nth-child(1), .fnp-t th.c:nth-child(2) { width: 28% } .fnp-t th:nth-child(3) { width: 14% }
+.fnp-t th.c:nth-child(1), .fnp-t th.c:nth-child(2) { width: 22% } .fnp-t th:nth-child(3) { width: 11% } .fnp-t th:nth-child(4) { width: 20% }
+.fnp-sum { width: 100%; table-layout: fixed } .fnp-sum th:nth-child(1) { width: 50% } .fnp-sum th:nth-child(2) { width: 20% }
