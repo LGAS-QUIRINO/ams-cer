@@ -12,7 +12,7 @@ import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer } from './cer.js';
 
 export const FORM_SHORT = { af51: 'Accountable Form 51 – LGU', af51b: 'Accountable Form 51 – Barangay', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate',
-  af52: 'AF 52 – Transfer of Large Cattle', af53: 'AF 53 – Ownership of Large Cattle', af54: 'AF 54 – Marriage License', af56: 'AF 56', cash: 'Cash Tickets', chk: 'Checks' };
+  af52: 'AF 52 – Transfer of Large Cattle', af53: 'AF 53 – Ownership of Large Cattle', af54: 'AF 54 – Marriage License', af56: 'AF 56 – Real Property Tax (RPT)', cash: 'Cash Tickets', chk: 'Checks' };
 // Accountable forms with money value: face value per piece by default (a booklet may carry another denomination, set with Edit).
 export const FACE = { af52: 10, af53: 5, af54: 2, cash: 5 };
 export const faceOf = (b) => { const v = b && b.faceValue !== undefined && b.faceValue !== null && b.faceValue !== '' ? b.faceValue : FACE[b && b.form]; return v ? Number(v) : 0; };
@@ -1636,7 +1636,7 @@ export function openBooklet(refs, f, id) {
 }
 // Add the officer's forms on hand at the last cash exam. From the custodian: they go to the Forms Register as issuances
 // still in the officer's hands. From the bank (checks): they stay on this officer's records only.
-export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginning') {
+export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginning', opts = {}) {
   const cut = mode === 'cutoff';
   const lgu = refs.lgu[regId], cust = custOf(lgu);
   let plan = null;
@@ -1686,14 +1686,20 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
     const r = read(bg);
     box.innerHTML = r.error ? `<b class="warn-t">${esc(r.error)}</b>` : startPreview({ parts: r.parts, held: o.id, ns: r.ns }).replace('in the officer\'s hands', `in ${esc(o.name)}'s hands at the last cash exam`);
   };
-  const forms = formsFor(f, regId);
+  // The officer's own forms (ticked in Audit Setup) only; the custodian, or an officer with none ticked yet, sees them all.
+  const allForms = formsFor(f, regId);
+  const mine = opts.custodian ? [] : allForms.filter(([k]) => (opts.forms || []).includes(k));
+  const forms = mine.length ? mine : allForms;
+  const pick = forms.some(([k]) => k === LAST.form) ? LAST.form : forms[0]?.[0];
+  const formOpts = (list, cur) => list.map(([k, l]) => `<option value="${k}" ${sel(k, cur)}>${esc(l)}</option>`).join('');
   const v = await modal({ title: `${cut ? 'Booklet Presented at the Cut-off' : 'Beginning Forms'} · ${o.name}`, wide: true,
     body: `<div class="af-pmode af-src" role="radiogroup" aria-label="Kind"><span>Entering:</span>
         <label class="cer-chip"><input type="radio" name="g-kind" value="forms" checked> Accountable Forms</label>
         <label class="cer-chip"><input type="radio" name="g-kind" value="bank"> Checkbook (Bank)</label></div>
       <p class="af-note" id="g-srcnote"></p>
       <div class="af-edit">
-        <div class="field" id="g-formbox"><label for="g-form">Form Type</label><select class="input" id="g-form">${forms.map(([k, l]) => `<option value="${k}" ${sel(k, LAST.form)}>${esc(l)}</option>`).join('')}</select></div>
+        <div class="field" id="g-formbox"><label for="g-form">Form Type</label><select class="input" id="g-form">${formOpts(forms, pick)}${mine.length && mine.length < allForms.length ? '<option value="__other">Other form…</option>' : ''}</select>
+          <span class="hint" id="g-formhint">${mine.length ? '' : opts.custodian ? '' : 'Tick the officer\'s forms in Audit Setup to shorten this list.'}</span></div>
         <div class="field" id="g-srcbox"><label for="g-srcsel">Received From</label><select class="input" id="g-srcsel">${srcOptions(f, regId, { extra: [[CUST, `Custodian (${cust})`]], cur: CUST, direct: true })}</select></div>
         <div class="field" id="g-acctbox" hidden><label for="g-acct">Bank / Account (optional)</label><input class="input" id="g-acct" value="${esc(LASTCHK.acct)}" placeholder="e.g. LBP – Maddela"></div>
         <div class="field" id="g-fundbox" hidden><label for="g-fund">Fund (optional)</label>${fundSel('g-fund', checkFunds(f, o.lguId), LASTCHK.fund || '')}</div>
@@ -1709,6 +1715,12 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
       $$('input[name="g-kind"]', bg).forEach((r) => { r.onchange = () => show(bg); });
       wireSrcSelect($('#g-srcsel', bg), refs, f, regId, () => show(bg), true);
       $$('#g-from, #g-to, #g-per, #g-form, #g-ns', bg).forEach((el) => { el.oninput = () => show(bg); el.onchange = () => show(bg); });
+      // Other form…: the full list, with a reminder to tick the form in Audit Setup.
+      const gf = $('#g-form', bg); gf.addEventListener('change', () => {
+        if (gf.value === '__other') { gf.innerHTML = formOpts(allForms, ''); gf.selectedIndex = 0; $('#g-formhint', bg).textContent = ''; }
+        const k = gf.value; $('#g-formhint', bg).textContent = mine.length && !mine.some(([x]) => x === k) ? 'Not ticked in Audit Setup for this officer: tick it there too.' : (mine.length ? '' : $('#g-formhint', bg).textContent);
+        show(bg);
+      });
       $('#g-from', bg).addEventListener('change', () => { const a = int($('#g-from', bg).value), t = $('#g-to', bg); if (a && autoTo(t, a, bookletOf(a, int($('#g-per', bg).value) || (srcNow(bg) === 'bank' ? CHK_PER : PER_BOOKLET))[1])) show(bg); });
       wirePart('g', bg, () => show(bg)); show(bg); },
     buttons: [{ label: 'Cancel', value: null }, { label: cut ? 'Add Booklet' : 'Save Beginning Forms', cls: 'primary', value: 'save', check: (bg) => {

@@ -26,7 +26,7 @@ const FUNCS_BRGY = [['collecting', 'Collecting'], ['disbursing', 'Disbursing (Ca
 const FUNC_NAME = { collecting: 'Collecting', disbursing: 'Disbursing', special: 'Special Disbursing', liquidating: 'Liquidating', custodian: 'Custodian', pettycash: 'Petty Cash Custodian' };
 // Accountable forms an officer collects with (starting list; more come with Accountable Forms).
 export const FORMS = [['af51', 'Accountable Form 51 – LGU'], ['af51b', 'Accountable Form 51 – Barangay'], ['ctci', 'CTC – Individual'], ['ctcc', 'CTC – Corporate'],
-  ['af52', 'AF 52 – Certificate of Transfer of Large Cattle'], ['af53', 'AF 53 – Certificate of Ownership of Large Cattle'], ['af54', 'AF 54 – Marriage License'], ['af56', 'AF 56'], ['cash', 'Cash Tickets']];
+  ['af52', 'AF 52 – Certificate of Transfer of Large Cattle'], ['af53', 'AF 53 – Certificate of Ownership of Large Cattle'], ['af54', 'AF 54 – Marriage License'], ['af56', 'AF 56 – Real Property Tax (RPT)'], ['cash', 'Cash Tickets']];
 export const FORM_NAME = Object.fromEntries(FORMS);
 // AF 51 has a barangay and an LGU version: an auditee sees only its own. Older barangay setups saved with the LGU AF 51 are read as the barangay one.
 export const formsForLgu = (lgu) => FORMS.filter(([k]) => (isBrgy(lgu) ? k !== 'af51' : k !== 'af51b'));
@@ -514,7 +514,7 @@ function wireSetup(refs, cer, q, rerender) {
     if (add && o) add.onclick = async () => {
       // Saved straight to the booklet records; the unsaved Audit Setup stays as typed.
       const set = OPEN[location.hash] || (OPEN[location.hash] = new Set()); set.clear(); set.add('forms');
-      await FM.addBeginningForms(refs, FX, FM.registerOf(refs, st.lguId), o, lastExam);
+      await FM.addBeginningForms(refs, FX, FM.registerOf(refs, st.lguId), o, lastExam, 'beginning', { forms: st.forms || [], custodian: (st.functions || []).includes('custodian') });
     };
     $$('[data-begchk]').forEach((b) => { b.onclick = () => begChecksModal(refs, cer, st, b.dataset.begchk, b.dataset.edit === '1'); });
     $$('[data-restfund]').forEach((sel) => { sel.onchange = () => { st.caRestFund = sel.value; touch(); }; });
