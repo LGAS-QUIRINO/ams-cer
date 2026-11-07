@@ -564,8 +564,14 @@ function wireSetup(refs, cer, q, rerender) {
       i.onblur = () => { const v = num(i.value); if (v !== null) { i.value = money(v); st.balances[i.dataset.bal] = i.value; } };
     });
     const last = $('#cer-last');
-    if (last && !last.disabled) { last.oninput = () => { st.lastExamDate = last.value; touch(); $('#cer-scope').innerHTML = scopeText(st.lastExamDate, st.countDate); };
-      last.onchange = () => { const set = OPEN[location.hash]; if (set) { set.clear(); set.add('period'); } drawOfficer(); }; }
+    // The browser reports a change at the first digit of the year (2 → 0002): redraw only on leaving the box with a full year,
+    // so typing the year is not cut off; while typing, only the Scope of Audit follows.
+    if (last && !last.disabled) {
+      const full = (v) => /^\d{4}-/.test(v) && +v.slice(0, 4) >= 1900;
+      let drawn = last.value;
+      last.oninput = () => { if (last.value && !full(last.value)) return; st.lastExamDate = last.value; touch(); $('#cer-scope').innerHTML = scopeText(st.lastExamDate, st.countDate); };
+      last.onblur = () => { if (last.value && !full(last.value)) return; if (last.value === drawn) return; drawn = last.value; const set = OPEN[location.hash]; if (set) { set.clear(); set.add('period'); } drawOfficer(); };
+    }
   }
   function pickOfficer(id) {
     st.officerId = id;
