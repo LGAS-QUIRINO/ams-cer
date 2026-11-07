@@ -104,14 +104,15 @@ export function cnpSheet(wb, c) {
     g.lines.forEach((l) => { [fmtDate(l.date), l.a === l.z ? String(l.a) : `${l.a} – ${l.z}`, l.amount, fmtDate(l.rem.date), l.rem.to, `${l.rem.a}–${l.rem.z}`, l.held].forEach((v, k) => wcell(ws, r, k + 1, v, { box: true, ...(k === 6 ? { n: '0' } : {}), ...([0, 1, 3, 5].includes(k) ? { al: 'center' } : {}) })); r++; });
     span(r, 1, 2, `Subtotal, ${g.short}`, T); wcell(ws, r, 3, g.total, T); span(r, 4, 7, null, T); r++;
     r++;
-    span(r, 1, 6, 'Collections before the last cash examination, remitted this period', { box: true }); wcell(ws, r++, 7, g.total, { box: true });
-    span(r, 1, 6, `Less: ${g.short} balance at the last cash examination (Audit Setup)${g.series ? `, not covered by its series ${rangesText(g.series)}` : ''}`, { box: true }); wcell(ws, r++, 7, g.beg, { box: true });
-    span(r, 1, 6, `${g.short} collections not presented at the last cash examination`, T); wcell(ws, r++, 7, g.notPresented, T);
+    // The amounts in F–G, the same column as Not presented in the summary.
+    span(r, 1, 5, 'Collections before the last cash examination, remitted this period', { box: true }); span(r++, 6, 7, g.total, { box: true });
+    span(r, 1, 5, `Less: ${g.short} balance at the last cash examination (Audit Setup)${g.series ? `, not covered by its series ${rangesText(g.series)}` : ''}`, { box: true }); span(r++, 6, 7, g.beg, { box: true });
+    span(r, 1, 5, `${g.short} collections not presented at the last cash examination`, T); span(r++, 6, 7, g.notPresented, T);
     r++;
   });
   wcell(ws, r++, 1, 'SUMMARY', { b: true });
-  span(r, 1, 2, 'Form', H); span(r, 3, 4, 'Before last exam, remitted now', H); span(r, 5, 6, 'Balance at last exam', H); wcell(ws, r++, 7, 'Not presented', H);
-  const sumRow = (vals, o2) => { span(r, 1, 2, vals[0], o2); span(r, 3, 4, vals[1], o2); span(r, 5, 6, vals[2], o2); wcell(ws, r++, 7, vals[3], o2); };
+  span(r, 1, 2, 'Form', H); span(r, 3, 4, 'Before last exam, remitted now', H); wcell(ws, r, 5, 'Balance at last exam', H); span(r++, 6, 7, 'Not presented', H);
+  const sumRow = (vals, o2) => { span(r, 1, 2, vals[0], o2); span(r, 3, 4, vals[1], o2); wcell(ws, r, 5, vals[2], o2); span(r++, 6, 7, vals[3], o2); };
   d.groups.forEach((g) => sumRow([g.short, g.total, g.beg, g.notPresented], { box: true }));
   sumRow(['Total', d.total, d.beg, d.notPresented], T);
 }
