@@ -41,7 +41,7 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
   // A liquidation counts when dated within the scope, or when the auditor ticked "Count even if outside the scope".
   const liqIn = (l) => inScope(l.date) || !!l.countAnyway;
   const bal = exam.balances || {};
-  const fig = figuresOf(f, o, fundsOf(f, audit.lguId), to, lgu);
+  const fig = figuresOf(f, o, fundsOf(f, audit.lguId), to, lgu, exam);
   const books = booksOf(refs, f, o, exam, audit, advs, liqs);   // the columns, same as Cash Count
   const count = counts.find((c) => c.id === exam.id) || null;
   const inv = count ? compute({ bills: count.bills || {}, coins: count.coins || 0, items: count.items || [], split: count.split || {} }, books).inv : null;

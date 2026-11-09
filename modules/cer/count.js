@@ -38,7 +38,7 @@ export function booksOf(refs, f, o, exam, audit, advs, liqs) {
   const fns = exam.functions || [];
   if (fns.includes('collecting') || fns.includes('liquidating') || f.ors.some((x) => x.officerId === o.id)) {
     const lgu = refs.lgu[audit.lguId];
-    const fig = figuresOf(f, o, fundsOf(f, audit.lguId), audit.countDate, lgu);
+    const fig = figuresOf(f, o, fundsOf(f, audit.lguId), audit.countDate, lgu, exam);
     const forms = exam.forms || [];
     // One column per report type: barangays AF 51 (SCD) and CTC (SCR); LGU and PLGU one Collections (RCD).
     fig.kinds.forEach((kind) => {
