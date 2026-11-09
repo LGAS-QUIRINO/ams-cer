@@ -14,7 +14,7 @@ import { cnpData, fnpData } from './cnp.js';
 import { listT } from '../src/journal.js';
 import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
-import { hasRole, isAuditor, by, mayView, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
+import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
 import { bankFindings } from './banks.js';
 import { loadForms, orIn, cutoffFindings, checkUsage, exportXlsx } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, repName, tagSameDay, partOk, ctcBegShare, ctcAlloc, depPart } from './collections.js';
@@ -90,7 +90,7 @@ export async function verifyView(ctx) {
   const advs = advs0.map(flat), liqs = liqs0.map(flat);
   const crumb = 'Verification';
   const hello = `<div class="hello"><div><h1>Verification</h1><p>Everything encoded is put together for the auditor: the statement of accountability, the reconciliation with the officer's books, and the findings to decide on.</p></div></div>`;
-  const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
+  const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && (cycleOk(a) || a.id === q.get('a'))).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   if (!audits.length) return { crumb, body: hello + '<div class="panel"><div class="empty"><b>No cash examination yet.</b>The auditors set one up in Audit Setup.</div></div>' };
   const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
   const lgu = refs.lgu[audit.lguId];

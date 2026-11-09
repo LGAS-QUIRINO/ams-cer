@@ -904,3 +904,7 @@ table.af-reg.tr-month{min-width:0}
 .bk-pre { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: #fafbfd }
 .bk-pre summary { cursor: pointer; font-size: 13.5px; color: var(--muted) }
 .bk-pre .af-tbl { margin-top: 8px }
+/* Audit Setup: cash examinations grouped by cycle */
+.cyc-grp { border-top: 1px solid var(--line); padding: 10px 0 }
+.cyc-grp > summary { cursor: pointer; font-size: 14.5px; color: var(--navy); padding: 4px 0 8px; list-style-position: inside }
+.cyc-grp > summary .dim { font-size: 13px }

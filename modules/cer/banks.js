@@ -25,7 +25,7 @@ import { caAcct } from './funds.js';
 import { remOf, remAcctId, remText, recordFromLine } from '../src/taxrem.js';
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
-import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
+import { hasRole, by, mayView, cycleOk, loadCer, agencyName, fmtDate, money, num } from './cer.js';
 import { exportXlsx, lastChecksOf } from './forms.js';
 import { repName, depRefText, tagSameDay } from './collections.js';
 
@@ -103,7 +103,8 @@ const SOURCES = ['Soft copy (imported)', 'PDF', 'Printed', 'Bank confirmation'];
 export async function banksView(ctx) {
   const { refs, q } = ctx;
   const [audits0, settings0, reports0, advs0, recs0, officers0, exams0, books0, cut0, jr0] = await Promise.all(['cer_audits', 'cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_officers', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj'].map(listT));
-  const audits = audits0.map(flat).filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
+  await loadCer();   // the cycles
+  const audits = audits0.map(flat).filter((a) => mayView(refs, refs.lgu[a.lguId]) && (cycleOk(a) || a.id === q.get('a'))).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   const settings = Object.fromEntries(settings0.map((s) => [s.id, s.data]));
   const crumb = 'Bank Statements';
   const hello = (extra = '') => `<div class="hello"><div><h1>Bank Statements</h1><p>Confirm each deposit and check in the bank statement, then reconcile the bank and book balances as of the cash count.</p></div>${extra}</div>`;

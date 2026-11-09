@@ -9,6 +9,7 @@
 //                 { auditId, officerId, functions[], forms[], bond{maxCash, amount, riskNo, from, to, none (the officer has no fidelity bond)}, remitToLO (collections remitted to the Liquidating Officer, not deposited), records ('complete' | 'cashbook': no SCD / RCD, collections by OR range and deposits by OR series), lastExamDate, lastExamSource, caRestFund (fund of the beginning cash advance not itemized),
 //                   balances{ key: { amount, source } }, endBalances{} (filled later by the examination) }
 import { inScope } from '../../js/scope.js';
+import { getCycle, cacheCycles } from '../../js/cycle.js';
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { roleLine } from '../../js/views/admin.js';
@@ -75,9 +76,10 @@ const funcsFor = (lgu) => (isBrgy(lgu) ? FUNCS_BRGY : FUNCS_LGU);
 
 /* ---------- data ---------- */
 export async function loadCer() {
-  const [officers, audits, exams] = await Promise.all([store.list('cer_officers'), store.list('cer_audits'), store.list('cer_exams')]);
+  const [officers, audits, exams, cyc0] = await Promise.all([store.list('cer_officers'), store.list('cer_audits'), store.list('cer_exams'), store.get('cer_settings', 'cycles')]);
   const flat = (r) => ({ id: r.id, ...r.data });
   const A = audits.map(flat);
+  cyclesOf(A, cyc0 && !cyc0.deleted ? cyc0.data : null);
   // Barangays: AF 51 is always deposited (CTC remitted to the MTO), so an exam saved earlier as "remitted to the LO" reads as deposited.
   const brgyAudit = new Set(A.filter((x) => /^brgy-/.test(x.lguId || '')).map((x) => x.id));
   return { officers: officers.map(flat), audits: A, exams: exams.map(flat).map((e) => (e.remitToLO && brgyAudit.has(e.auditId) ? { ...e, remitToLO: false } : e)) };
@@ -241,6 +243,7 @@ export async function render(ctx) {
   tidyTop();
   $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
   { const hb = $('#cer-hol'); if (hb) hb.onclick = () => holidaysModal(refs, isAuditor(refs)); }
+  { const nc = $('#cer-newcyc'); if (nc) nc.onclick = () => newCycle(refs); }
   if (open) wireSetup(refs, cer, q, ctx.rerender);
   else if (parts[0] && parts[0] !== 'setup') history.replaceState(null, '', '#/cer/setup');
 }
@@ -264,19 +267,72 @@ function tidyTop() {
   document.addEventListener('click', (e) => { if (!box.hidden && !box.contains(e.target)) { box.hidden = true; btn.setAttribute('aria-expanded', 'false'); } });
 }
 
+/* ================= Cycles: each round of cash counts in one group ================= */
+// cer_settings 'cycles' { list: [{ id, name (optional, typed), created }], current }; cer_audits.cycleId.
+// A cash examination without a cycle is grouped with those of nearby count dates (less than 45 days apart).
+const CYC = { list: [], current: '', of: {} };
+const MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const monthRange = (a, b) => {
+  if (!a) return '';
+  const [y1, m1] = a.split('-').map(Number), [y2, m2] = (b || a).split('-').map(Number);
+  if (y1 === y2 && m1 === m2) return `${MON[m1 - 1]} ${y1}`;
+  return y1 === y2 ? `${MON[m1 - 1]} – ${MON[m2 - 1]} ${y1}` : `${MON[m1 - 1].slice(0, 3)} ${y1} – ${MON[m2 - 1].slice(0, 3)} ${y2}`;
+};
+function cyclesOf(audits, saved) {
+  const own = (saved?.list || []).map((c) => ({ ...c, auto: false }));
+  const ids = new Set(own.map((c) => c.id));
+  const loose = audits.filter((a) => !a.cycleId || (!ids.has(a.cycleId) && !/^auto-/.test(a.cycleId))).sort((a, b) => String(a.countDate).localeCompare(String(b.countDate)));
+  const autos = []; let cur = null, last = '';
+  loose.forEach((a) => {
+    const d = a.countDate || '';
+    if (!cur || !last || !d || (Date.parse(d) - Date.parse(last)) / 864e5 > 45) { cur = { id: `auto-${d || 'none'}`, auto: true }; autos.push(cur); }
+    a.cycleId = cur.id; last = d || last;
+  });
+  audits.filter((a) => /^auto-/.test(a.cycleId || '') && !autos.some((c) => c.id === a.cycleId)).forEach((a) => { if (!autos.some((c) => c.id === a.cycleId)) autos.push({ id: a.cycleId, auto: true }); });
+  const all = [...own, ...autos].map((c) => {
+    const ds = audits.filter((a) => a.cycleId === c.id).map((a) => a.countDate).filter(Boolean).sort();
+    return { ...c, from: ds[0] || '', to: ds[ds.length - 1] || '', n: ds.length, name: c.name || monthRange(ds[0], ds[ds.length - 1]) || 'New cycle (no cash count yet)' };
+  }).sort((a, b) => String(b.to || b.created || '9999').localeCompare(String(a.to || a.created || '9999')));
+  CYC.list = all;
+  CYC.current = all.some((c) => c.id === saved?.current) ? saved.current : all[0]?.id || '';
+  CYC.of = Object.fromEntries(audits.map((a) => [a.id, a.cycleId]));
+  cacheCycles({ list: all.map((c) => ({ id: c.id, name: c.name })), current: CYC.current });
+}
+export const cycles = () => CYC;
+// In the cycle shown (header select): Current by default, one cycle, or All.
+export function cycleOk(a) {
+  const s = getCycle(), id = CYC.of[a.id] || a.cycleId;
+  if (s === 'all') return true;
+  if (s === 'cur') return !CYC.current || id === CYC.current;
+  return !CYC.list.some((c) => c.id === s) || id === s;
+}
+async function newCycle(refs) {
+  let name = '';
+  const v = await modal({ title: 'Start a New Cycle', body: `<p class="af-note">A new round of cash examinations. The cash examinations you add from now on go into it; the earlier ones stay in their own cycle.</p>
+      <div class="field"><label for="cy-name">Name (optional)</label><input class="input" id="cy-name" placeholder="Leave blank: named by its count dates, e.g. May – June 2026"></div>`,
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Start Cycle', cls: 'primary', value: 'go', check: (bg) => { name = String($('#cy-name', bg).value || '').trim(); return true; } }] });
+  if (v !== 'go') return;
+  const rec = await store.get('cer_settings', 'cycles'); const data = rec && !rec.deleted ? rec.data : { list: [] };
+  const id = newId('cyc');
+  await store.save('cer_settings', 'cycles', { list: [...(data.list || []), { id, name, created: new Date().toISOString().slice(0, 10) }], current: id }, by(refs));
+  toast('New cycle started: the next cash examinations go into it.', 'ok');
+}
+
 /* ================= Cash Examinations list ================= */
 function listHtml(refs, cer) {
   DRAFT = null;
-  const rows = cer.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]))
+  const rows = cer.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && cycleOk(a))
     .sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)) || agencyName(refs, refs.lgu[a.lguId]).localeCompare(agencyName(refs, refs.lgu[b.lguId])));
+  const groups = CYC.list.map((c) => ({ c, rows: rows.filter((a) => (CYC.of[a.id] || a.cycleId) === c.id) })).filter((g) => g.rows.length || g.c.id === CYC.current);
   const cols = 'grid-template-columns:120px minmax(170px,1.1fr) minmax(220px,1.6fr) minmax(170px,1fr)';
   const canNew = isAuditor(refs);
   return `<div class="hello"><div><h1>Audit Setup</h1><p>One cash examination per auditee and count date. Each accountable officer has a separate exam record.</p></div>
-      <div class="btn-row"><button class="btn" type="button" id="cer-hol">Holidays</button>${canNew ? '<a class="btn primary" href="#/cer/setup?new=1">+ New Cash Examination</a>' : ''}</div></div>
+      <div class="btn-row"><button class="btn" type="button" id="cer-hol">Holidays</button>${canNew ? '<button class="btn" type="button" id="cer-newcyc">Start New Cycle</button><a class="btn primary" href="#/cer/setup?new=1">+ New Cash Examination</a>' : ''}</div></div>
     <div class="panel">
       <div class="panel-head"><h2>Cash Examinations</h2><span class="pill">${rows.length}</span></div>
-      ${rows.length ? `<div class="t-head" style="${cols}"><span>Cash Count</span><span>Auditee</span><span>Accountable Officers</span><span>Prepared by</span></div>
-        ${rows.map((a) => {
+      ${rows.length || groups.length ? groups.map((g) => `<details class="cyc-grp" ${g.c.id === CYC.current || groups.length === 1 ? 'open' : ''}><summary><b>${esc(g.c.name)}</b>${g.c.id === CYC.current ? ' <span class="pill p-done">Current cycle</span>' : ''} <span class="dim">· ${g.rows.length} cash examination${g.rows.length === 1 ? '' : 's'} · ${((n) => `${n} officer${n === 1 ? '' : 's'}`)(new Set(g.rows.flatMap((a) => cer.exams.filter((e) => e.auditId === a.id).map((e) => e.officerId))).size)}</span></summary>
+        ${g.rows.length ? `<div class="t-head" style="${cols}"><span>Cash Count</span><span>Auditee</span><span>Accountable Officers</span><span>Prepared by</span></div>` : '<p class="af-note" style="margin:8px 0">No cash examination in this cycle yet: add one with <b>+ New Cash Examination</b>.</p>'}
+        ${g.rows.map((a) => {
           const lgu = refs.lgu[a.lguId];
           const offs = cer.exams.filter((e) => e.auditId === a.id).map((e) => cer.officers.find((o) => o.id === e.officerId)).filter(Boolean);
           return `<a class="t-row click" style="${cols}" href="#/cer/setup?a=${esc(a.id)}">
@@ -284,7 +340,7 @@ function listHtml(refs, cer) {
             <span>${esc(agencyName(refs, lgu))}<small style="display:block">${esc(addressOf(refs, lgu))}</small></span>
             <span>${offs.length ? offs.map((o) => `${esc(o.name)} <small>· ${esc(o.designation || '')}</small>`).join('<br>') : '<small>No officer yet</small>'}</span>
             <span><small>${esc(refs.user[a.preparedBy]?.data.name || '')}</small></span></a>`;
-        }).join('')}`
+        }).join('')}</details>`).join('')
       : `<div class="empty"><b>No cash examinations yet.</b>${canNew ? 'Start one with <b>+ New Cash Examination</b>.' : 'The auditors set these up.'}</div>`}
     </div>`;
 }
@@ -302,7 +358,7 @@ function stateFrom(refs, cer, q) {
   const exam = want === 'new' ? null : (exams.find((e) => e.id === want) || exams[0] || null);
   const lgu = audit ? refs.lgu[audit.lguId] : null;
   const st = {
-    auditId: audit ? audit.id : '', lguId: audit ? audit.lguId : '', countDate: audit ? audit.countDate : '',
+    auditId: audit ? audit.id : '', lguId: audit ? audit.lguId : '', countDate: audit ? audit.countDate : '', cycleId: audit ? (CYC.of[audit.id] || audit.cycleId || '') : CYC.current,
     preparedBy: (audit && audit.preparedBy) || autoPreparer(refs, lgu), reviewedBy: (audit && audit.reviewedBy) || autoReviewer(refs, lgu),
     ...blankExam(lgu)
   };
@@ -342,6 +398,7 @@ function setupHtml(refs, cer, q) {
             ${audit ? '<span class="hint">Fixed once saved.</span>' : ''}</div>
           <div class="field"><label for="cer-addr">Address / Station</label><input class="input" id="cer-addr" value="${esc(addressOf(refs, lgu))}" readonly disabled></div>
           <div class="field"><label for="cer-date">Cash Count Date</label><input class="input" type="date" id="cer-date" value="${esc(st.countDate)}" ${dis}></div>
+          ${CYC.list.length ? `<div class="field"><label for="cer-cyc">Cycle</label><select class="input" id="cer-cyc" ${dis}>${CYC.list.map((c) => `<option value="${esc(c.id)}" ${c.id === st.cycleId ? 'selected' : ''}>${esc(c.name)}${c.id === CYC.current ? ' (current)' : ''}</option>`).join('')}</select></div>` : ''}
         </div>
         <div class="cer-g2">
           <div class="field"><label for="cer-prep">Prepared by (ATM)</label><select class="input" id="cer-prep" ${dis}>${preparerOptions(refs, lgu, st.preparedBy)}</select><span class="hint">The Team Member assigned to the municipality, filled in automatically.</span></div>
@@ -562,6 +619,7 @@ function wireSetup(refs, cer, q, rerender) {
       i.oninput = () => { st.bond[i.dataset.bond] = i.value; touch(); $('#cer-warn').innerHTML = warnHtml(st); flag(); };
       if (i.classList.contains('amt')) i.onblur = () => { const v = num(i.value); if (v !== null) { i.value = money(v); st.bond[i.dataset.bond] = i.value; } };
     });
+    { const cy = $('#cer-cyc'); if (cy) cy.onchange = () => { st.cycleId = cy.value; touch(); }; }
     $$('[data-begser]').forEach((i) => { i.oninput = () => { st.begSer = st.begSer || {}; st.begSer[i.dataset.begser] = i.value; touch(); }; });
     $$('[data-bal]').forEach((i) => {
       i.oninput = () => { st.balances[i.dataset.bal] = i.value; touch(); const k = i.dataset.bal, ln = $(`[data-begline="${k}"]`); if (ln) ln.innerHTML = begLine(st, k, num(i.value)); };
@@ -750,7 +808,7 @@ async function saveSetup(refs, cer, st) {
     const ser = String(st.begSer?.[r.key] || '').trim(); if (ser && r.key.startsWith('col-')) balances[r.key].series = ser;
   });
   const oldAudit = cer.audits.find((a) => a.id === auditId);
-  await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy }, by(refs));
+  await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy, cycleId: st.cycleId || oldAudit?.cycleId || CYC.current || '' }, by(refs));
   const examId = st.examId || newId('cere');
   const oldExam = cer.exams.find((e) => e.id === examId);
   await store.save('cer_exams', examId, { auditId, officerId: st.officerId, functions: st.functions, forms: st.functions.includes('collecting') ? st.forms : [],

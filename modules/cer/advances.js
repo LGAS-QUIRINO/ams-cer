@@ -12,7 +12,7 @@
 import { listT } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
-import { hasRole, by, mayView, agencyName, fmtDate, money, num } from './cer.js';
+import { hasRole, by, mayView, cycleOk, loadCer, agencyName, fmtDate, money, num } from './cer.js';
 import { exportXlsx, loadXlsx, excelDate } from './forms.js';
 import { emitChange } from '../../js/store.js';
 
@@ -45,7 +45,8 @@ export const liqText = (l, a) => l.particulars || `${l.type === 'refund' ? 'Refu
 export async function advancesView(ctx) {
   const { refs, q } = ctx;
   const [audits0, exams0, officers0, advs0, liqs0] = await Promise.all(['cer_audits', 'cer_exams', 'cer_officers', 'cer_cashadv', 'cer_liquid'].map(listT));
-  const audits = audits0.map(flat).filter((a) => mayView(refs, refs.lgu[a.lguId])).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
+  await loadCer();   // the cycles
+  const audits = audits0.map(flat).filter((a) => mayView(refs, refs.lgu[a.lguId]) && (cycleOk(a) || a.id === q.get('a'))).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   const officers = officers0.map(flat);
   const crumb = 'Cash Advances';
   const hello = `<div class="hello"><div><h1>Cash Advances</h1><p>Each cash advance (a check issued to the officer) and the liquidations under it. Unliquidated = cash advances − liquidations.</p></div></div>`;

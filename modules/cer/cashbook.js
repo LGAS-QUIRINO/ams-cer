@@ -8,7 +8,7 @@
 // The Cash in Bank ending is the Balance per Cashbook of the bank reconciliation.
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
-import { by, hasRole, mayView, agencyName, fmtDate, money, num } from './cer.js';
+import { by, hasRole, mayView, cycleOk, loadCer, agencyName, fmtDate, money, num } from './cer.js';
 import { loadForms, orIn, FORM_SHORT } from './forms.js';
 import { listT, loadJournal, checkAmountOf, chkNo, transfersInto, typedTransfer } from '../src/journal.js';
 import { tagSameDay, depRefText } from './collections.js';
@@ -112,7 +112,7 @@ export async function cashbookView(ctx) {
   const [reports, advs0, liqs0, set0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_settings'].map(listT));
   f.reports = tagSameDay(reports.map(flat));
   const settings = Object.fromEntries(set0.map((s) => [s.id, s.data]));
-  const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && refs.lgu[a.lguId]?.data.kind === 'barangay').sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
+  const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && (cycleOk(a) || a.id === q.get('a')) && refs.lgu[a.lguId]?.data.kind === 'barangay').sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   if (!audits.length) return { crumb, body: '<div class="panel"><div class="empty"><b>No cash examination of a barangay yet.</b> The Cashbook is for barangays.</div></div>' };
   const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
   const lgu = refs.lgu[audit.lguId];

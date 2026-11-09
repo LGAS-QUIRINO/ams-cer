@@ -1,9 +1,9 @@
 // Keeps AMS working offline. Online it always loads the newest files; offline it uses the saved copy.
-const RELEASE = 'v0.33.30-cer';
+const RELEASE = 'v0.34.0-cer';
 const VERSION = 'ams|' + self.registration.scope + '|' + RELEASE;
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'img/coa-logo.png', 'img/icon-192.png', 'img/icon-512.png',
-  'js/app.js', 'js/scope.js', 'js/config.js', 'js/db.js', 'js/auth.js', 'js/ui.js', 'js/modules.js', 'js/seed.js', 'js/store.js', 'js/api.js', 'js/sync.js', 'js/views/login.js', 'js/views/dashboard.js', 'js/views/admin.js', 'js/frame.js',
+  'js/app.js', 'js/scope.js', 'js/cycle.js', 'js/config.js', 'js/db.js', 'js/auth.js', 'js/ui.js', 'js/modules.js', 'js/seed.js', 'js/store.js', 'js/api.js', 'js/sync.js', 'js/views/login.js', 'js/views/dashboard.js', 'js/views/admin.js', 'js/frame.js',
   'modules/cer/cer.js', 'modules/cer/forms.js', 'modules/cer/collections.js', 'modules/cer/advances.js', 'modules/cer/banks.js', 'modules/cer/count.js', 'modules/cer/verify.js', 'modules/cer/reports.js', 'modules/cer/wp.js', 'modules/cer/cnp.js', 'modules/cer/cashbook.js', 'modules/cer/funds.js', 'modules/cer/cer.css', 'modules/src/src.js', 'modules/src/journal.js', 'lib/coa-barangay.json', 'lib/xlsx.full.min.js', 'lib/exceljs.min.js', 'modules/src/rciout.js', 'modules/src/liq.js', 'modules/src/focus.js', 'modules/src/cadv.js', 'modules/src/unliq.js', 'modules/src/taxrem.js', 'lib/cer-report.xlsx', 'lib/cer-wp.xlsx'];
 
 self.addEventListener('install', (e) => {
