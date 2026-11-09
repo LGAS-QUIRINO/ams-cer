@@ -260,6 +260,13 @@ export async function downloadReport(c, ver) {
   const des = o.designation || '';
   // GF 74-A front
   let ws = wb.getWorksheet('GF-74A Front');
+  // The template's row 44 lacks the merges of rows 41–47 on the left (stray borders): rebuilt like row 43.
+  [['A', 'E'], ['F', 'I'], ['J', 'Q'], ['R', 'Y'], ['Z', 'AE'], ['AF', 'AM']].forEach(([c1, c2]) => {
+    const a = colNo(c1), z = colNo(c2);
+    if (Object.values(ws._merges || {}).some((m) => { const mm = m.model || m; return mm.top === 44 && mm.left === a && mm.right === z; })) return;
+    for (let k = a; k <= z; k++) { const src = ws.getCell(43, k); const cl = ws.getCell(44, k); cl.value = null; cl.style = JSON.parse(JSON.stringify(src.style || {})); }
+    try { ws.mergeCells(44, a, 44, z); } catch (e) { /* already merged */ }
+  });
   set(ws, 'O4', o.name); set(ws, 'AO4', des); set(ws, 'F5', agency); set(ws, 'AO5', station);
   set(ws, 'A7', b.maxCash ? +b.maxCash : null); set(ws, 'T7', b.amount ? +b.amount : null); set(ws, 'AH7', b.riskNo || ''); set(ws, 'AS7', b.from || b.to ? `${fmtDate(b.from)} to ${fmtDate(b.to)}` : '');
   set(ws, 'A9', prep.name); set(ws, 'AA9', prep.pos);
