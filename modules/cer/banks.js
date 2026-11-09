@@ -182,17 +182,22 @@ export async function banksView(ctx) {
     return n || tidy.changed ? { n, found, lineOf } : null;
   })();
   list.forEach((x) => { x.after = afterCut(x) && !rec.found[x.key]; });
+  // Checks issued before the period (before the last cash exam): in the reconciliation only when they cleared in this statement
+  // (outstanding at the last cash exam) or are ticked "Still outstanding"; the rest are taken as cleared before the period.
+  list.forEach((x) => { x.pre = preCheck(x, cov.from, rec); });
+  const preList = list.filter((x) => x.pre), books = list.filter((x) => !x.pre);
   const result = (x) => {
     const bd = rec.found[x.key];
     if (x.after) return ['p-stock', 'Issued after the cut-off'];
     if (!bd && nmByKey[x.key]) { const l = nmByKey[x.key]; return ['p-nm', 'Not Matched', `The bank shows ₱${money(l.debit)} for check ${l.chq} on ${fmtDate(l.date)}`]; }
     if (!bd && x.cb) return ['p-part', 'Not in the bank'];
+    if (!bd && x.kind === 'chk' && (rec.stillOut || {})[x.key]) return ['p-part', 'Outstanding check', 'Issued before the period; ticked Still outstanding'];
     if (!bd) return x.kind === 'dep' ? ['p-part', 'Deposit in transit'] : ['p-part', 'Outstanding check'];
     if (x.kind === 'dep') { const late = bd && x.date ? days(x.date, bd) : 0; return late > 0 ? ['p-flag', `In the bank · ${late} day${late > 1 ? 's' : ''} later`] : ['p-done', 'In the bank']; }
     return ['p-done', 'Cleared'];
   };
   const dit = r2(list.filter((x) => x.kind === 'dep' && !rec.found[x.key]).reduce((n, x) => n + x.amount, 0));
-  const oc = r2(list.filter((x) => x.kind === 'chk' && !rec.found[x.key] && !x.after).reduce((n, x) => n + x.amount, 0));
+  const oc = r2(list.filter((x) => x.kind === 'chk' && !rec.found[x.key] && !x.after && !x.pre).reduce((n, x) => n + x.amount, 0));
   // Bank-only items: the imported lines not matched to a deposit or check in the books, by their side
   // (credit → bank credit, debit → bank debit), plus any typed by hand (statements not imported).
   const linked = new Set(Object.entries(rec.lineOf || {}).filter(([k]) => rec.found[k]).map(([, i]) => i));
@@ -219,7 +224,7 @@ export async function banksView(ctx) {
   const adjBook = hasBook ? r2(+rec.book + credits - debits) : null;
   const diff = adjBank !== null && adjBook !== null ? r2(adjBank - adjBook) : null;
   const recPill = diff === null ? '<span class="pill p-stock">Not yet reconciled</span>' : Math.abs(diff) < 0.005 ? '<span class="pill p-done">Agrees</span>' : `<span class="pill p-flag">Difference ₱${money(diff)}</span>`;
-  const nFound = list.filter((x) => rec.found[x.key]).length;
+  const nFound = books.filter((x) => rec.found[x.key]).length;
   // Beginning + credits − debits = ending, from the imported lines (the coverage of the cash exam).
   const lns = rec.lines || [];
   const proof = lns.length && rec.opening !== null && rec.opening !== undefined ? (() => {
@@ -292,12 +297,16 @@ export async function banksView(ctx) {
 
   // ---- 2 Deposits and Checks: the results; ticking only for a PDF / printed statement or to correct a match ----
   const tick = manual || UI.edit;
-  const dcBody = `${list.length ? `<div class="af-tbl"><table class="af-reg bk-items"><thead><tr>${tick ? '<th scope="col">In Bank</th>' : ''}<th scope="col">Type</th><th scope="col">Date (Books)</th><th scope="col">Reference</th><th scope="col">From</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Date (Bank)</th><th scope="col">Result</th><th scope="col"></th></tr></thead>
-      <tbody>${list.map((x) => { const bd = rec.found[x.key] || ''; const rs = result(x); return `<tr data-key="${esc(x.key)}">${tick ? `<td><input type="checkbox" class="bk-chk" ${bd ? 'checked' : ''} ${dis} aria-label="In bank: ${esc(x.ref || x.kind)}"></td>` : ''}
+  const dcBody = `${books.length ? `<div class="af-tbl"><table class="af-reg bk-items"><thead><tr>${tick ? '<th scope="col">In Bank</th>' : ''}<th scope="col">Type</th><th scope="col">Date (Books)</th><th scope="col">Reference</th><th scope="col">From</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Date (Bank)</th><th scope="col">Result</th><th scope="col"></th></tr></thead>
+      <tbody>${books.map((x) => { const bd = rec.found[x.key] || ''; const rs = result(x); return `<tr data-key="${esc(x.key)}">${tick ? `<td><input type="checkbox" class="bk-chk" ${bd ? 'checked' : ''} ${dis} aria-label="In bank: ${esc(x.ref || x.kind)}"></td>` : ''}
         <td>${x.label || (x.kind === 'dep' ? 'Deposit' : 'Check')}</td><td>${esc(fmtDate(x.date))}</td><td class="mono">${esc(x.ref)}</td><td>${esc(x.from)}</td><td class="r">${money(x.amount)}</td>
         <td>${tick ? `<input class="input af-sm bk-bd" type="date" value="${esc(bd)}" ${dis} aria-label="Date in the bank">` : esc(fmtDate(bd))}</td><td><span class="pill ${rs[0]}" ${rs[2] ? `title="${esc(rs[2])}"` : ''}>${rs[1]}</span></td>
-        <td class="r">${enc && x.other ? `<button class="btn sm" type="button" data-rmoth="${esc(x.other.id)}" aria-label="Remove check ${esc(x.ref)}">Remove</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
+        <td class="r">${enc && x.other ? `<button class="btn sm" type="button" data-rmoth="${esc(x.other.id)}" aria-label="Remove check ${esc(x.ref)}">Remove</button>` : ''}${enc && (rec.stillOut || {})[x.key] && !bd ? `<button class="bk-lnk" type="button" data-stillout="${esc(x.key)}" data-v="0">undo Still outstanding</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
       : `<div class="empty"><b>No deposit or check of ${esc(acct.fund)} up to ${esc(fmtDate(asOf))}.</b>Deposits come from Collections &amp; Deposits; checks from Cash Advances.</div>`}
+    ${preList.length ? `<details class="bk-pre"><summary>Checks issued before the period, not in this statement (${preList.length} · ₱${money(r2(preList.reduce((n, x) => n + x.amount, 0)))}): taken as cleared before ${esc(fmtDate(cov.from))}</summary>
+      <div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date (Books)</th><th scope="col">Check No.</th><th scope="col">From</th><th scope="col" class="r">Amount</th><th scope="col"></th></tr></thead>
+      <tbody>${preList.map((x) => `<tr><td>${esc(fmtDate(x.date))}</td><td class="mono">${esc(x.ref)}</td><td>${esc(x.from)}</td><td class="r">${money(x.amount)}</td>
+        <td class="r">${enc ? `<button class="btn sm" type="button" data-stillout="${esc(x.key)}" data-v="1" title="Not yet cleared at all (e.g. a stale check still with the payee): an outstanding check of this period">Still outstanding</button>` : ''}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
     <div class="cd-actions">${enc ? `<button class="btn" type="button" id="bk-addchk">+ Other Check</button>${tick ? `${imported ? '<button class="btn" type="button" id="bk-doneedit">Cancel</button>' : ''}<button class="btn primary" type="button" id="bk-savefound">Save</button>` : list.length ? '<button class="btn" type="button" id="bk-edit">Correct a match</button>' : ''}` : ''}</div>
     <p class="af-note">${tick ? 'Tick each item found in the bank and type the bank date (ticking fills in the book date).' : 'Found by the import: deposits matched to credits, checks to debits (by check No., else amount and date).'} Deposits come from Collections &amp; Deposits (${esc(acct.fund)}); checks from Cash Advances. A check that is not a cash advance can be added with + Other Check.</p>`;
 
@@ -336,7 +345,7 @@ export async function banksView(ctx) {
   }).join('')}</div>`;
   const body = hello(btnAccts) + top(true) + chips + figs + tabs([
     ['st', 'Bank Statement', esc(imported ? `${lns.length} lines · ${unmatched.length} not in the books` : hasEnd ? `${rec.source || ''} · ending ₱${money(rec.ending)}` : 'Import the soft copy'), stBody],
-    ['dc', 'Deposits and Checks', `${nFound} of ${list.length} found in the bank`, dcBody],
+    ['dc', 'Deposits and Checks', `${nFound} of ${books.length} found in the bank`, dcBody],
     ['rc', 'Reconciliation', diff === null ? 'Type the cashbook balance' : Math.abs(diff) < 0.005 ? 'Agrees' : `Difference ₱${money(diff)}`, rcBody]]);
 
   const ctxw = { refs, audit, acct, recId, rec, rec0, list, auto, asOf, enc, cov, unmatched, accounts, funds, settings, credits, debits, dit, oc, adjBank, adjBook, diff };
@@ -412,12 +421,16 @@ function wireBanks(c) {
   };
   $('#bk-import').onclick = () => importStatement(c, save);
   $$('[data-taxln]').forEach((b) => { b.onclick = () => recordFromLine({ refs, lguId: audit.lguId, settings: c.settings, accounts: c.accounts, acct, line: (rec.lines || []).find((l) => l.i === +b.dataset.taxln) }); });
+  $$('[data-stillout]').forEach((b) => { b.onclick = () => save({ stillOut: { ...(rec.stillOut || {}), [b.dataset.stillout]: +b.dataset.v } }, +b.dataset.v ? 'Marked as still outstanding.' : 'Back to cleared before the period.'); });
   $$('[data-begmk]').forEach((b) => { b.onclick = () => save({ begMark: { ...(rec.begMark || {}), [b.dataset.begmk]: +b.dataset.v } }, +b.dataset.v ? 'Marked as outstanding at the last cash exam.' : 'Unmarked.'); });
   if (c.auto && !UI.edit) save({ found: c.auto.found, lineOf: c.auto.lineOf }, c.auto.n ? `${c.auto.n} matched with the uploaded statement.` : '');
 }
 
 /* ---------- outstanding at the last cash exam ---------- */
 const lineKey = (l) => `${l.date}|${l.debit || 0}|${l.credit || 0}|${chqKey(l.chq)}`;
+// A check dated before the period (the last cash exam), not found in this statement and not ticked Still outstanding:
+// taken as cleared before the period (not a reconciling item).
+const preCheck = (x, from, rec) => x.kind === 'chk' && !x.cb && !!from && !!x.date && x.date < from && !(rec.found || {})[x.key] && !(rec.stillOut || {})[x.key];
 function begLinesOf(rec, cand, jr, acct, booklets, cov) {
   const marks = rec.begMark || {}, out = new Set();
   const mine = jr.filter((c) => c.acctId === acct.id);
@@ -616,7 +629,8 @@ export async function bankFindings(audit, refs) {
     const tidy = tidyFound(rec, items); const found = tidy.found; rec.found = tidy.found; rec.lineOf = tidy.lineOf;
     const list = items.filter((x) => x.date && x.date <= asOf);
     const after = (x) => { const n = +chqKey(x.ref); return x.kind === 'chk' && !x.cb && !!n && cuts.some((c) => n >= c.from && n <= c.to && n > c.last); };
-    const dits = list.filter((x) => x.kind === 'dep' && !found[x.key]), ocs = list.filter((x) => x.kind === 'chk' && !found[x.key] && !after(x));
+    const cvF = covOf(audit, exams0.map(flat)).from;
+    const dits = list.filter((x) => x.kind === 'dep' && !found[x.key]), ocs = list.filter((x) => x.kind === 'chk' && !found[x.key] && !after(x) && !preCheck(x, cvF, rec));
     const dit = r2(dits.reduce((n, x) => n + x.amount, 0)), oc = r2(ocs.reduce((n, x) => n + x.amount, 0));
     const linked = new Set(Object.entries(rec.lineOf || {}).filter(([k]) => found[k]).map(([, i]) => i));
     const cand = (rec.lines || []).filter((l) => !(rec.lineOf ? linked.has(l.i) : l.matched) && !l.added && l.date <= asOf);
