@@ -128,7 +128,8 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const begSetup = (kind, fund) => (fund !== gf || !exam ? null : r2(Object.entries(bal0).filter(([k]) => k.startsWith('col-') && kindOfForm(lgu, k.slice(4)) === kind).reduce((n, [, v]) => n + (+v?.amount || 0), 0)
     + (kind === kinds[0] && (kind === 'RCD' || (exam.functions || []).includes('liquidating')) ? (+bal0.liq?.amount || 0) : 0)));
   const begSer = (kind) => Object.entries(bal0).filter(([k, v]) => k.startsWith('col-') && kindOfForm(lgu, k.slice(4)) === kind && v && v.series).map(([k, v]) => `${FORM_SHORT[k.slice(4)] || k.slice(4)} ${v.series}`).join('; ');
-  const typed = (v) => v !== null && v !== undefined && String(v).trim() !== '' && num(v) !== null;
+  // A blank box was saved as 0 before: 0 counts as not typed (the Audit Setup beginning is used).
+  const typed = (v) => v !== null && v !== undefined && String(v).trim() !== '' && !!num(v);
   // The opening of a chain: typed on its first report, else the Audit Setup beginning; a typed one that differs is noted.
   const opening = (r, kind, fund) => { const s = begSetup(kind, fund); if (r && typed(r.begTyped)) return { v: num(r.begTyped), s, typed: true }; return { v: s || 0, s, setup: !!s }; };
   const encoded = {}; f.ors.forEach((x) => { const st = (encoded[x.form] = encoded[x.form] || new Set()); serialsOf(x).forEach((n) => st.add(n)); });
@@ -997,7 +998,7 @@ async function reportModal(c, K, g) {
       return bad(same ? `This ${K} is already entered (${repName(clash.rec, K)}).` : `Part of that range is already in ${repName(clash.rec, K)}.`) || null;
     }
     const v = { no, date, fund, ranges: rr.ranges, hardTotal: hard ? num(hard) : null, received: $('#rp-recv', bg).value, dupe: no ? 0 : dupeOf(f, o.id, K, date, fund, g ? g.id : undefined) };
-    if (firstOf(fund)) v.begTyped = num($('#rp-beg', bg).value) || 0;
+    if (firstOf(fund)) { const t = num($('#rp-beg', bg).value); v.begTyped = t === null ? '' : t; }
     return v;
   };
   await modal({ title: isNew ? `New ${K} · ${KIND_NAME[K]}` : `Edit ${repName(rec, K)}`, wide: true,
