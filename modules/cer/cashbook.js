@@ -33,7 +33,7 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
   const inS = (d) => !!d && (!from || d >= from) && d <= to;
   const A = accountability(refs, f, audit, exam, advs, liqs, []);
   // Cash advances of this account's fund only (the fund of each check's checkbook).
-  const fx = { booklets: f.booklets, accounts: accountsOf(f.settings, audit.lguId) };
+  const fx = { booklets: f.booklets, accounts: accountsOf(f.settings, audit.lguId), jr: f.ckdj };
   const ofAcct = (a) => { const ac = caAcct(a, fx); return ac ? ac.id === acct.id : false; };
   // Cash in Local Treasury: the collections, deposits and remittances of this account's fund (each OR's or report's fund;
   // none: the General Fund). The beginning undeposited collections: in the General Fund's Cashbook.

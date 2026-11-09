@@ -129,6 +129,7 @@ export async function loadForms() {
     const hits = chks.filter((b) => b.from <= n && n <= b.to); const b = hits.find((x) => x.lguId === c.lguId) || hits[0];
     if (b) (byBk[b.id] = byBk[b.id] || []).push({ n, d: c.date, jr: true }); });
   out.booklets.forEach((b) => { b.orNos = byBk[b.id] || []; });
+  out.ckdj = ckdj.map(flat);   // the RCI / CkDJ checks: their bank account gives a cash advance's fund
   return out;
 }
 // Custodian LGUs: the province and the municipalities. A barangay's booklets are in its municipality's register.

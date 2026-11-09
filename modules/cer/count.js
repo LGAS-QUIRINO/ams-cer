@@ -193,7 +193,7 @@ export async function countView(ctx) {
 // The AO's cash advances still unliquidated as of the cut-off: the checks of the period, the beginning checks and the
 // beginning balance not itemized; liquidations and refunds dated after the cut-off are not counted. With their fund.
 function openAdvances(f, o, exam, audit, advs, liqs) {
-  const ctx = { booklets: f.booklets, accounts: accountsOf(f.settings, audit.lguId) };
+  const ctx = { booklets: f.booklets, accounts: accountsOf(f.settings, audit.lguId), jr: f.ckdj };
   const cut = audit.countDate;
   const liqIn = liqCounts(exam, audit);
   const L = liqs.filter((l) => l.officerId === o.id && liqIn(l));

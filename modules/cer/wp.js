@@ -65,7 +65,7 @@ export function wpLines(c, paper, ver) {
   // Cash advances: grouped by fund (the fund of each check's checkbook), each with its own beginning and running balance.
   let groups = null;
   if (paper === 'a2a') {
-    const fx = { booklets: f.booklets, accounts: accountsOf(f.settings, A.lgu.id) };
+    const fx = { booklets: f.booklets, accounts: accountsOf(f.settings, A.lgu.id), jr: f.ckdj };
     const mine = advs.filter((a) => a.officerId === o.id);
     const begs = begByFund(exam, advs, fx, beg);
     const fundOfLine = (l) => { if (l.key.startsWith('ca|')) return caFund(mine.find((a) => `ca|${a.id}` === l.key) || {}, fx);

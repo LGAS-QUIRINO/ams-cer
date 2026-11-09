@@ -20,9 +20,13 @@ export function acctOfBook(b, accounts) {
   return t ? accounts.find((a) => { const k = core(a.fund); return k && (k === t || k.includes(t) || t.includes(k)); }) || null : null;
 }
 // ctx: { booklets, accounts }. a: a cash advance ({ checkNo, acctId? }).
+// ctx.jr (optional): the Check Disbursements Journal (RCI): a check written there carries its bank account.
 export function caAcct(a, ctx) {
   if (a.acctId) return ctx.accounts.find((x) => x.id === a.acctId) || null;
-  return acctOfBook(bookOfCheck(a.checkNo, ctx.booklets), ctx.accounts);
+  const n = chkNo(a.checkNo);
+  const j = n && (ctx.jr || []).find((x) => !x.cancelled && x.acctId && chkNo(x.checkNo) === n && (!a.lguId || !x.lguId || x.lguId === a.lguId));
+  const ja = j && ctx.accounts.find((x) => x.id === j.acctId);
+  return ja || acctOfBook(bookOfCheck(a.checkNo, ctx.booklets), ctx.accounts);
 }
 export function caFund(a, ctx) {
   const ac = caAcct(a, ctx); if (ac) return ac.fund;

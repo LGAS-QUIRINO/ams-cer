@@ -143,7 +143,7 @@ export async function banksView(ctx) {
       from: `${r.pending ? 'Not yet reported' : repName(r)} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });
   }));
   // Cash advance checks of this account only (the fund of the check's checkbook; not identified → the first account).
-  const fxB = { booklets: books0.map(flat), accounts }; const caOfAcct = (a) => { const ac = caAcct(a, fxB); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; };
+  const fxB = { booklets: books0.map(flat), accounts, jr: jr0.map(flat) }; const caOfAcct = (a) => { const ac = caAcct(a, fxB); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; };
   advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg && caOfAcct(a)).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0,
     from: `Cash advance · ${officers.find((o) => o.id === a.officerId)?.name || ''}` }));
   // Checks in the Check Disbursements Journal of this account (cash advances come with Cash Advances above).
@@ -604,7 +604,7 @@ export async function bankFindings(audit, refs) {
     const items = [];
     const toLOs = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id && e.remitToLO).map((e) => e.officerId));
     reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR' && !toLOs.has(r.officerId)).forEach((r) => depItems(r).filter(({ d }) => !d.toLO).forEach(({ d, key, old }) => items.push({ key, old, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0 })));
-    advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg && (() => { const ac = caAcct(a, { booklets: books0.map(flat), accounts }); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; })()).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
+    advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg && (() => { const ac = caAcct(a, { booklets: books0.map(flat), accounts, jr: jr0.map(flat) }); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; })()).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
     const jrChecks = bankChecksOf(jr0.map(flat), acct.id), jrNos = new Set(jrChecks.map((c) => chkNo(c.checkNo)));
     jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c) }));
     (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0 }));
