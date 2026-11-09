@@ -122,7 +122,9 @@ function rangeByForm(list) {
 export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const kinds = kindsOf(lgu);
   const ors = f.ors.filter((x) => x.officerId === o.id);
-  const reals = f.reports.filter((r) => r.officerId === o.id && !r.pending);
+  // A beginning carried from the officer's previous cash exam: the reports up to that count belong to it.
+  const carriedFrom = exam && exam.lastExamDate && Object.entries(exam.balances || {}).some(([k, v]) => (k.startsWith('col-') || k === 'liq') && v?.source === 'carried') ? exam.lastExamDate : '';
+  const reals = f.reports.filter((r) => r.officerId === o.id && !r.pending && !(carriedFrom && r.date && r.date <= carriedFrom));
   const allFunds = [...new Set([...funds, ...reals.map((r) => r.fund), ...ors.map((x) => x.fund).filter(Boolean)])];
   const bal0 = exam?.balances || {}, gf = allFunds.find((x) => /general/i.test(x)) || allFunds[0];
   const begSetup = (kind, fund) => (fund !== gf || !exam ? null : r2(Object.entries(bal0).filter(([k]) => k.startsWith('col-') && kindOfForm(lgu, k.slice(4)) === kind).reduce((n, [, v]) => n + (+v?.amount || 0), 0)

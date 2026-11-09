@@ -32,6 +32,22 @@ const UI = { view: 'sum' };
 const fmtAmt = (n) => (n < -0.004 ? `(${money(-n)})` : money(n));
 
 // The statement of accountability of one officer (shared with Reports): columns, movements within the scope, balances, inventory.
+// The ending balances of an examination (balance per books at the count, per accountability), saved on its exam record as
+// endBalances { <Audit Setup balance key>: amount }: the next cash exam of the officer shows them as its beginning (carried).
+export function endingOf(exam, st, lgu) {
+  const out = {}, forms = exam.forms || [], fns = exam.functions || [];
+  st.forEach((b) => {
+    if (b.key === 'ca') { const k = fns.includes('disbursing') ? 'ca' : fns.includes('special') ? 'sdo' : fns.includes('pettycash') ? 'pcf' : 'ca'; out[k] = r2(b.balance); return; }
+    const mine = forms.filter((x) => kindOfForm(lgu, x) === b.kind && partOk(b.part || '', x));
+    if (mine.length && fns.includes('collecting')) { mine.forEach((x, i) => { out['col-' + x] = i ? 0 : r2(b.balance); }); return; }
+    if (fns.includes('liquidating')) out.liq = r2((out.liq || 0) + b.balance);
+  });
+  return out;
+}
+async function saveEnding(refs, exam, st, lgu) {
+  const r = await store.get('cer_exams', exam.id); if (!r || r.deleted) return;
+  await store.save('cer_exams', exam.id, { ...r.data, endBalances: endingOf(r.data, st, lgu), endAt: new Date().toISOString().slice(0, 10) }, by(refs), { quiet: true });
+}
 export function accountability(refs, f, audit, exam, advs, liqs, counts) {
   const lgu = refs.lgu[audit.lguId];
   const from = exam.lastExamDate || '', to = audit.countDate;
@@ -190,6 +206,8 @@ export async function verifyView(ctx) {
   // Late deposits per the bank (deposit slip date vs the date the bank credited it) stay under Bank Statements.
 
   const ver = ver0.map(flat).find((v) => v.id === exam.id) || { recon: {}, decisions: {} };
+  // Marked ready before the ending balances were kept: saved now, for the officer's next cash exam.
+  if (ver.ready && !exam.endBalances) saveEnding(refs, exam, st, lgu);
   // Progress of the encoding, shown until the auditor ticks "Encoding complete".
   const myOrs = f.ors.filter((x) => x.officerId === o.id && orOk(x));
   const lastOr = myOrs.map((x) => x.date).sort().pop();
@@ -313,6 +331,7 @@ function wireVerify(c) {
     const left = findings.filter((x) => dec(x.key).decision === 'To decide').length;
     if (left) return bad(`${left} finding${left > 1 ? 's are' : ' is'} still "To decide". Save a decision for each first.`);
     saveVer({ ready: true, readyBy: refs.me?.data.name || by(refs), readyAt: new Date().toISOString() }, 'Marked ready for Reports.');
+    saveEnding(refs, exam, st, lgu);   // the next cash exam of this officer starts from these
   };
   const ur = $('#vf-unready'); if (ur) ur.onclick = () => saveVer({ ready: false }, 'Reopened.');
   const cp = $('#vf-complete'); if (cp && auditor) cp.onchange = () => (cp.checked

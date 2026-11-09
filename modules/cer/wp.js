@@ -68,7 +68,7 @@ export function wpLines(c, paper, ver) {
   if (paper === 'a2a') {
     const fx = { booklets: f.booklets, accounts: accountsOf(f.settings, A.lgu.id), jr: f.ckdj };
     const mine = advs.filter((a) => a.officerId === o.id);
-    const begs = begByFund(exam, advs, fx, beg);
+    const begs = begByFund(exam, advs, fx, beg, liqs);
     const fundOfLine = (l) => { if (l.key.startsWith('ca|')) return caFund(mine.find((a) => `ca|${a.id}` === l.key) || {}, fx);
       const lq = liqs.find((x) => `lq|${x.id}` === l.key); const a = lq && mine.find((x) => x.id === lq.advanceId);
       return a ? caFund(a, fx) : restFund(exam, fx); };

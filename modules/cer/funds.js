@@ -36,11 +36,24 @@ export function caFund(a, ctx) {
 // The fund of the beginning balance not itemized by check (Audit Setup), else the first account's fund.
 export const restFund = (exam, ctx) => exam.caRestFund || ctx.accounts[0]?.fund || 'General Fund';
 // The beginning cash advance balance by fund: the beginning checks by their fund, the rest in restFund.
-export function begByFund(exam, advs, ctx, total) {
+// A beginning carried from the officer's previous cash exam in the app: the checks of before that count still unliquidated
+// then make it up (each at its amount unliquidated at that count). Checks typed as beginning checks are not repeated.
+export function carriedOpen(exam, advs, liqs) {
+  const bal = exam.balances || {};
+  if (!['ca', 'sdo', 'pcf'].some((k) => bal[k]?.source === 'carried') || !exam.lastExamDate) return [];
+  const from = exam.lastExamDate;
+  const typed = new Set(advs.filter((a) => a.officerId === exam.officerId && a.beg).map((a) => chkNo(a.checkNo)).filter(Boolean));
+  return advs.filter((a) => a.officerId === exam.officerId && !a.beg && a.date && a.date < from && !typed.has(chkNo(a.checkNo))).map((a) => {
+    const before = (liqs || []).filter((l) => l.advanceId === a.id && l.date && l.date < from).reduce((n, l) => n + (+l.amount || 0), 0);
+    const u0 = Math.round(((+a.amount || 0) - before) * 100) / 100;
+    return u0 > 0.004 ? { ...a, amount: u0, carried: true } : null;
+  }).filter(Boolean);
+}
+export function begByFund(exam, advs, ctx, total, liqs) {
   const out = new Map();
   const add = (k, v) => out.set(k, Math.round(((out.get(k) || 0) + v) * 100) / 100);
   let s = 0;
-  advs.filter((a) => a.officerId === exam.officerId && a.beg && !a.rest).forEach((a) => { const v = +a.amount || 0; s += v; add(caFund(a, ctx), v); });
+  [...advs.filter((a) => a.officerId === exam.officerId && a.beg && !a.rest), ...carriedOpen(exam, advs, liqs)].forEach((a) => { const v = +a.amount || 0; s += v; add(caFund(a, ctx), v); });
   const rest = Math.round((total - s) * 100) / 100;
   if (Math.abs(rest) > 0.004) add(restFund(exam, ctx), rest);
   return out;
