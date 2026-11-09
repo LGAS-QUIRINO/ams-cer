@@ -27,6 +27,12 @@ const bad = (m) => { toast(m, 'bad'); return false; };
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
 const BEG_CA = ['ca', 'sdo', 'pcf'];
 const DRAFT = { key: '', data: null, editSplit: false };
+// A cash advance cash item, short: "1837098 - CA of Reg. Fee and TEV …" (check No. - particulars, without "To record").
+const caShort = (s) => String(s || '').replace(/^\s*to\s+record\s+/i, '').trim();
+export function itemText(p) {
+  const m = /^Paid vouchers \/ payroll, Check No\. (\S+)(?: \(beginning\))?(?: · [^·]*)?(?: · (.*))?$/.exec(String(p || ''));
+  return m ? `${m[1]}${m[2] ? ' - ' + caShort(m[2]) : ''}` : String(p || '');
+}
 const OPEN = { cut: true, cash: false };   // which tab is shown; 1 Remaining Forms when the screen is opened
 export const resetTabs = () => { OPEN.cut = true; OPEN.cash = false; };   // unsaved count survives a screen refresh; split boxes shown
 
@@ -91,7 +97,7 @@ export async function countView(ctx) {
 
   const o = exam.o;
   const saved = counts0.map(flat).find((c) => c.id === exam.id) || null;
-  if (DRAFT.key !== exam.id) DRAFT.key = exam.id, DRAFT.editSplit = false, DRAFT.data = JSON.parse(JSON.stringify({ bills: {}, coins: '', items: [], split: {}, ...(saved || {}) }));
+  if (DRAFT.key !== exam.id) DRAFT.key = exam.id, DRAFT.editSplit = false, DRAFT.data = JSON.parse(JSON.stringify({ bills: {}, coins: '', items: [], split: {}, ...(saved || {}) })), DRAFT.data.items.forEach((it) => { it.particulars = itemText(it.particulars); });
   const d = DRAFT.data;
   const books = booksOf(refs, f, o, exam, audit, advs, liqs);
   const forms = unusedFormsOf(f, o.id, exam);
@@ -299,7 +305,7 @@ function wireCount(c) {
   const setCa = (id, pres, allowedTxt) => {
     const a = c.open.find((x) => x.id === id); let it = d.items.find((x) => x.advanceId === id);
     if (pres === null) { if (it) d.items.splice(d.items.indexOf(it), 1); return null; }
-    if (!it) { it = { advanceId: id, particulars: `Paid vouchers / payroll, ${caLabel(a)}`, appliesTo: c.caKey, presented: pres, allowed: pres }; d.items.push(it); }
+    if (!it) { it = { advanceId: id, particulars: a.rest ? 'Beginning balance (not itemized)' : `${a.checkNo}${a.particulars ? ' - ' + caShort(a.particulars) : ''}`, appliesTo: c.caKey, presented: pres, allowed: pres }; d.items.push(it); }
     else { const synced = r2(num(it.allowed ?? it.presented) || 0) === r2(+it.presented || 0); it.presented = pres; if (allowedTxt !== undefined) it.allowed = allowedTxt; else if (synced) it.allowed = pres; }
     return it;
   };

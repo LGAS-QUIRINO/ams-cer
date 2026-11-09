@@ -6,6 +6,7 @@
 //   Annex D  Statement of Accountability – cash advances, by month
 // Other reports follow.
 import { cnpHtml, fnpHtml } from './cnp.js';
+import { itemText } from './count.js';
 import { listT } from '../src/journal.js';
 import { store } from '../../js/store.js';
 import { covOf, inCov, withLines, isPart } from './banks.js';
@@ -118,7 +119,7 @@ function gf74a(c) {
   const b = exam.bond || {};
   const bills = BILLS.map((v) => ({ v, n: parseInt(cnt.bills?.[v], 10) || 0 }));
   const cash = r2(bills.reduce((n, x) => n + x.v * x.n, 0) + (+cnt.coins || 0));
-  const items = (cnt.items || []).map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return { ...it, allowed: a, dis: r2((+it.presented || 0) - a) }; });
+  const items = (cnt.items || []).map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return { ...it, particulars: itemText(it.particulars), allowed: a, dis: r2((+it.presented || 0) - a) }; });
   const allowed = r2(items.reduce((n, x) => n + x.allowed, 0)), disallowed = r2(items.reduce((n, x) => n + x.dis, 0));
   const forms = unusedFormsOf(c.f, o.id, exam, A.to);
   const nps = notPresentedOf(c.f, exam, A.to), npMv = nps.some((x) => faceOf({ form: x.form }));

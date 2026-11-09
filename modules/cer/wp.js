@@ -4,6 +4,7 @@
 // Per CashBook in the working papers: the same as Per Audit unless a line is edited. Edits are kept with the officer's
 // Verification record: cer_verify.wp{ a1a|a1b|a2a: { <line key>: { d, c } } } (d = collections / cash advance, c = deposits / liquidation).
 import { cnpSheet, fnpSheet } from './cnp.js';
+import { itemText } from './count.js';
 import { store } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, fmtDate, money, num } from './cer.js';
@@ -266,7 +267,7 @@ export async function downloadReport(c, ver) {
   let cash = 0;
   BILLS.forEach((v, i) => { const n = parseInt(cnt.bills?.[v], 10) || 0; cash += v * n; set(ws, `G${28 + i}`, n || null); set(ws, `K${28 + i}`, n ? v * n : null); });
   set(ws, 'K34', +cnt.coins || null); cash = r2(cash + (+cnt.coins || 0)); set(ws, 'L35', cash);
-  const items = (cnt.items || []).map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return { p: it.particulars, pr: +it.presented || 0, a, d: r2((+it.presented || 0) - a) }; });
+  const items = (cnt.items || []).map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return { p: itemText(it.particulars), pr: +it.presented || 0, a, d: r2((+it.presented || 0) - a) }; });
   const fit = (list, n, join) => (list.length <= n ? list : [...list.slice(0, n - 1), join(list.slice(n - 1))]);
   fit(items, 7, (xs) => ({ p: `${xs.length} other items`, pr: r2(xs.reduce((s, x) => s + x.pr, 0)), a: r2(xs.reduce((s, x) => s + x.a, 0)), d: r2(xs.reduce((s, x) => s + x.d, 0)) }))
     .forEach((x, i) => { set(ws, `S${28 + i}`, x.p); set(ws, `AG${28 + i}`, x.pr); set(ws, `AN${28 + i}`, x.a); set(ws, `AU${28 + i}`, x.d); });
