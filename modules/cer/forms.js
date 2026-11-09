@@ -1479,8 +1479,13 @@ export function unusedFormsOf(f, officerId, exam) {
   return cutoffLines(f, exam.id).filter((l) => !l.np).map((l) => {
     const qty = countRanges(l.ranges), face = faceOf(l.b || { form: l.form });
     return { id: l.id, bookletId: l.bookletId, form: l.form, name: FORM_SHORT[l.form] || l.form, from: l.ns ? '' : l.from, to: l.ns ? '' : l.to, ns: l.ns, ranges: l.ranges, qty,
-      text: l.ns ? `${qty} pcs (no serial)` : rangesText(l.ranges), face, amount: face * qty, other: !l.bookletId };
-  });
+      text: l.ns ? `${qty} pcs (no serial)` : rangesText(l.ranges), face, amount: face * qty, other: !l.bookletId, fund: l.b ? l.b.fund || l.b.bankAccount || '' : '' };
+  }).sort(saafOrder);
+}
+// The SAAF's order: AF 51 and the forms with money value first, then the CTCs, the checks last (grouped by fund); by serial within.
+function saafOrder(a, b) {
+  const grp = (r) => (r.form === 'chk' ? 2 : /^ctc/.test(r.form) ? 1 : 0);
+  return grp(a) - grp(b) || String(a.form).localeCompare(String(b.form)) || (a.form === 'chk' ? String(a.fund || '').localeCompare(String(b.fund || '')) : 0) || (+a.from || 0) - (+b.from || 0);
 }
 // Booklets ticked Not presented at the cut-off.
 export const notPresentedOf = (f, exam, to) => (exam ? cutoffLines(f, exam.id).filter((l) => l.np).map((l) => { const un = l.b ? rawUnused(l.b, to) : [];
