@@ -77,7 +77,10 @@ const funcsFor = (lgu) => (isBrgy(lgu) ? FUNCS_BRGY : FUNCS_LGU);
 export async function loadCer() {
   const [officers, audits, exams] = await Promise.all([store.list('cer_officers'), store.list('cer_audits'), store.list('cer_exams')]);
   const flat = (r) => ({ id: r.id, ...r.data });
-  return { officers: officers.map(flat), audits: audits.map(flat), exams: exams.map(flat) };
+  const A = audits.map(flat);
+  // Barangays: AF 51 is always deposited (CTC remitted to the MTO), so an exam saved earlier as "remitted to the LO" reads as deposited.
+  const brgyAudit = new Set(A.filter((x) => /^brgy-/.test(x.lguId || '')).map((x) => x.id));
+  return { officers: officers.map(flat), audits: A, exams: exams.map(flat).map((e) => (e.remitToLO && brgyAudit.has(e.auditId) ? { ...e, remitToLO: false } : e)) };
 }
 // This officer's latest exam before the given cash count date (any cash examination).
 function prevExam(cer, officerId, countDate, examId) {
@@ -305,7 +308,7 @@ function stateFrom(refs, cer, q) {
   };
   if (exam) {
     Object.assign(st, { examId: exam.id, officerId: exam.officerId, functions: [...(exam.functions || [])], forms: [...new Set((exam.forms || []).map((k) => fixBrgyForm(lgu, k)))],
-      bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '', depositRule: exam.depositRule || 'next', caRestFund: exam.caRestFund || '', remitToLO: !!exam.remitToLO, records: exam.records || 'complete',
+      bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '', depositRule: exam.depositRule || 'next', caRestFund: exam.caRestFund || '', remitToLO: !!exam.remitToLO && !isBrgy(lgu), records: exam.records || 'complete',
       balances: Object.fromEntries(Object.entries(exam.balances || {}).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, (() => { const x = v && v.lump !== undefined ? v.lump : v && v.amount; return x !== null && x !== undefined ? money(x) : ''; })()])),
       begSer: Object.fromEntries(Object.entries(exam.balances || {}).filter(([, v]) => v && v.series).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, v.series])) });
     ['maxCash', 'amount'].forEach((k) => { if (st.bond[k] !== '' && st.bond[k] !== null) st.bond[k] = money(st.bond[k]); });
@@ -438,7 +441,8 @@ function officerHtml(refs, cer, st, edit) {
     ${(st.functions || []).includes('collecting') ? `<fieldset class="field"><legend>Accountable forms used in collecting</legend>
       <div class="cer-chips">${formsForLgu(lgu).map(([k, label]) => `<label class="cer-chip"><input type="checkbox" data-form="${k}" ${chk(st.forms, k)} ${dis}> ${esc(label)}</label>`).join('')}</div></fieldset>
       <fieldset class="field cer-tolo"><legend>Collection records</legend><div class="cer-chips"><label class="cer-chip"><input type="radio" name="cer-recs" value="complete" ${st.records !== 'cashbook' ? 'checked' : ''} ${dis}> Complete (SCD / RCD with ORs)</label><label class="cer-chip"><input type="radio" name="cer-recs" value="cashbook" ${st.records === 'cashbook' ? 'checked' : ''} ${dis}> Cashbook only (no SCD / RCD)</label></div></fieldset>
-      <fieldset class="field cer-tolo"><legend>Collections are</legend><div class="cer-chips"><label class="cer-chip"><input type="radio" name="cer-tolo" value="0" ${st.remitToLO ? '' : 'checked'} ${dis}> Deposited in the bank</label><label class="cer-chip"><input type="radio" name="cer-tolo" value="1" ${st.remitToLO ? 'checked' : ''} ${dis}> Remitted to the Liquidating Officer</label></div></fieldset>
+      ${isBrgy(lgu) ? `<div class="field cer-tolo"><span class="cer-lbl">Collections are</span><span class="cer-fixed"><b>AF 51 (SCD):</b> Deposited in the bank · <b>CTC (SCR):</b> Remitted to the Municipal Treasurer</span></div>`
+        : `<fieldset class="field cer-tolo"><legend>Collections are</legend><div class="cer-chips"><label class="cer-chip"><input type="radio" name="cer-tolo" value="0" ${st.remitToLO ? '' : 'checked'} ${dis}> Deposited in the bank</label><label class="cer-chip"><input type="radio" name="cer-tolo" value="1" ${st.remitToLO ? 'checked' : ''} ${dis}> Remitted to the Liquidating Officer</label></div></fieldset>`}
       ${st.remitToLO ? '<span class="hint">Remitted to the Liquidating Officer: no bank account or deposit rule for this officer; the remittances are entered in Collections &amp; Deposits, part 3.</span>' : isBrgy(lgu) ? '<span class="hint">Deposits: within 5 banking days after receipt (Barangay Treasurer).</span>' : `<div class="field cer-deprule"><label for="cer-deprule">Deposit rule</label><select class="input" id="cer-deprule" ${dis}>
         <option value="next" ${st.depositRule !== 'weekly' ? 'selected' : ''}>Daily, or not later than the next banking day</option>
         <option value="weekly" ${st.depositRule === 'weekly' ? 'selected' : ''}>At least once a week, or as soon as collections reach ₱10,000 (minimal collections / bank far)</option></select>
@@ -750,7 +754,7 @@ async function saveSetup(refs, cer, st) {
   const examId = st.examId || newId('cere');
   const oldExam = cer.exams.find((e) => e.id === examId);
   await store.save('cer_exams', examId, { auditId, officerId: st.officerId, functions: st.functions, forms: st.functions.includes('collecting') ? st.forms : [],
-    bond, lastExamDate, lastExamSource: prev ? 'system' : 'typed', balances, depositRule: st.depositRule || 'next', caRestFund: st.caRestFund || '', remitToLO: !!st.remitToLO && (st.functions || []).includes('collecting'), records: (st.functions || []).includes('collecting') && st.records === 'cashbook' ? 'cashbook' : 'complete', endBalances: oldExam ? (oldExam.endBalances || {}) : {} }, by(refs));
+    bond, lastExamDate, lastExamSource: prev ? 'system' : 'typed', balances, depositRule: st.depositRule || 'next', caRestFund: st.caRestFund || '', remitToLO: !!st.remitToLO && (st.functions || []).includes('collecting') && !isBrgy(refs.lgu[st.lguId]), records: (st.functions || []).includes('collecting') && st.records === 'cashbook' ? 'cashbook' : 'complete', endBalances: oldExam ? (oldExam.endBalances || {}) : {} }, by(refs));
   DRAFT = null;
   toast('Audit Setup saved.', 'ok');
   location.hash = `#/cer/setup?a=${auditId}&o=${examId}`;

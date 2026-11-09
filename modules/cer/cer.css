@@ -899,3 +899,4 @@ table.af-reg.tr-month{min-width:0}
 .fnp-t th.c:nth-child(1), .fnp-t th.c:nth-child(2) { width: 22% } .fnp-t th:nth-child(3) { width: 11% } .fnp-t th:nth-child(4) { width: 20% }
 .fnp-sum { width: 100%; table-layout: fixed } .fnp-sum th:nth-child(1) { width: 50% } .fnp-sum th:nth-child(2) { width: 20% }
 .af-imp span b.af-impform{font-size:12.5px; color:var(--navy,#16325c); font-weight:800}
+.cer-fixed { display: block; padding: 9px 0 2px; font-size: 14px; color: var(--ink) }
