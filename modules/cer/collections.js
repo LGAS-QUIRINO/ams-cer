@@ -64,7 +64,7 @@ export function ctcBalance(fig, bs) {
   return r2(Object.values(fig.chains).filter((ch) => ch.kind === 'RCD').reduce((n, ch) => {
     const all = [...ch.figs, ch.pend], map = ctcAlloc(ch, bs);
     const c = all.reduce((m, g) => m + (g.ors || []).filter((x) => x.status !== 'cancelled' && isCtc(x.form)).reduce((k, x) => k + orAmount(x), 0), 0);
-    return n + (all[0]?.beg || 0) * bs + c - [...map.values()].reduce((m, v) => m + v, 0);
+    return n + ((all[0]?.beg || 0) + all.reduce((m, g) => m + (g.begAdd || 0), 0)) * bs + c - [...map.values()].reduce((m, v) => m + v, 0);
   }, 0));
 }
 
@@ -142,18 +142,19 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const loLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.remittances || []).filter((m) => m.collectorId === o.id && !m.beg && m.date)
     .map((m) => ({ date: m.date, ref: f.officers.find((x) => x.id === r.officerId)?.name || 'Liquidating Officer', amount: +m.amount || 0, toLO: true, fromLO: true, form: m.form || '', from: m.from || '', to: m.to || '', fund: r.fund || '' })));
   const out = {};
-  const markOpening = (fg, op, kind) => {
-    fg.begSetup = !!op.setup; fg.begSer = op.setup ? begSer(kind) : '';
+  const markOpening = (fg, op) => {
     if (op.typed && op.s !== null && Math.abs(op.v - op.s) > 0.004) fg.issues.push(`Undeposited per last report typed ₱${money(op.v)} on this report; beginning per Audit Setup ₱${money(op.s)}. Check which one is right.`);
   };
-  const build = (id, rec, list, beg) => {
+  // begAdd: the part of the Audit Setup beginning reported in this report (its ORs of before the period).
+  const build = (id, rec, list, beg, begAdd = 0) => {
     const own = list.filter((x) => x.status !== 'cancelled');
     const rem = (rec?.remittances || []).filter((m) => !m.beg);
     const fig = { id, rec, ors: list, beg, orsTotal: sum(own.map((x) => ({ a: orAmount(x) })), 'a'), remTotal: sum(rem, 'amount'), dep: sum(rec?.deposits || [], 'amount'),
       begRaw: r2(own.filter((x) => x.beg).reduce((n, x) => n + r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0)), 0)),   // ORs of the beginning (Before the period), at face
       nOrs: list.length, nCancelled: list.length - own.length, from: '', to: '', range: rangeByForm(list), issues: [] };
     fig.coll = r2(fig.orsTotal + fig.remTotal);
-    fig.end = r2(beg + fig.coll - fig.dep);
+    fig.begAdd = r2(begAdd);
+    fig.end = r2(beg + fig.begAdd + fig.coll - fig.dep);
     const dates = [...list.map((x) => x.date), ...rem.map((x) => x.date)].filter(Boolean).sort();
     fig.from = dates[0] || ''; fig.to = dates[dates.length - 1] || '';
     // Checks
@@ -207,15 +208,26 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   keys.forEach(({ key, kind, fund }) => {
     const list = reals.filter((r) => r.fund === fund && (kinds.includes(r.kind) ? r.kind : kinds[0]) === kind).sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.no).localeCompare(String(b.no), undefined, { numeric: true }));
     let beg = null;
-    const op = opening(list[0], kind, fund);
-    const figs = list.map((r, i) => { const fg = build(r.id, r, ors.filter((x) => x.reportId === r.id), i === 0 ? op.v : beg); if (i === 0) markOpening(fg, op, kind); beg = fg.end; return fg; });
     const pid = pendId(o.id, kind, fund); const prec = f.reports.find((r) => r.id === pid) || null;
+    const pendOrs = ors.filter((x) => !x.reportId && (x.fund || allFunds[0]) === fund && kindOfForm(lgu, x.form) === kind);
+    const op = opening(list[0] || prec, kind, fund);
+    // The Audit Setup beginning goes to the reports holding its ORs (Before the period), up to their face amount, in order;
+    // what is left (no beginning OR encoded yet) to the first report.
+    const add = {};
+    if (op.setup) {
+      const faceBeg = (xs) => r2(xs.filter((x) => x.beg && x.status !== 'cancelled').reduce((n, x) => n + r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0)), 0));
+      let left = op.v;
+      [...list.map((r) => ({ id: r.id, raw: faceBeg(ors.filter((x) => x.reportId === r.id)) })), { id: pid, raw: faceBeg(pendOrs) }].forEach(({ id, raw }) => { const a = r2(Math.min(left, raw)); if (a > 0.004) { add[id] = a; left = r2(left - a); } });
+      if (left > 0.004) { const fid = list[0] ? list[0].id : pid; add[fid] = r2((add[fid] || 0) + left); }
+    }
+    const start = op.setup ? 0 : op.v, serTxt = begSer(kind);
+    const figs = list.map((r, i) => { const fg = build(r.id, r, ors.filter((x) => x.reportId === r.id), i === 0 ? start : beg, add[r.id] || 0); if (fg.begAdd) fg.begSer = serTxt; if (i === 0) markOpening(fg, op); beg = fg.end; return fg; });
     const pr0 = prec ? { ...prec, pending: true } : { pending: true, kind, fund, deposits: [], remittances: [] };
     const myLo = loLines.filter((m) => (m.fund || allFunds[0]) === fund && (m.form ? kindOfForm(lgu, m.form) : kinds[0]) === kind && !(pr0.deposits || []).some((d) => (d.from && m.from && String(d.from) === String(m.from)) || (d.date === m.date && Math.abs((+d.amount || 0) - m.amount) < 0.005)));
     if (myLo.length) pr0.deposits = [...(pr0.deposits || []), ...myLo].sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const myCol = colLines.filter((m) => (m.fund || allFunds[0]) === fund && kind === kinds[0] && !(pr0.remittances || []).some((x) => x.collectorId === m.collectorId && ((x.from && String(x.from) === String(m.from)) || (x.date === m.date && Math.abs((+x.amount || 0) - m.amount) < 0.005))));
     if (myCol.length) pr0.remittances = [...(pr0.remittances || []), ...myCol].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    const pend = build(pid, pr0, ors.filter((x) => !x.reportId && (x.fund || allFunds[0]) === fund && kindOfForm(lgu, x.form) === kind), figs.length ? beg : opening(prec, kind, fund).v);
+    const pend = build(pid, pr0, pendOrs, figs.length ? beg : start, add[pid] || 0); if (pend.begAdd) pend.begSer = serTxt;
     pend.pending = true; pend.fund = fund; pend.kind = kind;
     figs.forEach((g) => { g.kind = kind; g.fund = fund; });
     chains[key] = { key, kind, fund, figs, pend };
@@ -473,7 +485,8 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
     ${enc ? `<div class="cd-actions"><button class="btn sm" type="button" id="cd-adddep">+ Add ${DEP}</button><button class="btn primary" type="button" id="cd-savedep">Save ${DEPS}</button></div>` : ''}
     <div class="cd-sum">
       <b class="cd-sumh">Summary (computed) · ${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</b>
-      <div><span>${remish ? 'Unremitted' : 'Undeposited'}, ${cur.begSetup ? `at the last cash exam${cur.begSer ? ` (${esc(cur.begSer)})` : ''}` : `last ${K}`}</span><span>${money(cur.beg)}</span></div>
+      <div><span>${remish ? 'Unremitted' : 'Undeposited'}, last ${K}</span><span>${money(cur.beg)}</span></div>
+      ${cur.begAdd ? `<div><span>Add: Beginning balance, last cash exam (ORs in this ${cur.pending ? 'list' : K}${cur.begSer ? `: ${esc(cur.begSer)}` : ''})</span><span>${money(cur.begAdd)}</span></div>` : ''}
       <div><span>Add: Collections${isLO ? ' (ORs ₱' + money(cur.orsTotal) + ' + remittances ₱' + money(cur.remTotal) + ')' : ''}</span><span>${money(cur.coll)}</span></div>
       <div><span>Less: ${DEPS}</span><span>${money(cur.dep)}</span></div>
       <div class="cd-sumt"><span>${remish ? 'Unremitted' : 'Undeposited'}, end</span><span>${money(cur.end)}</span></div>
@@ -523,7 +536,7 @@ function wireAll(c) {
   $$('tr[data-pick]').forEach((tr) => { const pick = () => go({ r: tr.dataset.pick }); tr.onclick = pick; tr.onkeydown = (e) => { if (e.key === 'Enter') pick(); }; });
   const sumX = () => exportXlsx(`${K} Summary ${o.name} ${audit.countDate}.xlsx`, `${K} Summary`, c.allFigs.map((g) => ({
     [`${K}`]: g.pending ? 'Not yet in a report' : repName(g.rec, g.kind), [`${K} No.`]: g.pending ? '' : g.rec.no, Fund: g.pending ? g.fund : g.rec.fund, [`${K} Date`]: g.pending ? '' : fmtDate(g.rec.date), 'Period From': fmtDate(g.from), 'Period To': fmtDate(g.to),
-    'OR Range': g.range, 'No. of ORs': g.nOrs, Cancelled: g.nCancelled, 'Undeposited, Last': g.beg, 'Collections (ORs)': g.orsTotal, Remittances: g.remTotal, Deposited: g.dep, 'Undeposited, End': g.end,
+    'OR Range': g.range, 'No. of ORs': g.nOrs, Cancelled: g.nCancelled, 'Undeposited, Last': g.beg, 'Beginning, Last Cash Exam': g.begAdd || 0, 'Collections (ORs)': g.orsTotal, Remittances: g.remTotal, Deposited: g.dep, 'Undeposited, End': g.end,
     'Total per Hard Copy': g.pending ? '' : (g.rec.hardTotal ?? ''), 'Date Received': g.pending ? '' : fmtDate(g.rec.received), Checks: g.issues.join(' ') || 'Complete' })));
   ['#cd-sumxls', '#cd-sumxls2'].forEach((id) => { const b = $(id); if (b) b.onclick = sumX; });
   const xls = $('#cd-xls');
