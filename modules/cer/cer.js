@@ -361,7 +361,7 @@ function listHtml(refs, cer) {
 function blankExam(lgu) {
   const brgy = isBrgy(lgu);
   return { examId: '', officerId: '', functions: brgy ? ['collecting', 'disbursing'] : [], forms: brgy ? ['af51b', 'ctci'] : [],
-    bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '' }, lastExamDate: '', balances: {}, begSer: {}, depositRule: 'next', caRestFund: '', remitToLO: false, records: 'complete' };
+    bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '' }, lastExamDate: '', balances: {}, begSer: {}, begOrs: {}, depositRule: 'next', caRestFund: '', remitToLO: false, records: 'complete' };
 }
 function stateFrom(refs, cer, q) {
   const audit = cer.audits.find((x) => x.id === q.get('a')) || null;
@@ -379,7 +379,9 @@ function stateFrom(refs, cer, q) {
     Object.assign(st, { examId: exam.id, officerId: exam.officerId, functions: [...(exam.functions || [])], forms: [...new Set((exam.forms || []).map((k) => fixBrgyForm(lgu, k)))],
       bond: { maxCash: '', amount: '', riskNo: '', from: '', to: '', ...(exam.bond || {}) }, lastExamDate: exam.lastExamDate || '', depositRule: exam.depositRule || 'next', caRestFund: exam.caRestFund || '', remitToLO: !!exam.remitToLO && !isBrgy(lgu), records: exam.records || 'complete',
       balances: Object.fromEntries(Object.entries(exam.balances || {}).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, (() => { const x = v && v.lump !== undefined ? v.lump : v && v.amount; return x !== null && x !== undefined ? money(x) : ''; })()])),
-      begSer: Object.fromEntries(Object.entries(exam.balances || {}).filter(([, v]) => v && v.series).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, v.series])) });
+      begSer: Object.fromEntries(Object.entries(exam.balances || {}).filter(([, v]) => v && v.series).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k, v.series])),
+      begOrs: Object.fromEntries(Object.entries(exam.balances || {}).filter(([, v]) => v && (v.begOrs || v.series)).map(([k, v]) => [k === 'col-af51' && isBrgy(lgu) ? 'col-af51b' : k,
+        v.begOrs || parseRangesTxt(v.series).map(([a, z]) => ({ date: '', from: a, to: z, amount: '' }))])) });
     ['maxCash', 'amount'].forEach((k) => { if (st.bond[k] !== '' && st.bond[k] !== null) st.bond[k] = money(st.bond[k]); });
   }
   return { st, audit, exams, exam };
@@ -548,7 +550,10 @@ function officerHtml(refs, cer, st, edit) {
             <button class="btn sm" type="button" data-begchk="${r.key}" data-edit="${edit ? 1 : 0}">${edit ? 'Beginning checks' : 'View checks'}</button>
             ${r.key === 'ca' && bankAccts.length > 1 ? `<label class="cer-restfund">Not itemized · Fund <select class="input af-sm" data-restfund ${dis}>${bankAccts.map((x) => `<option ${x.fund === (st.caRestFund || bankAccts[0].fund) ? 'selected' : ''}>${esc(x.fund)}</option>`).join('')}</select></label>` : ''}</div>` : '';
           // Collections: the OR series of the ORs making up the balance (presented at the last cash exam), when known.
-          const ser = r.key.startsWith('col-') ? `<div class="cer-begser"><label class="sr-only" for="bser-${r.key}">${esc(r.label)}: OR series in the balance</label><input class="input mono af-sm" id="bser-${r.key}" data-begser="${r.key}" value="${esc(st.begSer?.[r.key] || '')}" placeholder="OR series in this balance (optional)" title="e.g. 9394901-9394911; several: 9394901-9394905; 9394910" autocomplete="off" ${dis}></div>` : '';
+          // Collections: the ORs making up the balance (itemized like the beginning checks), when known.
+          const bo = st.begOrs?.[r.key] || [], boT = Math.round(bo.reduce((n, x) => n + (num(String(x.amount ?? '')) || 0), 0) * 100) / 100;
+          const ser = r.key.startsWith('col-') ? `<div class="cer-begline"><span>${bo.length ? `${bo.length} range${bo.length > 1 ? 's' : ''}: ${esc(bo.map((x) => `${x.from}–${x.to}`).join(', '))}${boT ? ` · ₱${money(boT)}` : ''}` : 'ORs not itemized'}</span>
+            <button class="btn sm" type="button" data-begors="${r.key}" data-edit="${edit ? 1 : 0}">${edit ? 'Beginning ORs' : 'View ORs'}</button></div>` : '';
           return `<tr><td><b>${esc(r.label)}</b>${bl}${ser}</td><td class="dim">${esc(r.fn)}</td>
             <td class="r"><label class="sr-only" for="bal-${r.key}">${esc(r.label)} balance</label><input class="input amt" id="bal-${r.key}" data-bal="${r.key}" inputmode="decimal" value="${esc(val)}" ${carried ? 'readonly disabled' : dis}></td>
             <td>${carried ? '<span class="pill ok">Carried from last exam</span>' : `<span class="pill blue">${lastFromPrev ? 'Typed' : 'Typed (first exam)'}</span>`}</td></tr>`;
@@ -633,7 +638,7 @@ function wireSetup(refs, cer, q, rerender) {
       if (i.classList.contains('amt')) i.onblur = () => { const v = num(i.value); if (v !== null) { i.value = money(v); st.bond[i.dataset.bond] = i.value; } };
     });
     { const cy = $('#cer-cyc'); if (cy) cy.onchange = () => { st.cycleId = cy.value; touch(); }; }
-    $$('[data-begser]').forEach((i) => { i.oninput = () => { st.begSer = st.begSer || {}; st.begSer[i.dataset.begser] = i.value; touch(); }; });
+    $$('[data-begors]').forEach((b) => { b.onclick = () => begOrsModal(refs, cer, st, b.dataset.begors, b.dataset.edit === '1', () => drawOfficer()); });
     $$('[data-bal]').forEach((i) => {
       i.oninput = () => { st.balances[i.dataset.bal] = i.value; touch(); const k = i.dataset.bal, ln = $(`[data-begline="${k}"]`); if (ln) ln.innerHTML = begLine(st, k, num(i.value)); };
       i.onblur = () => { const v = num(i.value); if (v !== null) { i.value = money(v); st.balances[i.dataset.bal] = i.value; } };
@@ -715,6 +720,67 @@ async function officerModal(refs, lguId, cur) {
 
 // Beginning checks of a cash advance balance: the checks still unliquidated at the last cash exam, one by one.
 // Saved as cash advances marked beginning, so the liquidations in Cash Advances are put against each check.
+// "9394901-9394911; 9394915" → [[9394901, 9394911], [9394915, 9394915]]
+function parseRangesTxt(t) {
+  return String(t || '').split(/[;,]/).map((p) => p.trim()).filter(Boolean).map((p) => { const m = p.replace(/\s/g, '').match(/^(\d+)(?:[-–](\d+))?$/); if (!m) return null; const a = +m[1], z = +(m[2] || m[1]); return z >= a ? [a, z] : null; }).filter(Boolean);
+}
+// Beginning ORs of a collection balance (Audit Setup): the ORs whose collections were undeposited at the last cash exam,
+// itemized by range like the beginning checks. Kept on the balance as begOrs [{ date, from, to, amount }] and series "a-b; c-d".
+// Suggested from Collections: the officer's ORs of this form tagged Before the period, not yet listed.
+async function begOrsModal(refs, cer, st, k, edit, redraw) {
+  const o = cer.officers.find((x) => x.id === st.officerId); if (!o) return;
+  const form = k.slice(4), prev = prevExam(cer, st.officerId, st.countDate, st.examId);
+  const lastExam = prev ? prev.countDate : st.lastExamDate;
+  const bal = num(String(st.balances?.[k] ?? '')) || 0;
+  const rows = (st.begOrs?.[k] || []).map((x) => ({ ...x }));
+  const ors = (await store.list('cer_ors')).map((r) => ({ id: r.id, ...r.data })).filter((x) => !x.deleted && x.officerId === o.id && x.form === form && x.status !== 'cancelled' && x.date && lastExam && x.date < lastExam);
+  const face = (x) => (x.items || []).reduce((n, i) => n + (+i.amt || 0), 0);
+  const mx = (x) => (x.range ? +x.serialTo : +x.serial);
+  // Suggestions: runs of consecutive numbers among those ORs.
+  const runs = []; ors.slice().sort((a, b) => +a.serial - +b.serial).forEach((x) => { const r = runs[runs.length - 1];
+    if (r && +x.serial <= r.to + 1) { r.to = Math.max(r.to, mx(x)); r.amount += face(x); if (x.date < r.date) r.date = x.date; } else runs.push({ date: x.date, from: +x.serial, to: mx(x), amount: face(x) }); });
+  const covered = (a, z) => rows.some((r) => +r.from <= a && z <= +r.to);
+  const cands = () => runs.filter((r) => !covered(r.from, r.to));
+  const r2x = (n) => Math.round((+n || 0) * 100) / 100;
+  const dis = edit ? '' : 'disabled';
+  let box;
+  const total = () => r2x(rows.reduce((n, x) => n + (num(String(x.amount ?? '')) || 0), 0));
+  const foot = () => { const t = total(), rest = r2x(bal - t);
+    return `Itemized ₱${money(t)} · Balance ₱${money(bal)} · ${Math.abs(rest) < 0.005 ? 'fully itemized' : rest > 0 ? `₱${money(rest)} not itemized (previous cash exam)` : `<span class="cer-begover">⚠ more than the balance by ₱${money(-rest)}</span>`}`; };
+  const draw = () => {
+    const cs = cands();
+    $('.bo-srcbox', box).innerHTML = edit && runs.length ? `<div class="bc-src"><div class="bc-srch"><b>From Collections</b> <span class="dim">(ORs tagged Before the period, not yet listed)</span>${cs.length > 1 ? '<button class="btn sm" type="button" id="bo-addall">Add all</button>' : ''}</div>
+      ${cs.length ? `<table class="cer-bal"><thead><tr><th>Date</th><th>OR From</th><th>OR To</th><th class="r">Amount</th><th></th></tr></thead><tbody>${cs.map((r, i) => `<tr><td>${esc(fmtDate(r.date))}</td><td class="mono">${r.from}</td><td class="mono">${r.to}</td><td class="r">${money(r.amount)}</td><td class="r"><button class="btn sm" type="button" data-addrun="${i}">Add</button></td></tr>`).join('')}</tbody></table>` : '<p class="dim" style="margin:6px 0 0">All of them are listed below.</p>'}</div>` : '';
+    $$('[data-addrun]', box).forEach((b) => { b.onclick = () => { const r = cands()[+b.dataset.addrun]; rows.push({ date: r.date, from: r.from, to: r.to, amount: money(r.amount) }); draw(); }; });
+    { const all = $('#bo-addall', box); if (all) all.onclick = () => { cands().forEach((r) => rows.push({ date: r.date, from: r.from, to: r.to, amount: money(r.amount) })); draw(); }; }
+    $('.bo-tbl tbody', box).innerHTML = rows.length ? rows.map((x, i) => `<tr data-r="${i}"><td><input class="input" type="date" data-f="date" value="${esc(x.date || '')}" aria-label="Date" ${dis}></td>
+        <td><input class="input mono" data-f="from" value="${esc(x.from ?? '')}" inputmode="numeric" aria-label="OR From" ${dis}></td><td><input class="input mono" data-f="to" value="${esc(x.to ?? '')}" inputmode="numeric" aria-label="OR To" ${dis}></td>
+        <td><input class="input r" data-f="amount" value="${esc(x.amount ?? '')}" inputmode="decimal" aria-label="Amount" ${dis}></td><td class="r">${edit ? `<button class="btn sm" type="button" data-rmb="${i}" aria-label="Remove">×</button>` : ''}</td></tr>`).join('')
+      : `<tr><td colspan="5" class="dim">No range listed.${edit ? ' Add the ORs whose collections were undeposited at the last cash exam, if known; otherwise leave it: the balance stays as "previous cash exam (not itemized)".' : ''}</td></tr>`;
+    $('.bo-foot', box).innerHTML = foot();
+    $$('.bo-tbl input[data-f]', box).forEach((inp) => { const i = +inp.closest('tr').dataset.r; inp.oninput = () => { rows[i][inp.dataset.f] = inp.value; $('.bo-foot', box).innerHTML = foot(); };
+      if (inp.dataset.f === 'amount') inp.onblur = () => { const v = num(inp.value); if (v !== null) { inp.value = money(v); rows[i].amount = inp.value; } }; });
+    $$('[data-rmb]', box).forEach((b) => { b.onclick = () => { rows.splice(+b.dataset.rmb, 1); draw(); }; });
+  };
+  let out = null;
+  const v = await modal({ title: `Beginning ORs · ${FORM_NAME[form] || form}`, wide: true,
+    body: `<p class="hint" style="margin:0 0 10px">${esc(o.name)} · the ORs whose collections were undeposited at the last cash exam${lastExam ? ` (${esc(fmtDate(lastExam))})` : ''}, with their amounts. They are the beginning balance: not flagged as outside the received booklets, and left out of the "not remitted / not presented" papers.</p>
+      <div class="bo-srcbox"></div>
+      <div class="cer-tbl"><table class="cer-bal bo-tbl"><thead><tr><th scope="col">Date</th><th scope="col">OR From</th><th scope="col">OR To</th><th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead><tbody></tbody></table></div>
+      <div class="bc-bar">${edit ? '<button class="btn" type="button" id="bo-add">+ Add line</button>' : '<span></span>'}<span class="bo-foot"></span></div>`,
+    onOpen: (bg) => { box = bg; draw(); const add = $('#bo-add', bg); if (add) add.onclick = () => { rows.push({ date: lastExam || '', from: '', to: '', amount: '' }); draw(); }; },
+    buttons: edit ? [{ label: 'Cancel', value: null }, { label: 'Done', cls: 'primary', value: 'ok', check: () => {
+      const list = rows.filter((x) => String(x.from ?? '').trim() || String(x.to ?? '').trim() || String(x.amount ?? '').trim());
+      for (const x of list) { const a = parseInt(String(x.from).replace(/\D/g, ''), 10), z = parseInt(String(x.to || x.from).replace(/\D/g, ''), 10);
+        if (!a || !z || z < a) { toast('Type OR From and OR To of each line (To not before From).', 'bad'); return false; } x.from = a; x.to = z; }
+      out = list.map((x) => ({ date: x.date || '', from: x.from, to: x.to, amount: num(String(x.amount ?? '')) ?? '' })); return true; } }] : [{ label: 'Close', cls: 'primary', value: null }] });
+  if (v !== 'ok' || !out) return;
+  st.begOrs = st.begOrs || {}; st.begOrs[k] = out;
+  st.begSer = st.begSer || {}; st.begSer[k] = out.map((x) => (x.from === x.to ? `${x.from}` : `${x.from}-${x.to}`)).join('; ');
+  DRAFT && (DRAFT.dirty = true);
+  toast('Beginning ORs listed. Save the Audit Setup to keep them.', 'ok');
+  if (redraw) redraw();
+}
 async function begChecksModal(refs, cer, st, k, edit) {
   if (!st.examId) return toast('Save the Audit Setup first, then enter the beginning checks.', 'bad');
   const o = cer.officers.find((x) => x.id === st.officerId); if (!o) return;
@@ -848,6 +914,7 @@ async function saveSetup(refs, cer, st) {
     if (BEG_CA[r.key]) { const lump = carried ? Number(prev.endBalances[r.key]) : num(st.balances[r.key]); const s = sumOf(begChecksOf(st, r.key));
       balances[r.key] = { ...balances[r.key], lump, amount: Math.max(lump || 0, s) }; }
     const ser = String(st.begSer?.[r.key] || '').trim(); if (ser && r.key.startsWith('col-')) balances[r.key].series = ser;
+    if (r.key.startsWith('col-') && (st.begOrs?.[r.key] || []).length) balances[r.key].begOrs = st.begOrs[r.key];
   });
   const oldAudit = cer.audits.find((a) => a.id === auditId);
   await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy, cycleId: st.cycleId || oldAudit?.cycleId || CYC.current || '' }, by(refs));

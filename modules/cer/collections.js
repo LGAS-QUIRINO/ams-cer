@@ -108,6 +108,16 @@ const LASTC = { key: '', form: '', bookletId: '', serial: '', date: '', auto: tr
 // beg: dated before the last cash exam: its numbers are used, its amount is in the beginning balance (not this period's).
 // An OR (or range line) not inside a booklet received or issued to the officer, of its form.
 const NIB = 'Not in a booklet received or issued to this officer in the Forms Register';
+// The beginning ORs listed in Audit Setup (per form): their ORs are the beginning balance, not a booklet of this period.
+export function begRangesOf(exam) {
+  const out = {};
+  Object.entries(exam?.balances || {}).forEach(([k, v]) => { if (!k.startsWith('col-') || !v) return;
+    const rs = (v.begOrs || []).map((x) => [+x.from, +(x.to || x.from)]).filter(([a, z]) => a && z >= a);
+    String(v.series || '').split(/[;,]/).forEach((p) => { const m = p.replace(/\s/g, '').match(/^(\d+)(?:[-–](\d+))?$/); if (m) rs.push([+m[1], +(m[2] || m[1])]); });
+    if (rs.length) out[k.slice(4)] = rs; });
+  return out;
+}
+const inBegRanges = (br, x) => (br[x.form] || []).some(([a, z]) => a <= +x.serial && (x.range ? +x.serialTo : +x.serial) <= z);
 const outOfBooklets = (f, o, x) => !f.booklets.some((b) => b.officerId === o.id && b.form === x.form && !b.noSerial && b.from <= +x.serial && (x.range ? +x.serialTo : +x.serial) <= b.to);
 const orAmount = (o) => (o.status === 'cancelled' || o.beg ? 0 : r2((o.items || []).reduce((n, i) => n + (+i.amt || 0), 0)));
 const maxSer = (x) => (x.range ? +x.serialTo : +x.serial);
@@ -126,6 +136,7 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const carriedFrom = exam && exam.lastExamDate && Object.entries(exam.balances || {}).some(([k, v]) => (k.startsWith('col-') || k === 'liq') && v?.source === 'carried') ? exam.lastExamDate : '';
   const reals = f.reports.filter((r) => r.officerId === o.id && !r.pending && !(carriedFrom && r.date && r.date <= carriedFrom));
   const allFunds = [...new Set([...funds, ...reals.map((r) => r.fund), ...ors.map((x) => x.fund).filter(Boolean)])];
+  const begR = begRangesOf(exam);
   const bal0 = exam?.balances || {}, gf = allFunds.find((x) => /general/i.test(x)) || allFunds[0];
   const begSetup = (kind, fund) => (fund !== gf || !exam ? null : r2(Object.entries(bal0).filter(([k]) => k.startsWith('col-') && kindOfForm(lgu, k.slice(4)) === kind).reduce((n, [, v]) => n + (+v?.amount || 0), 0)
     + (kind === kinds[0] && (kind === 'RCD' || (exam.functions || []).includes('liquidating')) ? (+bal0.liq?.amount || 0) : 0)));
@@ -181,7 +192,7 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
       if (miss.length) fig.issues.push(`Missing ${FORM_SHORT[k] || k} in the range: ${rangesText(mergeRanges(miss))}.`);
     });
     // ORs whose numbers are in no booklet of this officer (same form) in the Forms Register: never received, or a typing mistake.
-    const outside = list.filter((x) => outOfBooklets(f, o, x));
+    const outside = list.filter((x) => outOfBooklets(f, o, x) && !inBegRanges(begR, x));
     const byF = {}; outside.forEach((x) => { (byF[x.form] = byF[x.form] || []).push([+x.serial, maxSer(x)]); });
     Object.entries(byF).forEach(([k, rs]) => fig.issues.push(`${NIB}: ${FORM_SHORT[k] || k} ${rangesText(mergeRanges(rs))}. Add the booklet in Accountable Forms (Receive / Starting Inventory) or check the number.`));
     rem.forEach((m) => {
@@ -432,7 +443,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         <span class="cd-total">Total <b>₱ ${money(listOrs.reduce((n, x) => n + orAmount(x), 0))}</b></span>
         ${enc && forms.length ? '<a href="#" class="cd-link cd-tpl" id="cd-ortpl">Template</a><button class="btn" type="button" id="cd-orimp">Import from Excel</button>' : ''}<button class="btn" type="button" id="cd-xls">Export to Excel</button></div>
       ${listOrs.length ? `<div class="af-tbl cd-orscroll"><table class="af-reg cd-ors"><thead><tr><th scope="col">No.</th><th scope="col">OR No.</th><th scope="col">Date</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Status</th><th scope="col">${K}</th><th scope="col" class="r"></th></tr></thead>
-        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => p.p).join(' ')).toLowerCase())}"><td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.range ? `${x.serial}–${x.serialTo} <small class="dim">${maxSer(x) - x.serial + 1} ORs</small>` : x.serial}${x.beg ? ' <span class="pill p-beg" title="Dated before the last cash exam: in the beginning balance">Before the period</span>' : ''}${outOfBooklets(f, o, x) ? ' <span class="pill p-flag" title="Its number is in no booklet received or issued to this officer in the Forms Register">Not in a received booklet</span>' : ''}</td><td>${esc(fmtDate(x.date))}</td>
+        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => p.p).join(' ')).toLowerCase())}"><td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.range ? `${x.serial}–${x.serialTo} <small class="dim">${maxSer(x) - x.serial + 1} ORs</small>` : x.serial}${x.beg ? ' <span class="pill p-beg" title="Dated before the last cash exam: in the beginning balance">Before the period</span>' : ''}${outOfBooklets(f, o, x) && !inBegRanges(begRangesOf(exam), x) ? ' <span class="pill p-flag" title="Its number is in no booklet received or issued to this officer in the Forms Register">Not in a received booklet</span>' : ''}</td><td>${esc(fmtDate(x.date))}</td>
           ${(() => { const one = enc && x.status !== 'cancelled' && (x.items || []).length <= 1, p = (x.items || [])[0]?.p || '';
             return `<td ${one ? `class="cd-ed" data-ip="${esc(x.id)}" tabindex="0" title="Click to change the particular"` : ''}>${x.status === 'cancelled' ? '<span class="dim">—</span>' : (x.items || []).length > 1 ? esc(x.items.map((q) => q.p).join('; ')) : p === NO_PART || !p ? `<span class="cd-nopart">${NO_PART}</span>` : esc(p)}</td>
             <td class="r ${one ? 'cd-ed' : ''}" ${one ? `data-ia="${esc(x.id)}" tabindex="0" title="Click to change the amount"` : ''}>${x.beg ? `<span class="dim" title="In the beginning balance, not this period's">${money(+x.amount || 0)}</span>` : money(orAmount(x))}</td>`; })()}

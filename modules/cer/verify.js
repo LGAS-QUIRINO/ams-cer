@@ -137,6 +137,14 @@ export async function verifyView(ctx) {
   // Collections by OR range (cashbooks): the collector's cashbook against the Liquidating Officer's, and the beginning.
   cashbookFindings(f, o, exam, from, to).forEach((x) => add(x.key, 'Collections', x.text, '#/cer/collections'));
   { const np = cnpData(f, o, exam, from, to); if (np && np.notPresented > 0.004) add(`cnp|${np.notPresented}`, 'Collections', `₱${money(np.notPresented)}${np.groups.filter((g) => g.notPresented > 0.004).length > 1 ? ` (${np.groups.filter((g) => g.notPresented > 0.004).map((g) => `₱${money(g.notPresented)} ${g.short}`).join('; ')})` : ''} of collections dated before the last cash examination (${fmtDate(from)}) were not remitted as of that date; remitted only in this period (see the working paper: Collections not remitted as of the last cash exam).`, `#/cer/reports?a=${audit.id}&e=${exam.id}&rep=cnp`); }
+  // Each beginning OR range (Audit Setup) against the ORs encoded in it, when both are there.
+  Object.entries(exam.balances || {}).forEach(([k, v]) => (v?.begOrs || []).forEach((x) => {
+    const amt = num(String(x.amount ?? '')); if (amt === null || amt === undefined || amt === '') return;
+    const ins = f.ors.filter((y) => y.officerId === o.id && y.form === k.slice(4) && y.status !== 'cancelled' && +y.serial >= +x.from && (y.range ? +y.serialTo : +y.serial) <= +x.to);
+    if (!ins.length) return;
+    const t = r2(ins.reduce((n, y) => n + (y.items || []).reduce((m, i) => m + (+i.amt || 0), 0), 0));
+    if (Math.abs(t - amt) > 0.004) add(`begor|${k}|${x.from}|${t}`, 'Collections', `Beginning ORs ${x.from}–${x.to}: ₱${money(amt)} in Audit Setup; the ORs encoded in it total ₱${money(t)}.`, '#/cer/setup');
+  }));
   { const np = cnpData(f, o, exam, from, to); (np?.begCheck || []).filter((b) => Math.abs(b.ors - b.beg) > 0.004).forEach((b) => add(`begser|${b.form}|${b.ors}`, 'Collections', `${b.short} beginning balance ₱${money(b.beg)} (Audit Setup); the ORs encoded in its series ${b.text} total ₱${money(b.ors)}.`, '#/cer/setup')); }
   { const fn = fnpData(f, o, exam, from, to); if (fn && fn.qty) add(`fnp|${fn.qty}`, 'Accountable Forms', `${fn.qty} accountable form${fn.qty > 1 ? 's' : ''} issued before the last cash examination (${fmtDate(from)}) were not presented then${fn.groups.length > 1 ? ` (${fn.groups.map((g) => `${g.qty} ${g.short}`).join('; ')})` : ` (${fn.groups[0].short})`}; their collections were remitted only in this period (see the working paper: Accountable forms not presented at the last cash exam).`, `#/cer/reports?a=${audit.id}&e=${exam.id}&rep=fnp`); }
   cutoffFindings(f, o, exam, from, to).forEach((x) => add(`af|${x.key}`, 'Accountable Forms', x.text, x.key === 'nocut' || x.key.startsWith('np|') || x.key.startsWith('nir|') ? `#/cer/count?a=${audit.id}&e=${exam.id}` : '#/cer/forms'));
