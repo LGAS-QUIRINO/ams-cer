@@ -139,7 +139,7 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const begR = begRangesOf(exam);
   // An OR dated before the last cash exam is of the beginning (Before the period), tagged or not yet.
   const lx = exam?.lastExamDate || '';
-  const isBeg = (x) => !!x.beg || !!(lx && x.date && x.date < lx);
+  const isBeg = (x) => (lx ? !!(x.date && x.date < lx) : !!x.beg);   // always from the current Last Cash Exam date
   const amtOf = (x) => (x.status === 'cancelled' || isBeg(x) ? 0 : r2((x.items || []).reduce((n, i) => n + (+i.amt || 0), 0)));
   const bal0 = exam?.balances || {}, gf = allFunds.find((x) => /general/i.test(x)) || allFunds[0];
   const begSetup = (kind, fund) => (fund !== gf || !exam ? null : r2(Object.entries(bal0).filter(([k]) => k.startsWith('col-') && kindOfForm(lgu, k.slice(4)) === kind).reduce((n, [, v]) => n + (+v?.amount || 0), 0)
@@ -304,8 +304,13 @@ export async function collectionsView(ctx) {
   const funds = fundsOf(f, audit.lguId);
   let fig = figuresOf(f, o, funds, audit.countDate, lgu, exam);
   // ORs dated before the last cash exam (entered one by one or imported before this rule): tagged Before the period once.
-  const oldOrs = exam.lastExamDate ? f.ors.filter((x) => x.officerId === o.id && !x.beg && x.date && x.date < exam.lastExamDate) : [];
-  if (canEncode(refs) && oldOrs.length) { for (const x of oldOrs) await store.save('cer_ors', x.id, { ...strip(x), beg: true }, by(refs), { quiet: true }); return collectionsView(ctx); }
+  // "Before the period" follows the current Last Cash Exam date: tag ORs dated before it, clear stale tags on ORs dated on or after it
+  const lxd = exam.lastExamDate || '';
+  const oldOrs = lxd ? f.ors.filter((x) => x.officerId === o.id && x.date && (x.date < lxd) !== !!x.beg) : [];
+  if (canEncode(refs) && oldOrs.length) {
+    for (const x of oldOrs) { const { beg, ...rest } = strip(x); await store.save('cer_ors', x.id, x.date < lxd ? { ...rest, beg: true } : rest, by(refs), { quiet: true }); }
+    return collectionsView(ctx);
+  }
   // Records dated on or before a submitted report go into it (e.g. ORs encoded after the SCD was added).
   if (canEncode(refs) && misplaced(fig)) { await sweepChains(f, fig, refs); return collectionsView(ctx); }
   const isLO = (exam.functions || []).includes('liquidating');
