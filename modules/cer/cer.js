@@ -551,7 +551,7 @@ function officerHtml(refs, cer, st, edit) {
             ${r.key === 'ca' && bankAccts.length > 1 ? `<label class="cer-restfund">Not itemized · Fund <select class="input af-sm" data-restfund ${dis}>${bankAccts.map((x) => `<option ${x.fund === (st.caRestFund || bankAccts[0].fund) ? 'selected' : ''}>${esc(x.fund)}</option>`).join('')}</select></label>` : ''}</div>` : '';
           // Collections: the OR series of the ORs making up the balance (presented at the last cash exam), when known.
           // Collections: the ORs making up the balance (itemized like the beginning checks), when known.
-          const bo = st.begOrs?.[r.key] || [], boT = Math.round(bo.reduce((n, x) => n + (num(String(x.amount ?? '')) || 0), 0) * 100) / 100;
+          const bo = st.begOrs?.[r.key]?.length ? st.begOrs[r.key] : (carried && prev?.endOrs?.[r.key]) || [], boT = Math.round(bo.reduce((n, x) => n + (num(String(x.amount ?? '')) || 0), 0) * 100) / 100;
           const ser = r.key.startsWith('col-') ? `<div class="cer-begline"><span>${bo.length ? `${bo.length} range${bo.length > 1 ? 's' : ''}: ${esc(bo.map((x) => `${x.from}–${x.to}`).join(', '))}${boT ? ` · ₱${money(boT)}` : ''}` : 'ORs not itemized'}</span>
             <button class="btn sm" type="button" data-begors="${r.key}" data-edit="${edit ? 1 : 0}">${edit ? 'Beginning ORs' : 'View ORs'}</button></div>` : '';
           return `<tr><td><b>${esc(r.label)}</b>${bl}${ser}</td><td class="dim">${esc(r.fn)}</td>
@@ -732,7 +732,9 @@ async function begOrsModal(refs, cer, st, k, edit, redraw) {
   const form = k.slice(4), prev = prevExam(cer, st.officerId, st.countDate, st.examId);
   const lastExam = prev ? prev.countDate : st.lastExamDate;
   const bal = num(String(st.balances?.[k] ?? '')) || 0;
-  const rows = (st.begOrs?.[k] || []).map((x) => ({ ...x }));
+  // Carried from the previous cash exam: its ORs not yet deposited / remitted at that count, unless listed here already.
+  const carriedOrs = prev && prev.endBalances && prev.endBalances[k] !== undefined && prev.endBalances[k] !== null ? prev.endOrs?.[k] || [] : [];
+  const rows = (st.begOrs?.[k]?.length ? st.begOrs[k] : carriedOrs).map((x) => ({ ...x, amount: x.amount === '' || x.amount === null || x.amount === undefined ? '' : money(+x.amount) }));
   const ors = (await store.list('cer_ors')).map((r) => ({ id: r.id, ...r.data })).filter((x) => !x.deleted && x.officerId === o.id && x.form === form && x.status !== 'cancelled' && x.date && lastExam && x.date < lastExam);
   const face = (x) => (x.items || []).reduce((n, i) => n + (+i.amt || 0), 0);
   const mx = (x) => (x.range ? +x.serialTo : +x.serial);
@@ -915,6 +917,10 @@ async function saveSetup(refs, cer, st) {
       balances[r.key] = { ...balances[r.key], lump, amount: Math.max(lump || 0, s) }; }
     const ser = String(st.begSer?.[r.key] || '').trim(); if (ser && r.key.startsWith('col-')) balances[r.key].series = ser;
     if (r.key.startsWith('col-') && (st.begOrs?.[r.key] || []).length) balances[r.key].begOrs = st.begOrs[r.key];
+    else if (r.key.startsWith('col-') && carried && (prev.endOrs?.[r.key] || []).length) {   // carried: the previous count's ORs not yet deposited
+      balances[r.key].begOrs = prev.endOrs[r.key];
+      balances[r.key].series = prev.endOrs[r.key].map((x) => (x.from === x.to ? `${x.from}` : `${x.from}-${x.to}`)).join('; ');
+    }
   });
   const oldAudit = cer.audits.find((a) => a.id === auditId);
   await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy, cycleId: st.cycleId || oldAudit?.cycleId || CYC.current || '' }, by(refs));

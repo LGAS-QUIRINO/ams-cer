@@ -137,6 +137,10 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const reals = f.reports.filter((r) => r.officerId === o.id && !r.pending && !(carriedFrom && r.date && r.date <= carriedFrom));
   const allFunds = [...new Set([...funds, ...reals.map((r) => r.fund), ...ors.map((x) => x.fund).filter(Boolean)])];
   const begR = begRangesOf(exam);
+  // An OR dated before the last cash exam is of the beginning (Before the period), tagged or not yet.
+  const lx = exam?.lastExamDate || '';
+  const isBeg = (x) => !!x.beg || !!(lx && x.date && x.date < lx);
+  const amtOf = (x) => (x.status === 'cancelled' || isBeg(x) ? 0 : r2((x.items || []).reduce((n, i) => n + (+i.amt || 0), 0)));
   const bal0 = exam?.balances || {}, gf = allFunds.find((x) => /general/i.test(x)) || allFunds[0];
   const begSetup = (kind, fund) => (fund !== gf || !exam ? null : r2(Object.entries(bal0).filter(([k]) => k.startsWith('col-') && kindOfForm(lgu, k.slice(4)) === kind).reduce((n, [, v]) => n + (+v?.amount || 0), 0)
     + (kind === kinds[0] && (kind === 'RCD' || (exam.functions || []).includes('liquidating')) ? (+bal0.liq?.amount || 0) : 0)));
@@ -162,8 +166,8 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const build = (id, rec, list, beg, begAdd = 0) => {
     const own = list.filter((x) => x.status !== 'cancelled');
     const rem = (rec?.remittances || []).filter((m) => !m.beg);
-    const fig = { id, rec, ors: list, beg, orsTotal: sum(own.map((x) => ({ a: orAmount(x) })), 'a'), remTotal: sum(rem, 'amount'), dep: sum(rec?.deposits || [], 'amount'),
-      begRaw: r2(own.filter((x) => x.beg).reduce((n, x) => n + r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0)), 0)),   // ORs of the beginning (Before the period), at face
+    const fig = { id, rec, ors: list, beg, orsTotal: sum(own.map((x) => ({ a: amtOf(x) })), 'a'), remTotal: sum(rem, 'amount'), dep: sum(rec?.deposits || [], 'amount'),
+      begRaw: r2(own.filter(isBeg).reduce((n, x) => n + r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0)), 0)),   // ORs of the beginning (Before the period), at face
       nOrs: list.length, nCancelled: list.length - own.length, from: '', to: '', range: rangeByForm(list), issues: [] };
     fig.coll = r2(fig.orsTotal + fig.remTotal);
     fig.begAdd = r2(begAdd);
@@ -228,7 +232,7 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
     // what is left (no beginning OR encoded yet) to the first report.
     const add = {};
     if (op.setup) {
-      const faceBeg = (xs) => r2(xs.filter((x) => x.beg && x.status !== 'cancelled').reduce((n, x) => n + r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0)), 0));
+      const faceBeg = (xs) => r2(xs.filter((x) => isBeg(x) && x.status !== 'cancelled').reduce((n, x) => n + r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0)), 0));
       let left = op.v;
       [...list.map((r) => ({ id: r.id, raw: faceBeg(ors.filter((x) => x.reportId === r.id)) })), { id: pid, raw: faceBeg(pendOrs) }].forEach(({ id, raw }) => { const a = r2(Math.min(left, raw)); if (a > 0.004) { add[id] = a; left = r2(left - a); } });
       if (left > 0.004) { const fid = list[0] ? list[0].id : pid; add[fid] = r2((add[fid] || 0) + left); }

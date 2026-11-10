@@ -44,9 +44,24 @@ export function endingOf(exam, st, lgu) {
   });
   return out;
 }
-async function saveEnding(refs, exam, st, lgu) {
+// The ORs still in no SCD / RCD at the count (not yet deposited or remitted), per form, as ranges with their amounts:
+// the next cash exam's Beginning ORs.
+export function endOrsOf(f, exam, countDate) {
+  const out = {};
+  const mine = f.ors.filter((x) => x.officerId === exam.officerId && !x.reportId && x.status !== 'cancelled' && x.date && x.date <= countDate && (exam.forms || []).includes(x.form));
+  [...new Set(mine.map((x) => x.form))].forEach((form) => {
+    const runs = [];
+    mine.filter((x) => x.form === form).sort((a, b) => +a.serial - +b.serial).forEach((x) => {
+      const z = x.range ? +x.serialTo : +x.serial, amt = (x.items || []).reduce((n, i) => n + (+i.amt || 0), 0), r = runs[runs.length - 1];
+      if (r && +x.serial <= r.to + 1) { r.to = Math.max(r.to, z); r.amount = r2(r.amount + amt); if (x.date < r.date) r.date = x.date; } else runs.push({ date: x.date, from: +x.serial, to: z, amount: r2(amt) });
+    });
+    if (runs.length) out['col-' + form] = runs;
+  });
+  return out;
+}
+async function saveEnding(refs, exam, st, lgu, f, countDate) {
   const r = await store.get('cer_exams', exam.id); if (!r || r.deleted) return;
-  await store.save('cer_exams', exam.id, { ...r.data, endBalances: endingOf(r.data, st, lgu), endAt: new Date().toISOString().slice(0, 10) }, by(refs), { quiet: true });
+  await store.save('cer_exams', exam.id, { ...r.data, endBalances: endingOf(r.data, st, lgu), endOrs: f ? endOrsOf(f, r.data, countDate) : (r.data.endOrs || {}), endAt: new Date().toISOString().slice(0, 10) }, by(refs), { quiet: true });
 }
 export function accountability(refs, f, audit, exam, advs, liqs, counts) {
   const lgu = refs.lgu[audit.lguId];
@@ -215,7 +230,7 @@ export async function verifyView(ctx) {
 
   const ver = ver0.map(flat).find((v) => v.id === exam.id) || { recon: {}, decisions: {} };
   // Marked ready before the ending balances were kept: saved now, for the officer's next cash exam.
-  if (ver.ready && !exam.endBalances) saveEnding(refs, exam, st, lgu);
+  if (ver.ready && (!exam.endBalances || !exam.endOrs)) saveEnding(refs, exam, st, lgu, f, audit.countDate);
   // Progress of the encoding, shown until the auditor ticks "Encoding complete".
   const myOrs = f.ors.filter((x) => x.officerId === o.id && orOk(x));
   const lastOr = myOrs.map((x) => x.date).sort().pop();
@@ -339,7 +354,7 @@ function wireVerify(c) {
     const left = findings.filter((x) => dec(x.key).decision === 'To decide').length;
     if (left) return bad(`${left} finding${left > 1 ? 's are' : ' is'} still "To decide". Save a decision for each first.`);
     saveVer({ ready: true, readyBy: refs.me?.data.name || by(refs), readyAt: new Date().toISOString() }, 'Marked ready for Reports.');
-    saveEnding(refs, exam, st, lgu);   // the next cash exam of this officer starts from these
+    saveEnding(refs, exam, st, lgu, f, audit.countDate);   // the next cash exam of this officer starts from these
   };
   const ur = $('#vf-unready'); if (ur) ur.onclick = () => saveVer({ ready: false }, 'Reopened.');
   const cp = $('#vf-complete'); if (cp && auditor) cp.onchange = () => (cp.checked
