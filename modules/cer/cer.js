@@ -728,6 +728,18 @@ async function begChecksModal(refs, cer, st, k, edit) {
     .map((a) => ({ ...a, n: liqs.filter((l) => l.advanceId === a.id).length }));
   const removed = [];
   const dis = edit ? '' : 'disabled';
+  // From Source Documents: the officer's checks (Cash Advances, RCI / CkDJ) dated on or before the last cash exam, less their
+  // liquidations and refunds dated on or before it; those with a balance left, not yet among the beginning checks.
+  const ckey = (v) => String(v ?? '').replace(/\D/g, '');
+  const srcAll = !lastExam ? [] : (await (await import('../src/journal.js')).listAdvances(true)).map((r) => ({ id: r.id, ...r.data }))
+    .filter((a) => !a.deleted && !a.beg && a.officerId === o.id && a.date && a.date <= lastExam)
+    .map((a) => { const before = liqs.filter((l) => l.advanceId === a.id && l.date && l.date <= lastExam).reduce((n, l) => n + (+l.amount || 0), 0);
+      return { ...a, liqBefore: Math.round(before * 100) / 100, unliq: Math.round(((+a.amount || 0) - before) * 100) / 100 }; })
+    .filter((a) => a.unliq > 0.004).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const cands = () => srcAll.filter((a) => !rows.some((r) => r.srcId === a.id || ckey(r.checkNo) === ckey(a.checkNo)));
+  const fromSrc = (a) => ({ date: a.date, checkNo: a.checkNo, particulars: a.particulars || '', amount: money(a.unliq), n: 0, srcId: a.id,
+    // A check typed in Cash Advances becomes the beginning check itself (its liquidations stay linked); one from the RCI is added.
+    ...(String(a.id).startsWith('ckdj|') ? { fromJr: a.id, acctId: a.acctId || '' } : { id: a.id, convert: true, origAmount: a.amount, acctId: a.acctId || '' }) });
   const rowHtml = (a, i) => `<tr data-r="${i}"><td><label class="sr-only" for="bc-d${i}">Date</label><input class="input" type="date" id="bc-d${i}" data-f="date" value="${esc(a.date || '')}" ${dis}></td>
     <td><label class="sr-only" for="bc-c${i}">Check No.</label><input class="input mono" id="bc-c${i}" data-f="checkNo" value="${esc(a.checkNo || '')}" autocomplete="off" ${dis}></td>
     <td><label class="sr-only" for="bc-p${i}">Particulars</label><input class="input" id="bc-p${i}" data-f="particulars" value="${esc(a.particulars || '')}" autocomplete="off" ${dis}></td>
@@ -737,8 +749,18 @@ async function begChecksModal(refs, cer, st, k, edit) {
     const l = +lump || 0, rest = Math.round((l - s) * 100) / 100;
     return `Checks ₱${money(s)}${l ? ` · Lump sum ₱${money(l)}${s > l + 0.004 ? ` · <span class="cer-begover">⚠ more than the lump sum by ₱${money(s - l)}; ₱${money(s)} will be used</span>` : rest > 0.004 ? ` · ₱${money(rest)} not itemized` : ' · fully itemized'}` : ' · no lump sum typed: the balance is the total of the checks'}`; };
   let box;
+  const srcHtml = () => { const cs = cands(); if (!edit || !srcAll.length) return '';
+    const t = Math.round(srcAll.reduce((n, a) => n + a.unliq, 0) * 100) / 100, l = +lump || 0;
+    return `<div class="bc-src"><div class="bc-srch"><b>From Source Documents</b> <span class="dim">(Cash Advances, RCI / Liquidation Journal) · unliquidated as of ${esc(fmtDate(lastExam))}: ₱${money(t)}${l && Math.abs(t - l) > 0.004 ? ` · <span class="cer-begover">differs from the lump sum ₱${money(l)} by ₱${money(Math.abs(t - l))}</span>` : l ? ' · agrees with the lump sum' : ''}</span>
+      ${cs.length > 1 ? '<button class="btn sm" type="button" id="bc-addall">Add all</button>' : ''}</div>
+      ${cs.length ? `<table class="cer-bal"><thead><tr><th>Date</th><th>Check No.</th><th>Particulars</th><th class="r">Amount</th><th class="r">Liquidated by ${esc(fmtDate(lastExam))}</th><th class="r">Unliquidated</th><th></th></tr></thead>
+        <tbody>${cs.map((a) => `<tr><td>${esc(fmtDate(a.date))}</td><td class="mono">${esc(a.checkNo)}</td><td>${esc(a.particulars || '')}</td><td class="r">${money(a.amount)}</td><td class="r">${money(a.liqBefore)}</td><td class="r"><b>${money(a.unliq)}</b></td>
+          <td class="r"><button class="btn sm" type="button" data-addsrc="${esc(a.id)}">Add</button></td></tr>`).join('')}</tbody></table>` : '<p class="dim" style="margin:6px 0 0">All of them are among the beginning checks below.</p>'}</div>`; };
   const draw = () => {
-    $('tbody', box).innerHTML = rows.length ? rows.map(rowHtml).join('') : `<tr><td colspan="5" class="dim">No check entered yet.${edit ? ' Add each check still unliquidated as of the last cash exam.' : ''}</td></tr>`;
+    $('.bc-srcbox', box).innerHTML = srcHtml();
+    $$('[data-addsrc]', box).forEach((b) => { b.onclick = () => { rows.push(fromSrc(srcAll.find((a) => a.id === b.dataset.addsrc))); draw(); }; });
+    { const all = $('#bc-addall', box); if (all) all.onclick = () => { cands().forEach((a) => rows.push(fromSrc(a))); draw(); }; }
+    $('.bc-tbl tbody', box).innerHTML = rows.length ? rows.map(rowHtml).join('') : `<tr><td colspan="5" class="dim">No check entered yet.${edit ? ' Add each check still unliquidated as of the last cash exam.' : ''}</td></tr>`;
     $('.bc-foot', box).innerHTML = foot();
     $$('input[data-f]', box).forEach((inp) => {
       const i = +inp.closest('tr').dataset.r, f = inp.dataset.f;
@@ -752,6 +774,7 @@ async function begChecksModal(refs, cer, st, k, edit) {
   let out = null;
   const v = await modal({ title: `Beginning checks · ${BEG_CA[k]}`, wide: true,
     body: `<p class="hint" style="margin:0 0 10px">${esc(o.name)} · checks unliquidated as of the last cash exam${lastExam ? ` (${esc(fmtDate(lastExam))})` : ''}. Enter the amount still unliquidated on each check. They show in Cash Advances tagged Beginning, and their liquidations are matched per check.</p>
+      <div class="bc-srcbox"></div>
       <div class="cer-tbl"><table class="cer-bal bc-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">Particulars</th><th scope="col" class="r">Unliquidated (₱)</th><th scope="col"></th></tr></thead><tbody></tbody></table></div>
       <div class="bc-bar">${edit ? '<button class="btn" type="button" id="bc-add">+ Add check</button>' : '<span></span>'}<span class="bc-foot"></span></div>`,
     onOpen: (bg) => { box = bg; draw(); const add = $('#bc-add', bg);
@@ -765,7 +788,7 @@ async function begChecksModal(refs, cer, st, k, edit) {
         if (!amt || amt <= 0) { toast(`Enter the unliquidated amount of Check No. ${no}.`, 'bad'); return false; }
         if (!a.date) { toast(`Enter the date of Check No. ${no}.`, 'bad'); return false; }
         const key = no.toUpperCase();
-        if (seen.has(key) || others.some((x) => x.id !== a.id && !removed.some((r) => r.id === x.id) && String(x.checkNo).trim().toUpperCase() === key)) { toast(`Check No. ${no} is already encoded for this officer.`, 'bad'); return false; }
+        if (seen.has(key) || others.some((x) => x.id !== a.id && x.id !== a.srcId && !removed.some((r) => r.id === x.id) && String(x.checkNo).trim().toUpperCase() === key)) { toast(`Check No. ${no} is already encoded for this officer.`, 'bad'); return false; }
         seen.add(key);
       }
       out = list.map((a) => ({ ...a, checkNo: String(a.checkNo).trim(), particulars: String(a.particulars || '').trim(), amount: num(String(a.amount)) }));
@@ -777,8 +800,14 @@ async function begChecksModal(refs, cer, st, k, edit) {
     const { id, n, ...rec } = a;
     const data = { ...rec, lguId: st.lguId, officerId: o.id, beg: true, begKey: k, begExamId: st.examId };
     const old = id ? CA.find((x) => x.id === id) : null;
-    if (old && ['date', 'checkNo', 'particulars', 'amount'].every((f) => String(old[f] ?? '') === String(data[f] ?? ''))) continue;
-    await store.save('cer_cashadv', id || newId('cerca'), data, who, { quiet: true });
+    if (old && !a.convert && ['date', 'checkNo', 'particulars', 'amount'].every((f) => String(old[f] ?? '') === String(data[f] ?? ''))) continue;
+    // A check typed in Cash Advances: kept as one record, now the beginning check (its own data kept).
+    const base = a.convert ? (await store.get('cer_cashadv', id))?.data || {} : {};
+    const { srcId, fromJr, convert, ...clean } = data;
+    const nid = id || newId('cerca');
+    await store.save('cer_cashadv', nid, { ...base, ...clean }, who, { quiet: true });
+    // A check from the RCI: its liquidations (Liquidation Journal) follow it to the beginning check.
+    if (fromJr) for (const l of liqs.filter((x) => x.advanceId === fromJr)) { const { id: lid, ...lr } = l; await store.save('cer_liquid', lid, { ...lr, advanceId: nid }, who, { quiet: true }); }
   }
   // The exam's balance follows: the larger of the lump sum and the checks.
   const ex = await store.get('cer_exams', st.examId);

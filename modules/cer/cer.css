@@ -908,3 +908,8 @@ table.af-reg.tr-month{min-width:0}
 .cyc-grp { border-top: 1px solid var(--line); padding: 10px 0 }
 .cyc-grp > summary { cursor: pointer; font-size: 14.5px; color: var(--navy); padding: 4px 0 8px; list-style-position: inside }
 .cyc-grp > summary .dim { font-size: 13px }
+/* Beginning checks: the officer's checks unliquidated at the last cash exam, from the Source Documents */
+.bc-src { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; background: #fafbfd }
+.bc-srch { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; font-size: 13.5px }
+.bc-srch #bc-addall { margin-left: auto }
+.bc-src table { width: 100%; font-size: 13px }
