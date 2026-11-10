@@ -12,7 +12,7 @@ import { store } from '../../js/store.js';
 import { covOf, inCov, withLines, isPart } from './banks.js';
 import { tagSameDay } from './collections.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
-import { mayView, cycleOk, loadCer, agencyName, fmtDate, money, num, autoPreparer, autoReviewer } from './cer.js';
+import { mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, autoPreparer, autoReviewer } from './cer.js';
 import { loadForms, saafRows, unusedFormsOf, notPresentedOf, countRanges, FORM_SHORT, faceOf } from './forms.js';
 import { accountability } from './verify.js';
 import { WP, wpLines, wpHtml, rsaHtml, wireWp, downloadReport, downloadWp } from './wp.js';
@@ -52,9 +52,9 @@ export async function reportsView(ctx) {
   const hello = `<div class="hello"><div><h1>Reports</h1><p>Made from the records encoded: nothing is typed again. Print or export each one. More reports follow.</p></div></div>`;
   const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && (cycleOk(a) || a.id === q.get('a'))).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   if (!audits.length) return { crumb, body: hello + '<div class="panel"><div class="empty"><b>No cash examination yet.</b>The auditors set one up in Audit Setup.</div></div>' };
-  const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
+  const audit = pickAudit(audits, q);
   const exams = f.exams.filter((e) => e.auditId === audit.id).map((e) => ({ ...e, o: f.officers.find((x) => x.id === e.officerId) })).filter((e) => e.o);
-  const exam = exams.find((e) => e.id === q.get('e')) || exams[0] || null;
+  const exam = pickExam(exams, q, audit) || exams[0] || null; remember(refs, audit, exam);
   const rep = REPORTS.some(([k]) => k === q.get('rep')) ? q.get('rep') : '74a';
   const top = `<div class="panel cd-bar rp-bar">
       <div class="field"><label for="rp-audit">Cash Examination</label><select class="input" id="rp-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>

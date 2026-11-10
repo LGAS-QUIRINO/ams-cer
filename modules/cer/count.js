@@ -14,7 +14,7 @@
 import { listT } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
-import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
+import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
 import { loadForms, unusedFormsOf, notPresentedOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, tagSameDay, ctcSplit, ctcBalance, ctcBegShare } from './collections.js';
 import { accountsOf, caFund, restFund, fundOrder, carriedOpen } from './funds.js';
@@ -83,9 +83,9 @@ export async function countView(ctx) {
   const hello = `<div class="hello"><div><h1>Cash Count (Cut-off)</h1><p>The ending: what the officer presents at the cut-off. The remaining accountable forms, then cash on hand and cash items. The count is split by accountability and carried to the Report of Cash Examination (GF 74-A).</p></div></div>`;
   const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && (cycleOk(a) || a.id === q.get('a'))).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   if (!audits.length) return { crumb, body: hello + '<div class="panel"><div class="empty"><b>No cash examination yet.</b>The auditors set one up in Audit Setup.</div></div>' };
-  const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
+  const audit = pickAudit(audits, q);
   const exams = f.exams.filter((e) => e.auditId === audit.id).map((e) => ({ ...e, o: f.officers.find((x) => x.id === e.officerId) })).filter((e) => e.o);
-  const exam = exams.find((e) => e.id === q.get('e')) || exams[0] || null;
+  const exam = pickExam(exams, q, audit) || exams[0] || null; remember(refs, audit, exam);
   const top = (open = false) => `<div class="panel ${open ? 'cd-head' : 'cd-bar'} cc-bar">${open ? '<div class="cd-headrow">' : ''}
       <div class="field"><label for="cc-audit">Cash Examination</label><select class="input" id="cc-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>
       <div class="field"><label for="cc-exam">Accountable Officer</label><select class="input" id="cc-exam">${exams.length ? exams.map((e) => `<option value="${esc(e.id)}" ${exam && e.id === exam.id ? 'selected' : ''}>${esc(e.o.name)}${e.o.designation ? ' · ' + esc(e.o.designation) : ''}</option>`).join('') : '<option value="">No officer in this examination</option>'}</select></div>

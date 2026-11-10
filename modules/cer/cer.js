@@ -299,6 +299,18 @@ function cyclesOf(audits, saved) {
   cacheCycles({ list: all.map((c) => ({ id: c.id, name: c.name })), current: CYC.current });
 }
 export const cycles = () => CYC;
+// The cash examination being worked on (this device): the last one opened on any screen, with its officer. Every screen opens
+// on it until another is picked; one outside the Working on / Cycle shown is not used (the screen's own default instead).
+const PICK = 'ams.cerpick';
+export const getPick = () => { try { return JSON.parse(localStorage.getItem(PICK) || '{}') || {}; } catch { return {}; } };
+export const pickAudit = (audits, q) => audits.find((a) => a.id === q.get('a')) || audits.find((a) => a.id === getPick().a) || audits[0];
+export const pickExam = (exams, q, audit) => { const p = getPick(); return exams.find((e) => e.id === q.get('e')) || (audit && p.a === audit.id ? exams.find((e) => e.id === p.e) : null) || null; };
+export function remember(refs, audit, exam) {
+  if (!audit) return;
+  const o = exam && (exam.o || null);
+  const label = [agencyName(refs, refs.lgu[audit.lguId]), fmtDate(audit.countDate), o ? o.name : ''].filter(Boolean).join(' · ');
+  try { localStorage.setItem(PICK, JSON.stringify({ a: audit.id, e: exam ? exam.id : '', label })); } catch { /* private window */ }
+}
 // In the cycle shown (header select): Current by default, one cycle, or All.
 export function cycleOk(a) {
   const s = getCycle(), id = CYC.of[a.id] || a.cycleId;
@@ -356,6 +368,7 @@ function stateFrom(refs, cer, q) {
   const exams = audit ? cer.exams.filter((e) => e.auditId === audit.id) : [];
   const want = q.get('o');
   const exam = want === 'new' ? null : (exams.find((e) => e.id === want) || exams[0] || null);
+  if (audit) remember(refs, audit, exam ? { ...exam, o: cer.officers.find((x) => x.id === exam.officerId) } : null);
   const lgu = audit ? refs.lgu[audit.lguId] : null;
   const st = {
     auditId: audit ? audit.id : '', lguId: audit ? audit.lguId : '', countDate: audit ? audit.countDate : '', cycleId: audit ? (CYC.of[audit.id] || audit.cycleId || '') : CYC.current,

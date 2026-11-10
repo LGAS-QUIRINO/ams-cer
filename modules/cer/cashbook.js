@@ -8,7 +8,7 @@
 // The Cash in Bank ending is the Balance per Cashbook of the bank reconciliation.
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
-import { by, hasRole, mayView, cycleOk, loadCer, agencyName, fmtDate, money, num } from './cer.js';
+import { by, hasRole, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num } from './cer.js';
 import { loadForms, orIn, FORM_SHORT } from './forms.js';
 import { listT, loadJournal, checkAmountOf, chkNo, transfersInto, typedTransfer } from '../src/journal.js';
 import { tagSameDay, depRefText } from './collections.js';
@@ -114,10 +114,10 @@ export async function cashbookView(ctx) {
   const settings = Object.fromEntries(set0.map((s) => [s.id, s.data]));
   const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && (cycleOk(a) || a.id === q.get('a')) && refs.lgu[a.lguId]?.data.kind === 'barangay').sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   if (!audits.length) return { crumb, body: '<div class="panel"><div class="empty"><b>No cash examination of a barangay yet.</b> The Cashbook is for barangays.</div></div>' };
-  const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
+  const audit = pickAudit(audits, q);
   const lgu = refs.lgu[audit.lguId];
   const exams = f.exams.filter((e) => e.auditId === audit.id).map((e) => ({ ...e, o: f.officers.find((x) => x.id === e.officerId) })).filter((e) => e.o);
-  const exam = exams.find((e) => e.id === q.get('e')) || exams.find((e) => /treasurer/i.test(e.o.designation || '')) || exams[0] || null;
+  const exam = pickExam(exams, q, audit) || exams.find((e) => /treasurer/i.test(e.o.designation || '')) || exams[0] || null; remember(refs, audit, exam);
   const accounts = settings['banks|' + audit.lguId]?.list || [];
   const acct = accounts.find((x) => x.id === q.get('acct')) || accounts[0] || null;
   const enc = canEncode(refs);

@@ -18,6 +18,12 @@ export function cycleSelect(id, cls = '') {
     `<option value="all" ${s === 'all' ? 'selected' : ''}>All cycles</option>`];
   return `<label class="scope-pick ${cls}"><span>Cycle</span><select class="input" id="${id}" aria-label="Cash examination cycle">${opts.join('')}</select></label>`;
 }
+// The cash examination being worked on (set by the CER screens): shown in the header with a link to change it.
+export function pickChip() {
+  let p = {}; try { p = JSON.parse(localStorage.getItem('ams.cerpick') || '{}') || {}; } catch { /* none */ }
+  if (!p.a || !p.label) return '';
+  return `<span class="cer-pick" title="Every screen opens on this cash examination until you pick another"><span>Working on</span><b>${esc(p.label)}</b><a href="#/cer/setup">Change</a></span>`;
+}
 document.addEventListener('change', (e) => {
   const el = e.target; if (!el || el.id !== 'm-cycle') return;
   setCycle(el.value); window.dispatchEvent(new HashChangeEvent('hashchange'));

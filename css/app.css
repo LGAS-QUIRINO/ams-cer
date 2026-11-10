@@ -303,3 +303,10 @@ details.acc[open] > summary .acc-s{visibility:hidden}
 .scope-pick.on-dash{margin-top:14px; justify-content:center}
 .scope-pick.in-top{margin-left:6px}
 @media (max-width:760px){ .scope-pick.in-top{display:none} }
+/* CER: the cash examination being worked on (under the header) */
+.cer-pickbar { padding: 8px 28px; background: #eef3fb; border-bottom: 1px solid var(--line, #dbe3ef); font-size: 13.5px }
+.cer-pick { display: inline-flex; gap: 10px; align-items: baseline; flex-wrap: wrap }
+.cer-pick > span { color: var(--muted, #5b6b84); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; font-weight: 700 }
+.cer-pick b { color: var(--navy, #16325c) }
+.cer-pick a { font-size: 13px }
+@media print { .cer-pickbar { display: none } }

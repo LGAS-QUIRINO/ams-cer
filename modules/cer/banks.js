@@ -25,7 +25,7 @@ import { caAcct } from './funds.js';
 import { remOf, remAcctId, remText, recordFromLine } from '../src/taxrem.js';
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
-import { hasRole, by, mayView, cycleOk, loadCer, agencyName, fmtDate, money, num } from './cer.js';
+import { hasRole, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num } from './cer.js';
 import { exportXlsx, lastChecksOf } from './forms.js';
 import { repName, depRefText, tagSameDay } from './collections.js';
 
@@ -109,7 +109,7 @@ export async function banksView(ctx) {
   const crumb = 'Bank Statements';
   const hello = (extra = '') => `<div class="hello"><div><h1>Bank Statements</h1><p>Confirm each deposit and check in the bank statement, then reconcile the bank and book balances as of the cash count.</p></div>${extra}</div>`;
   if (!audits.length) return { crumb, body: hello() + '<div class="panel"><div class="empty"><b>No cash examination yet.</b>The auditors set one up in Audit Setup.</div></div>' };
-  const audit = audits.find((a) => a.id === q.get('a')) || audits[0];
+  const audit = pickAudit(audits, q); { const p = getPick(); remember(refs, audit, p.a === audit?.id ? { id: p.e, o: { name: (p.label || '').split(' · ')[2] || '' } } : null); }
   const lgu = refs.lgu[audit.lguId];
   const funds = settings['funds|' + audit.lguId]?.list || DEFAULT_FUNDS;
   const accounts = settings['banks|' + audit.lguId]?.list || [];

@@ -1,7 +1,7 @@
 // The standard frame every AMS module uses (design approved 17 Oct 2026):
 // navy sidebar (module name, back to AMS, the module's parts, a Setup section, sync box) and a top bar (page name, user, Sign Out).
 import { scopeSelect } from './scope.js';
-import { cycleSelect } from './cycle.js';
+import { cycleSelect, pickChip } from './cycle.js';
 import { DEMO } from './config.js';
 import { syncState } from './sync.js';
 import { esc, bottomBand } from './ui.js';
@@ -45,6 +45,7 @@ export function moduleFrame({ title, items, active, crumb, me, roleText, body })
       <header class="mtop"><span class="crumb">${esc(crumb)}</span>${scopeSelect('m-scope', 'in-top')}${/^#\/cer\//.test(location.hash) ? cycleSelect('m-cycle', 'in-top') : ''}
         <div class="mwho"><div class="av">${esc(ini)}</div><div><b>${esc(name)}</b><small>${esc(roleText)}</small></div>
           <button class="btn" type="button" id="m-signout">Sign Out</button></div></header>
+      ${/^#\/cer\/(?!setup($|\?(?!a=)))/.test(location.hash) && pickChip() ? `<div class="cer-pickbar">${pickChip()}</div>` : ''}
       <div class="mcontent">${body}</div>
     </div>
   </div>`;
