@@ -461,7 +461,10 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
       byNo.set(n, g);
     });
     const byChk = new Map(mine.map((c) => [chkNo(c.checkNo), c]));
+    // The same check typed in Cash Advances (not changed here: a note says what differs).
+    const cas = (await store.list('cer_cashadv')).filter((r) => !r.deleted && r.data.lguId === lgu.id).map((r) => r.data);
     const add = [], upd = [];
+    const same = (a, b) => String(a ?? '').trim().replace(/\s+/g, ' ').toUpperCase() === String(b ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
     [...byNo.values()].sort((a, b) => a.n - b.n).forEach((g) => {
       if (!g.date) { problems.push({ line: g.rows[0], why: `Check No. ${g.no}: the date is missing.` }); return; }
       // Already in: only its empty fields are filled from the file (nothing typed is overwritten).
@@ -475,7 +478,28 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
           if (rci && !hasAmount(cur) && !hasEntry(cur) && g.amount > 0) { fill.amount = g.amount; fill.amountSrc = 'rci'; }
           if (!cur.note && g.note) fill.note = g.note;
         }
-        if (Object.keys(fill).length) upd.push({ cur, fill }); else problems.push({ line: g.rows[0], why: `Check No. ${g.no} is already in.` });
+        // Corrections: what the file says differently from what is in (shown for the auditor to tick; nothing changes unticked).
+        const fix = {}, diffs = [], warn = [];
+        const fCx = /cancel/i.test(g.part) && !g.lines.some((l) => l.gross) && !g.amount;
+        if (g.date && g.date !== cur.date) { fix.date = g.date; diffs.push(['Date', fmtDate(cur.date), fmtDate(g.date)]); }
+        if (fCx !== !!cur.cancelled) {
+          diffs.push(['Status', cur.cancelled ? 'Cancelled' : 'Issued', fCx ? 'Cancelled' : 'Issued']); fix.cancelled = fCx;
+          if (fCx) Object.assign(fix, { particulars: 'Cancelled', payee: '', ref: '', ...(rci && !hasEntry(cur) ? { amount: 0 } : {}) });
+          else Object.assign(fix, { particulars: g.part || '', payee: g.payee || '', ref: g.ref || '', ...(rci && g.amount > 0 && !hasEntry(cur) ? { amount: g.amount, amountSrc: 'rci' } : {}) });
+        } else if (!fCx) {
+          if (g.payee && cur.payee && !same(g.payee, cur.payee)) { fix.payee = g.payee; diffs.push(['Payee', cur.payee, g.payee]); }
+          if (g.ref && cur.ref && !same(g.ref, cur.ref)) { fix.ref = g.ref; diffs.push(['DV / Payroll No.', cur.ref, g.ref]); }
+          if (g.part && cur.particulars && !same(g.part, cur.particulars)) { fix.particulars = g.part; diffs.push(['Nature of payment', cur.particulars, g.part]); }
+          if (rci && g.amount > 0 && (hasAmount(cur) || hasEntry(cur)) && Math.abs(checkAmountOf(cur) - g.amount) > 0.004) {
+            if (hasEntry(cur)) warn.push(`Amount ₱${money(g.amount)} in the file, ₱${money(checkAmountOf(cur))} from its CkDJ entries: fix it in the CkDJ.`);
+            else { fix.amount = g.amount; fix.amountSrc = 'rci'; diffs.push(['Amount', money(checkAmountOf(cur)), money(g.amount)]); }
+          }
+        }
+        const ca = cas.find((a) => chkNo(a.checkNo) === g.n);
+        if (ca && !fCx && ((g.date && ca.date !== g.date) || (rci && g.amount > 0 && Math.abs((+ca.amount || 0) - g.amount) > 0.004)))
+          warn.push(`Also in Cash Advances (${fmtDate(ca.date)}, ₱${money(ca.amount)}): update it there if it is wrong.`);
+        if (Object.keys(fill).length || diffs.length || warn.length) upd.push({ cur, fill, fix, diffs, warn, no: g.no });
+        else problems.push({ line: g.rows[0], why: `Check No. ${g.no} is already in, nothing different.` });
         return;
       }
       const cancelled = /cancel/i.test(g.part) && !g.lines.some((l) => l.gross) && !g.amount;
@@ -488,15 +512,23 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
   const show = (bg, p) => {
     const box = $('#sj-res', bg);
     if (p.error) { box.innerHTML = `<div class="msg bad">${esc(p.error)}</div>`; return; }
+    const nFix = p.upd.filter((u) => u.diffs.length).length, nFill = p.upd.filter((u) => Object.keys(u.fill).length).length;
+    const fixHtml = nFix || p.upd.some((u) => u.warn.length) ? `<div class="sj-fix"><b>Corrections found (${nFix})</b> <span class="dim">The file differs from what is in. Ticked ones are corrected on Import; untick to keep what is in.</span>
+      <div class="af-tbl"><table class="af-reg"><thead><tr><th></th><th>Check No.</th><th>What changes</th><th>Now in the system</th><th>In the file</th></tr></thead><tbody>
+      ${p.upd.map((u, i) => { const notes = u.warn.length ? `<tr class="sj-note"><td></td><td colspan="4">${u.warn.map((w) => `<span class="pill p-flag">${esc(w)}</span>`).join(' ')}</td></tr>` : '';
+        return u.diffs.length ? u.diffs.map((d, j) => `<tr>${j === 0 ? `<td rowspan="${u.diffs.length}"><input type="checkbox" data-sjfix="${i}" checked aria-label="Correct check No. ${esc(u.no)}"></td><td rowspan="${u.diffs.length}" class="mono">${esc(u.no)}</td>` : ''}<td>${esc(d[0])}</td><td>${esc(d[1] || '—')}</td><td><b>${esc(d[2] || '—')}</b></td></tr>`).join('') + notes
+          : u.warn.length ? `<tr><td></td><td class="mono">${esc(u.no)}</td><td colspan="3"><span class="dim">nothing to correct here</span></td></tr>${notes}` : ''; }).join('')}</tbody></table></div></div>` : '';
     const cx = p.add.filter((x) => x.cancelled).length, unk = p.add.filter((x) => x.unknown.length).length, ca = p.add.filter((x) => x.lines.some((l) => CA_CODES.includes(l.code))).length;
-    box.innerHTML = `<div class="oi-sum"><b>${p.add.length} check${p.add.length === 1 ? '' : 's'} to add${p.rci ? ' (RCI: fill the entries in the CkDJ later)' : ''}</b>${p.upd.length ? `<span>${p.upd.length} already in: blanks filled</span>` : ''}${cx ? `<span>${cx} cancelled</span>` : ''}${ca ? `<span>${ca} cash advance${ca > 1 ? 's' : ''} (the payee is the person; AOs matched by name)</span>` : ''}${unk ? `<span class="warn-t">${unk} with an account code not in the Chart of Accounts</span>` : ''}</div>
-      ${p.problems.length ? `<div class="af-probs"><b>Not imported (${p.problems.length})</b>${p.problems.slice(0, 60).map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
+    box.innerHTML = `<div class="oi-sum"><b>${p.add.length} check${p.add.length === 1 ? '' : 's'} to add${p.rci ? ' (RCI: fill the entries in the CkDJ later)' : ''}</b>${nFix ? `<span>${nFix} with corrections</span>` : ''}${nFill ? `<span>${nFill} already in: blanks filled</span>` : ''}${cx ? `<span>${cx} cancelled</span>` : ''}${ca ? `<span>${ca} cash advance${ca > 1 ? 's' : ''} (the payee is the person; AOs matched by name)</span>` : ''}${unk ? `<span class="warn-t">${unk} with an account code not in the Chart of Accounts</span>` : ''}</div>
+      ${fixHtml}${p.problems.length ? `<div class="af-probs"><b>Not imported (${p.problems.length})</b>${p.problems.slice(0, 60).map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
   };
   const v = await modal({ title: `Import Check Disbursements · ${acctLabel(acct)}`, wide: true,
-    body: `<p class="af-note">An RCI (Date, Check No., DV / Payroll No., Payee, Nature of Payment, Amount; see the RCI Template) or the Check Register sheet of the barangay template (Date, Check No., Reference No., Payee, Particulars, Tax Amount, Account Code, Gross Amount). Rows with the same check No. become one check; check Nos. already in are skipped.</p>
+    body: `<p class="af-note">An RCI (Date, Check No., DV / Payroll No., Payee, Nature of Payment, Amount; see the RCI Template) or the Check Register sheet of the barangay template (Date, Check No., Reference No., Payee, Particulars, Tax Amount, Account Code, Gross Amount). Rows with the same check No. become one check. A check No. already in: its blanks are filled, and what the file says differently (date, payee, DV No., nature of payment, amount, cancelled) is listed for you to correct.</p>
       <div class="field"><label for="sj-file">Excel file</label><input class="input" type="file" id="sj-file" accept=".xlsx,.xlsm,.xls,.csv"></div><div id="sj-res"></div>`,
     onOpen: (bg) => { $('#sj-file', bg).onchange = async (e) => { const fl = e.target.files[0]; if (!fl) return; $('#sj-res', bg).innerHTML = '<p class="af-note">Reading…</p>'; try { plan = await read(fl); show(bg, plan); } catch (err) { plan = null; $('#sj-res', bg).innerHTML = `<div class="msg bad">${esc(err.message || String(err))}</div>`; } }; },
-    buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; } if (!plan.add.length && !plan.upd.length) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: (bg) => { if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; }
+      plan.upd.forEach((u, i) => { const cb = $(`[data-sjfix="${i}"]`, bg); u.apply = !!(cb && cb.checked); });
+      if (!plan.add.length && !plan.upd.some((u) => Object.keys(u.fill).length || (u.apply && u.diffs.length))) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
   if (v !== 'go') return;
   for (const g of plan.add) {
     if (plan.rci) { await store.save('src_ckdj', newId('ckdj'), { coa: 3, lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.cancelled ? '' : g.ref, payee: g.cancelled ? '' : g.payee, particulars: g.cancelled ? 'Cancelled' : g.part,
@@ -504,7 +536,13 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
     await store.save('src_ckdj', newId('ckdj'), { coa: 3, lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.ref, payee: g.payee, particulars: g.part, lines: g.cancelled ? [] : g.lines.map((l) => ({ code: l.code, name: l.name, gross: r2(l.gross) })),
       tax: g.cancelled || !(g.tax || g.taxyn) ? { taxable: false } : { taxable: true, vat: null, main: g.tax, one: 0 }, cancelled: g.cancelled, officerId: '', note: g.note }, by(refs), { quiet: true });
   }
-  for (const { cur, fill } of plan.upd) { const { id, ...rec } = cur; await store.save('src_ckdj', id, { ...rec, ...fill }, by(refs), { quiet: true }); }
+  let nFixed = 0, nFilled = 0;
+  for (const u of plan.upd) {
+    const fx = u.apply && u.diffs.length ? u.fix : {};
+    if (!Object.keys(u.fill).length && !Object.keys(fx).length) continue;
+    const { id, ...rec } = u.cur; await store.save('src_ckdj', id, { ...rec, ...u.fill, ...fx }, by(refs), { quiet: true });
+    if (Object.keys(fx).length) nFixed++; else nFilled++;
+  }
   const { emitChange } = await import('../../js/store.js'); emitChange('local');
-  toast(`${plan.add.length} check${plan.add.length === 1 ? '' : 's'} imported${plan.upd.length ? `, ${plan.upd.length} updated` : ''}.`, 'ok');
+  toast(`${plan.add.length} check${plan.add.length === 1 ? '' : 's'} added${nFixed ? `, ${nFixed} corrected` : ''}${nFilled ? `, ${nFilled} blanks filled` : ''}.`, 'ok');
 }

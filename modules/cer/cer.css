@@ -935,3 +935,8 @@ table.af-reg.tr-month{min-width:0}
 .bc-srch { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; font-size: 13.5px }
 .bc-srch #bc-addall { margin-left: auto }
 .bc-src table { width: 100%; font-size: 13px }
+.sj-fix{border:1px solid #bcd0f5; background:#f6f9ff; border-radius:10px; padding:10px 12px; margin:8px 0; font-size:12.5px}
+.sj-fix .af-tbl{max-height:260px; overflow:auto; margin-top:6px}
+.sj-fix td .pill{white-space:normal}
+.sj-fix table.af-reg{min-width:0; width:100%}
+.sj-fix tr.sj-note td{border-top:0; padding-top:0}
