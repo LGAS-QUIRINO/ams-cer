@@ -17,7 +17,7 @@ import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
 import { bankFindings } from './banks.js';
 import { loadForms, orIn, cutoffFindings, checkUsage, exportXlsx } from './forms.js';
-import { figuresOf, fundsOf, kindOfForm, repName, tagSameDay, partOk, ctcBegShare, ctcAlloc, depPart } from './collections.js';
+import { figuresOf, fundsOf, kindOfForm, repName, tagSameDay, partOk, ctcBegShare, ctcAlloc, depPart, depsBeforeOrs } from './collections.js';
 import { booksOf, compute } from './count.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -91,11 +91,17 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
       // Beginning: the collection balances in Audit Setup of the forms that go to this report type (LGU: CTC apart from AF 51).
       beg = Object.entries(bal).filter(([k]) => k.startsWith('col-') && kindOfForm(lgu, k.slice(4)) === kind && partOk(part, k.slice(4))).reduce((n, [, v]) => n + (+v?.amount || 0), 0)
         + ((kind === 'RCD' || (exam.functions || []).includes('liquidating')) && part !== 'ctc' ? (+(bal.liq?.amount) || 0) : 0);
-      f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && kindOfForm(lgu, x.form) === kind && partOk(part, x.form) && orOk(x)).forEach((x) => m.push({ date: x.date, debit: +x.amount || 0, credit: 0 }));
+      // Same records as the SCDs / RCDs (Collections & Deposits): the ORs and deposits in this period's reports and those not yet
+      // in a report, up to the cash count. A deposit dated before the last cash exam that sits in a report of this period
+      // (e.g. made before its ORs, or of the beginning ORs) counts in the first month; ORs before the last exam are in the beginning.
+      const inP = (d) => !!d && d <= to;
+      const at = (d) => (from && d < from ? from : d);
+      const face = (x) => r2((x.items || []).reduce((n, i) => n + (+i.amt || 0), 0));
       Object.values(fig.chains).filter((c) => c.kind === kind).forEach((c) => [...c.figs, c.pend].forEach((g) => {
         const s = part ? ctcAlloc(c, bs) : null;
-        (g.rec?.deposits || []).filter((d) => inScope(d.date)).forEach((d) => { const a = part ? depPart(part, d, s) : +d.amount || 0; if (a || !part) m.push({ date: d.date, debit: 0, credit: a }); });
-        if (part !== 'ctc') (g.rec?.remittances || []).filter((d) => inScope(d.date)).forEach((d) => m.push({ date: d.date, debit: +d.amount || 0, credit: 0 }));
+        (g.ors || []).filter((x) => x.status !== 'cancelled' && partOk(part, x.form) && inP(x.date) && orOk(x)).forEach((x) => m.push({ date: x.date, debit: face(x), credit: 0 }));
+        (g.rec?.deposits || []).filter((d) => inP(d.date)).forEach((d) => { const a = part ? depPart(part, d, s) : +d.amount || 0; if (a || !part) m.push({ date: at(d.date), debit: 0, credit: a }); });
+        if (part !== 'ctc') (g.rec?.remittances || []).filter((d) => inP(d.date) && !d.beg).forEach((d) => m.push({ date: at(d.date), debit: +d.amount || 0, credit: 0 }));
       }));
     }
     moves[b.key] = { beg: r2(beg), list: m.sort((x, y) => x.date.localeCompare(y.date)) };
@@ -148,6 +154,8 @@ export async function verifyView(ctx) {
   Object.values(fig.chains).forEach((c) => [...c.figs, c.pend].forEach((g) => g.issues.forEach((t, i) => (exam.records === 'cashbook' && t.startsWith('Series ')) || add(`rep|${g.id}|${i}|${t.slice(0, 40)}`, 'Collections', `${g.pending ? `Not yet reported (${g.kind})` : repName(g.rec, g.kind)}: ${t}`, '#/cer/collections'))));
   const unrep = Object.values(fig.chains).map((c) => c.pend).filter((g) => g.nOrs);
   unrep.forEach((g) => add(`nyr|${g.id}`, 'Collections', `${g.nOrs} OR${g.nOrs > 1 ? 's' : ''} (₱${money(g.orsTotal)}) not yet in a submitted ${g.kind}, ${g.fund}.`, '#/cer/collections'));
+  { const eb = depsBeforeOrs(f, o, fig).filter((x) => inScope(x.d.date) || (from && x.d.date < from));
+    if (eb.length) add(`early|${eb.length}|${r2(eb.reduce((n, x) => n + (+x.d.amount || 0), 0))}`, 'Collections', `${eb.length === 1 ? 'A deposit was' : `${eb.length} deposits were`} made before the ORs were issued (₱${money(r2(eb.reduce((n, x) => n + (+x.d.amount || 0), 0)))}): ${eb.map((x) => `${fmtDate(x.d.date)} ₱${money(x.d.amount)} for ORs ${x.d.from}–${x.d.to || x.d.from} dated ${fmtDate(x.first)}${x.last !== x.first ? `–${fmtDate(x.last)}` : ''}`).join('; ')}. ORs should be issued upon receipt of the collection.`, '#/cer/collections'); }
   f.ors.filter((x) => x.officerId === o.id && x.date > to).slice(0, 1).forEach(() => add('afterct', 'Collections', `${f.ors.filter((x) => x.officerId === o.id && x.date > to).length} OR(s) dated after the cash count.`, '#/cer/collections'));
   // Collections by OR range (cashbooks): the collector's cashbook against the Liquidating Officer's, and the beginning.
   cashbookFindings(f, o, exam, from, to).forEach((x) => add(x.key, 'Collections', x.text, '#/cer/collections'));
