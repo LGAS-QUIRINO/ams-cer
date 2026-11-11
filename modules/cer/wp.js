@@ -8,7 +8,7 @@ import { itemText } from './count.js';
 import { store } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, fmtDate, money, num } from './cer.js';
-import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart } from './collections.js';
+import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart, repName, depsBeforeOrs } from './collections.js';
 import { accountsOf, caFund, begByFund, restFund, fundOrder } from './funds.js';
 import { saafRows, unusedFormsOf, notPresentedOf, countRanges, FORM_SHORT, faceOf } from './forms.js';
 
@@ -40,17 +40,34 @@ export function wpLines(c, paper, ver) {
     });
   } else {
     const kind = book.kind, part = book.part || '', bs = ctcBegShare(exam.balances);
-    f.ors.filter((x) => x.officerId === o.id && kindOfForm(lgu, x.form) === kind && partOk(part, x.form) && orOk(x)).forEach((x) => {
-      const cx = x.status === 'cancelled';
-      lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : (x.items || []).map((i) => i.p).filter(Boolean).join('; '), no: x.range ? `${x.serial}–${x.serialTo}` : String(x.serial), d: cx ? 0 : +x.amount || 0, c: 0, ord: 0, sn: +x.serial || 0 });
-    });
+    // Same records as the SCDs / RCDs (and Annex C): the ORs and deposits in this period's reports and those not yet in a report,
+    // up to the cash count. A deposit dated before the last cash exam that sits in a report of this period keeps its own date
+    // and comes right after the beginning balance; a deposit made before its ORs is marked so.
+    const from = exam.lastExamDate || '', to = A.to;
+    const face = (x) => r2((x.items || []).reduce((n, i) => n + (+i.amt || 0), 0));
+    const early = new Map(depsBeforeOrs(f, o, A.fig).map((x) => [x.d, x]));
+    const pre = (d) => !!(from && d && d < from);
     Object.values(A.fig.chains).filter((ch) => ch.kind === kind).forEach((ch) => [...ch.figs, ch.pend].forEach((g) => {
+      (g.ors || []).filter((x) => partOk(part, x.form) && x.date && x.date <= to && orOk(x)).forEach((x) => {
+        const cx = x.status === 'cancelled';
+        lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : (x.items || []).map((i) => i.p).filter(Boolean).join('; '), no: x.range ? `${x.serial}–${x.serialTo}` : String(x.serial), d: cx ? 0 : face(x), c: 0, ord: 0, sn: +x.serial || 0 });
+      });
       const s = part ? ctcAlloc(ch, bs) : null, share = (d) => (part ? depPart(part, d, s) : +d.amount || 0);
-      if (part !== 'ctc') (g.rec?.remittances || []).filter((m) => inScope(m.date)).forEach((m, i) => lines.push({ key: `rem|${g.id}|${i}|${m.date}|${m.amount}`, date: m.date, part: `Remittance from ${c.f.officers.find((x) => x.id === m.collectorId)?.name || 'collector'}${m.reportNo ? ', ' + m.reportNo : ''}`, no: '', d: +m.amount || 0, c: 0, ord: 0 }));
-      (g.rec?.deposits || []).filter((d) => inScope(d.date) && (!part || share(d))).forEach((d, i) => lines.push({ key: `dep|${g.id}|${i}|${d.date}|${d.amount}`, date: d.date, part: kind === 'SCR' ? `Remittance to MTO${depRefText(d, true) ? ', ' + depRefText(d, true) : ''}` : d.toLO ? `Remittance to the Liquidating Officer${d.ref ? ', ' + d.ref : ''}` : `Deposit${depRefText(d) ? ', ' + depRefText(d) : ''}${part && share(d) !== r2(+d.amount || 0) ? ` (${part === 'ctc' ? 'CTC' : 'AF 51'} part of ₱${money(d.amount)})` : ''}`, no: '', d: 0, c: share(d), ord: 1 }));
+      const where = g.pending ? 'not yet in a report' : `in ${repName(g.rec, ch.kind)}`;
+      const preNote = (d) => (pre(d.date) ? ` · ${kind === 'SCR' || d.toLO ? 'remitted' : 'deposited'} before the last cash exam; ${where}` : '');
+      const earlyNote = (d) => { const x = early.get(d); return x ? ` · before its ORs (${d.from}–${d.to || d.from}, dated ${fmtDate(x.first)}${x.last !== x.first ? `–${fmtDate(x.last)}` : ''})` : ''; };
+      if (part !== 'ctc') {
+        const rs = (g.rec?.remittances || []).filter((m) => m.date && m.date <= to && !m.beg);
+        rs.filter((m) => !pre(m.date)).forEach((m, i) => lines.push({ key: `rem|${g.id}|${i}|${m.date}|${m.amount}`, date: m.date, part: `Remittance from ${c.f.officers.find((x) => x.id === m.collectorId)?.name || 'collector'}${m.reportNo ? ', ' + m.reportNo : ''}`, no: '', d: +m.amount || 0, c: 0, ord: 0 }));
+        rs.filter((m) => pre(m.date)).forEach((m, i) => lines.push({ key: `remx|${g.id}|${i}|${m.date}|${m.amount}`, date: m.date, sd: from, part: `Remittance from ${c.f.officers.find((x) => x.id === m.collectorId)?.name || 'collector'}${m.reportNo ? ', ' + m.reportNo : ''} · received before the last cash exam; ${where}`, no: '', d: +m.amount || 0, c: 0, ord: -1 }));
+      }
+      const ds = (g.rec?.deposits || []).filter((d) => d.date && d.date <= to && (!part || share(d)));
+      const depText = (d) => (kind === 'SCR' ? `Remittance to MTO${depRefText(d, true) ? ', ' + depRefText(d, true) : ''}` : d.toLO ? `Remittance to the Liquidating Officer${d.ref ? ', ' + d.ref : ''}` : `Deposit${depRefText(d) ? ', ' + depRefText(d) : ''}${part && share(d) !== r2(+d.amount || 0) ? ` (${part === 'ctc' ? 'CTC' : 'AF 51'} part of ₱${money(d.amount)})` : ''}`);
+      ds.filter((d) => !pre(d.date)).forEach((d, i) => lines.push({ key: `dep|${g.id}|${i}|${d.date}|${d.amount}`, date: d.date, part: depText(d) + earlyNote(d), no: '', d: 0, c: share(d), ord: 1 }));
+      ds.filter((d) => pre(d.date)).forEach((d, i) => lines.push({ key: `depx|${g.id}|${i}|${d.date}|${d.amount}`, date: d.date, sd: from, part: depText(d) + preNote(d) + earlyNote(d), no: '', d: 0, c: share(d), ord: -1 }));
     }));
   }
-  lines.sort((x, y) => String(x.date).localeCompare(String(y.date)) || x.ord - y.ord || (x.sn || 0) - (y.sn || 0));
+  lines.sort((x, y) => String(x.sd || x.date).localeCompare(String(y.sd || y.date)) || x.ord - y.ord || String(x.date).localeCompare(String(y.date)) || (x.sn || 0) - (y.sn || 0));
   const edits = ver?.wp?.[paper] || {};
   const beg = r2(A.moves[book.key].beg);
   let ga = beg, gb = beg;
