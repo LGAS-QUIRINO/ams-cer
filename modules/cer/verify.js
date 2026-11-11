@@ -28,7 +28,7 @@ const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[
 const DECISIONS = ['To decide', 'Cleared', 'Noted', 'For AOM'];
 const BEG_CA = ['ca', 'sdo', 'pcf'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const UI = { view: 'sum' };
+const UI = { view: 'sum', tab: 'sum' };
 const fmtAmt = (n) => (n < -0.004 ? `(${money(-n)})` : money(n));
 
 // The statement of accountability of one officer (shared with Reports): columns, movements within the scope, balances, inventory.
@@ -147,31 +147,36 @@ export async function verifyView(ctx) {
   const { o, inScope, orOk, liqIn, bal, fig, books, count, inv, moves, st, T, totSh } = accountability(refs, f, audit, exam, advs, liqs, counts0.map(flat));
   // Findings, each with a stable key so the auditor's decision stays with it.
   const findings = [];
-  const add = (key, area, text, href) => findings.push({ key, area, text, href });
-  st.forEach((x) => { if (x.sh !== null && Math.abs(x.sh) > 0.004) add(`sh|${x.key}`, 'Cash Count', `${x.sh > 0 ? 'Shortage' : 'Overage'} of ₱${money(Math.abs(x.sh))} in ${x.label}: balance of accountability ₱${money(x.balance)}, inventory ₱${money(x.inv)}.`, '#/cer/count'); });
+  // g: the kind of finding (its own table in Findings in detail); cells: its facts as columns (one row, or several); amt: amount involved.
+  const add = (key, area, text, href, g = '', cells = null, amt = 0) => findings.push({ key, area, text, href, g, cells, amt: Math.abs(+amt || 0) });
+  st.forEach((x) => { if (x.sh !== null && Math.abs(x.sh) > 0.004) add(`sh|${x.key}`, 'Cash Count', `${x.sh > 0 ? 'Shortage' : 'Overage'} of ₱${money(Math.abs(x.sh))} in ${x.label}: balance of accountability ₱${money(x.balance)}, inventory ₱${money(x.inv)}.`, '#/cer/count', 'sh', [x.label, money(x.balance), money(x.inv), `<span class="pill p-flag">${x.sh > 0 ? 'Shortage' : 'Overage'} ${money(Math.abs(x.sh))}</span>`], x.sh); });
   if (!count) add('nocount', 'Cash Count', 'No cash count saved yet for this officer.', '#/cer/count');
-  (count?.items || []).forEach((it, i) => { const a = num(it.allowed ?? it.presented) ?? 0; if ((+it.presented || 0) - a > 0.004) add(`dis|${i}|${it.particulars}`, 'Cash Count', `Cash item disallowed: ${it.particulars}, ₱${money(r2((+it.presented || 0) - a))}.`, '#/cer/count'); });
-  Object.values(fig.chains).forEach((c) => [...c.figs, c.pend].forEach((g) => g.issues.forEach((t, i) => (exam.records === 'cashbook' && t.startsWith('Series ')) || add(`rep|${g.id}|${i}|${t.slice(0, 40)}`, 'Collections', `${g.pending ? `Not yet reported (${g.kind})` : repName(g.rec, g.kind)}: ${t}`, '#/cer/collections'))));
+  (count?.items || []).forEach((it, i) => { const a = num(it.allowed ?? it.presented) ?? 0; if ((+it.presented || 0) - a > 0.004) add(`dis|${i}|${it.particulars}`, 'Cash Count', `Cash item disallowed: ${it.particulars}, ₱${money(r2((+it.presented || 0) - a))}.`, '#/cer/count', 'dis', [esc(it.particulars), money(+it.presented || 0), money(a), money(r2((+it.presented || 0) - a))], r2((+it.presented || 0) - a)); });
+  Object.values(fig.chains).forEach((c) => [...c.figs, c.pend].forEach((g) => g.issues.forEach((t, i) => (exam.records === 'cashbook' && t.startsWith('Series ')) || add(`rep|${g.id}|${i}|${t.slice(0, 40)}`, 'Collections', `${g.pending ? `Not yet reported (${g.kind})` : repName(g.rec, g.kind)}: ${t}`, '#/cer/collections', 'rep', [esc(g.pending ? `Not yet reported (${g.kind})` : repName(g.rec, g.kind)), esc(t)]))));
   const unrep = Object.values(fig.chains).map((c) => c.pend).filter((g) => g.nOrs);
-  unrep.forEach((g) => add(`nyr|${g.id}`, 'Collections', `${g.nOrs} OR${g.nOrs > 1 ? 's' : ''} (₱${money(g.orsTotal)}) not yet in a submitted ${g.kind}, ${g.fund}.`, '#/cer/collections'));
+  unrep.forEach((g) => add(`nyr|${g.id}`, 'Collections', `${g.nOrs} OR${g.nOrs > 1 ? 's' : ''} (₱${money(g.orsTotal)}) not yet in a submitted ${g.kind}, ${g.fund}.`, '#/cer/collections', 'nyr', [esc(g.range || '—'), String(g.nOrs), esc(g.from ? `${fmtDate(g.from)}${g.to && g.to !== g.from ? ` – ${fmtDate(g.to)}` : ''}` : '—'), esc(`${g.kind} · ${g.fund}`), money(g.orsTotal)], g.orsTotal));
   { const eb = depsBeforeOrs(f, o, fig).filter((x) => inScope(x.d.date) || (from && x.d.date < from));
-    if (eb.length) add(`early|${eb.length}|${r2(eb.reduce((n, x) => n + (+x.d.amount || 0), 0))}`, 'Collections', `${eb.length === 1 ? 'A deposit was' : `${eb.length} deposits were`} made before the ORs were issued (₱${money(r2(eb.reduce((n, x) => n + (+x.d.amount || 0), 0)))}): ${eb.map((x) => `${fmtDate(x.d.date)} ₱${money(x.d.amount)} for ORs ${x.d.from}–${x.d.to || x.d.from} dated ${fmtDate(x.first)}${x.last !== x.first ? `–${fmtDate(x.last)}` : ''}`).join('; ')}. ORs should be issued upon receipt of the collection.`, '#/cer/collections'); }
+    eb.forEach((x) => { const dts = `${fmtDate(x.first)}${x.last !== x.first ? ` – ${fmtDate(x.last)}` : ''}`, ahead = [days(x.d.date, x.first), days(x.d.date, x.last)].map((n) => Math.max(0, n));
+      add(`early|${x.d.date}|${x.d.from}`, 'Collections', `Deposit of ${fmtDate(x.d.date)} (₱${money(x.d.amount)}) made before its ORs ${x.d.from}–${x.d.to || x.d.from} were issued (dated ${dts}). ORs should be issued upon receipt of the collection.`, '#/cer/collections',
+        'early', [esc(`${fmtDate(x.d.date)}${x.d.ref ? ' · ' + x.d.ref : ''}`), money(x.d.amount), esc(`${x.d.from} – ${x.d.to || x.d.from}`), esc(dts), ahead[0] === ahead[1] ? String(ahead[1]) : `${ahead[0]} – ${ahead[1]}`], x.d.amount); }); }
   f.ors.filter((x) => x.officerId === o.id && x.date > to).slice(0, 1).forEach(() => add('afterct', 'Collections', `${f.ors.filter((x) => x.officerId === o.id && x.date > to).length} OR(s) dated after the cash count.`, '#/cer/collections'));
   // Collections by OR range (cashbooks): the collector's cashbook against the Liquidating Officer's, and the beginning.
-  cashbookFindings(f, o, exam, from, to).forEach((x) => add(x.key, 'Collections', x.text, '#/cer/collections'));
-  { const np = cnpData(f, o, exam, from, to); if (np && np.notPresented > 0.004) add(`cnp|${np.notPresented}`, 'Collections', `₱${money(np.notPresented)}${np.groups.filter((g) => g.notPresented > 0.004).length > 1 ? ` (${np.groups.filter((g) => g.notPresented > 0.004).map((g) => `₱${money(g.notPresented)} ${g.short}`).join('; ')})` : ''} of collections dated before the last cash examination (${fmtDate(from)}) were not remitted as of that date; remitted only in this period (see the working paper: Collections not remitted as of the last cash exam).`, `#/cer/reports?a=${audit.id}&e=${exam.id}&rep=cnp`); }
+  cashbookFindings(f, o, exam, from, to).forEach((x) => add(x.key, 'Collections', x.text, '#/cer/collections', 'cb', [esc(x.text)]));
+  { const np = cnpData(f, o, exam, from, to); if (np && np.notPresented > 0.004) add(`cnp|${np.notPresented}`, 'Collections', `₱${money(np.notPresented)}${np.groups.filter((g) => g.notPresented > 0.004).length > 1 ? ` (${np.groups.filter((g) => g.notPresented > 0.004).map((g) => `₱${money(g.notPresented)} ${g.short}`).join('; ')})` : ''} of collections dated before the last cash examination (${fmtDate(from)}) were not remitted as of that date; remitted only in this period (see the working paper: Collections not remitted as of the last cash exam).`, `#/cer/reports?a=${audit.id}&e=${exam.id}&rep=cnp`, 'cnp', np.groups.filter((g) => g.notPresented > 0.004).map((g) => [esc(g.short), money(g.notPresented)]), np.notPresented); }
   // Each beginning OR range (Audit Setup) against the ORs encoded in it, when both are there.
   Object.entries(exam.balances || {}).forEach(([k, v]) => (v?.begOrs || []).forEach((x) => {
     const amt = num(String(x.amount ?? '')); if (amt === null || amt === undefined || amt === '') return;
     const ins = f.ors.filter((y) => y.officerId === o.id && y.form === k.slice(4) && y.status !== 'cancelled' && +y.serial >= +x.from && (y.range ? +y.serialTo : +y.serial) <= +x.to);
     if (!ins.length) return;
     const t = r2(ins.reduce((n, y) => n + (y.items || []).reduce((m, i) => m + (+i.amt || 0), 0), 0));
-    if (Math.abs(t - amt) > 0.004) add(`begor|${k}|${x.from}|${t}`, 'Collections', `Beginning ORs ${x.from}–${x.to}: ₱${money(amt)} in Audit Setup; the ORs encoded in it total ₱${money(t)}.`, '#/cer/setup');
+    if (Math.abs(t - amt) > 0.004) add(`begor|${k}|${x.from}|${t}`, 'Collections', `Beginning ORs ${x.from}–${x.to}: ₱${money(amt)} in Audit Setup; the ORs encoded in it total ₱${money(t)}.`, '#/cer/setup', 'beg', [esc(`Beginning ORs ${x.from} – ${x.to}`), money(amt), money(t), money(Math.abs(r2(amt - t)))], r2(amt - t));
   }));
-  { const np = cnpData(f, o, exam, from, to); (np?.begCheck || []).filter((b) => Math.abs(b.ors - b.beg) > 0.004).forEach((b) => add(`begser|${b.form}|${b.ors}`, 'Collections', `${b.short} beginning balance ₱${money(b.beg)} (Audit Setup); the ORs encoded in its series ${b.text} total ₱${money(b.ors)}.`, '#/cer/setup')); }
-  { const fn = fnpData(f, o, exam, from, to); if (fn && fn.qty) add(`fnp|${fn.qty}`, 'Accountable Forms', `${fn.qty} accountable form${fn.qty > 1 ? 's' : ''} issued before the last cash examination (${fmtDate(from)}) were not presented then${fn.groups.length > 1 ? ` (${fn.groups.map((g) => `${g.qty} ${g.short}`).join('; ')})` : ` (${fn.groups[0].short})`}; their collections were remitted only in this period (see the working paper: Accountable forms not presented at the last cash exam).`, `#/cer/reports?a=${audit.id}&e=${exam.id}&rep=fnp`); }
-  cutoffFindings(f, o, exam, from, to).forEach((x) => add(`af|${x.key}`, 'Accountable Forms', x.text, x.key === 'nocut' || x.key.startsWith('np|') || x.key.startsWith('nir|') ? `#/cer/count?a=${audit.id}&e=${exam.id}` : '#/cer/forms'));
+  { const np = cnpData(f, o, exam, from, to); (np?.begCheck || []).filter((b) => Math.abs(b.ors - b.beg) > 0.004).forEach((b) => add(`begser|${b.form}|${b.ors}`, 'Collections', `${b.short} beginning balance ₱${money(b.beg)} (Audit Setup); the ORs encoded in its series ${b.text} total ₱${money(b.ors)}.`, '#/cer/setup', 'beg', [esc(`${b.short} series ${b.text}`), money(b.beg), money(b.ors), money(Math.abs(r2(b.beg - b.ors)))], r2(b.beg - b.ors))); }
+  { const fn = fnpData(f, o, exam, from, to); if (fn && fn.qty) add(`fnp|${fn.qty}`, 'Accountable Forms', `${fn.qty} accountable form${fn.qty > 1 ? 's' : ''} issued before the last cash examination (${fmtDate(from)}) were not presented then${fn.groups.length > 1 ? ` (${fn.groups.map((g) => `${g.qty} ${g.short}`).join('; ')})` : ` (${fn.groups[0].short})`}; their collections were remitted only in this period (see the working paper: Accountable forms not presented at the last cash exam).`, `#/cer/reports?a=${audit.id}&e=${exam.id}&rep=fnp`,
+    'fnp', fn.groups.flatMap((g) => g.rows.map((x) => [esc(g.short), String(x.a), String(x.z), String(x.qty), esc(fmtDate(x.date)), money(x.amount)])), fn.amount); }
+  cutoffFindings(f, o, exam, from, to).forEach((x) => add(`af|${x.key}`, 'Accountable Forms', x.text, x.key === 'nocut' || x.key.startsWith('np|') || x.key.startsWith('nir|') ? `#/cer/count?a=${audit.id}&e=${exam.id}` : '#/cer/forms', 'af', [esc(x.text)]));
   // Late deposits: collections deposited in date order (first in, first out) against the deadline of the officer's rule.
+  let lateRule = '';
   const hol = await holidaysOf(refs, audit.lguId);
   const brgy = lgu && lgu.data.kind === 'barangay';
   const rule = brgy ? 'brgy' : exam.depositRule === 'weekly' ? 'weekly' : 'next';
@@ -199,23 +204,26 @@ export async function verifyView(ctx) {
       const amt = r2(xs.reduce((n, x) => n + x.amt, 0));
       const dates = xs.map((x) => (x.beg ? 'the balance at the last cash exam' : fmtDate(x.date)));
       const span = dates.length > 3 ? `${dates[0]} to ${dates[dates.length - 1]} (${dates.length} days)` : dates.join(', ');
-      add(`latedep|${c.kind}|${c.fund}|${dep}|${xs.length}|${amt}`, 'Collections', `${dep ? `Deposit of ${fmtDate(dep)}` : 'Undeposited at the cut-off'} (${c.fund}): ₱${money(amt)} of collections of ${span} ${dep ? 'deposited late' : 'past the deadline'}; earliest due ${fmtDate(xs.map((x) => x.due).sort()[0])}. Rule: ${ruleText}.`, '#/cer/collections');
+      add(`latedep|${c.kind}|${c.fund}|${dep}|${xs.length}|${amt}`, 'Collections', `${dep ? `Deposit of ${fmtDate(dep)}` : 'Undeposited at the cut-off'} (${c.fund}): ₱${money(amt)} of collections of ${span} ${dep ? 'deposited late' : 'past the deadline'}; earliest due ${fmtDate(xs.map((x) => x.due).sort()[0])}. Rule: ${ruleText}.`, '#/cer/collections',
+        'latedep', [esc(span), esc(c.fund), money(amt), esc(fmtDate(xs.map((x) => x.due).sort()[0])), dep ? esc(fmtDate(dep)) : '<span class="pill p-flag">Not yet deposited</span>', `<span class="pill p-flag">${Math.max(...xs.map((x) => days(x.due, dep || to)))}</span>`], amt);
+      lateRule = ruleText;
     });
   });
   const mineAdv = advs.filter((a) => a.officerId === o.id && (!a.beg || a.begExamId === exam.id));
   mineAdv.forEach((a) => {
     const l = r2(liqs.filter((x) => x.advanceId === a.id && (x.date <= to || x.countAnyway)).reduce((n, x) => n + (+x.amount || 0), 0)); const left = r2((+a.amount || 0) - l);
-    if (a.date <= to && left > 0.004) add(`ca|${a.id}`, 'Cash Advances', `Check No. ${a.checkNo} (₱${money(a.amount)}${a.particulars ? ', ' + a.particulars : ''}) has ₱${money(left)} unliquidated at the count.`, '#/cer/advances');
-    if (left < -0.004) add(`caover|${a.id}`, 'Cash Advances', `Check No. ${a.checkNo} is over-liquidated by ₱${money(-left)}.`, '#/cer/advances');
+    if (a.date <= to && left > 0.004) add(`ca|${a.id}`, 'Cash Advances', `Check No. ${a.checkNo} (₱${money(a.amount)}${a.particulars ? ', ' + a.particulars : ''}) has ₱${money(left)} unliquidated at the count.`, '#/cer/advances',
+      'ca', [esc(a.checkNo || '—'), esc(fmtDate(a.date)), esc(a.particulars || ''), money(a.amount), money(left), `<span class="pill p-flag">${Math.max(0, days(a.date, to))}</span>`], left);
+    if (left < -0.004) add(`caover|${a.id}`, 'Cash Advances', `Check No. ${a.checkNo} is over-liquidated by ₱${money(-left)}.`, '#/cer/advances', 'caover', [esc(a.checkNo || '—'), esc(fmtDate(a.date)), money(a.amount), money(-left)], -left);
   });
   const myReports = new Set(f.reports.filter((r) => r.officerId === o.id).map((r) => r.id));
   bank0.map(flat).filter((r) => r.auditId === audit.id).forEach((rec) => Object.entries(rec.found || {}).forEach(([k, bd]) => {
     const [t, rid, d, ref, amt] = k.split('|');
-    if (t === 'dep' && myReports.has(rid) && d && bd && days(d, bd) > 0) add(`late|${k}`, 'Bank Statements', `${ref || 'Deposit'} of ${fmtDate(d)} (₱${money(+amt)}) reached the bank ${days(d, bd)} day${days(d, bd) > 1 ? 's' : ''} later, on ${fmtDate(bd)}.`, '#/cer/banks');
+    if (t === 'dep' && myReports.has(rid) && d && bd && days(d, bd) > 0) add(`late|${k}`, 'Bank Statements', `${ref || 'Deposit'} of ${fmtDate(d)} (₱${money(+amt)}) reached the bank ${days(d, bd)} day${days(d, bd) > 1 ? 's' : ''} later, on ${fmtDate(bd)}.`, '#/cer/banks', 'banklate', [esc(ref || 'Deposit'), esc(fmtDate(d)), money(+amt), esc(fmtDate(bd)), `<span class="pill p-flag">${days(d, bd)}</span>`], +amt);
   }));
-  bondChecks({ bond: exam.bond || {}, countDate: to }).forEach((w, i) => add(`bond|${i}`, 'Audit Setup', w.text.replace(/<[^>]+>/g, ''), '#/cer/setup?a=' + audit.id));
+  bondChecks({ bond: exam.bond || {}, countDate: to }).forEach((w, i) => add(`bond|${i}`, 'Fidelity Bond', w.text.replace(/<[^>]+>/g, ''), '#/cer/setup?a=' + audit.id, 'bond', [w.text]));
   const maxCash = num(exam.bond?.maxCash);
-  if (maxCash && T('balance') > maxCash + 0.004) add('maxcash', 'Cash Count', `Accountability at the count, ₱${money(T('balance'))}, is more than the maximum cash accountability of ₱${money(maxCash)}.`, '#/cer/count');
+  if (maxCash && T('balance') > maxCash + 0.004) add('maxcash', 'Fidelity Bond', `Accountability at the count, ₱${money(T('balance'))}, is more than the maximum cash accountability of ₱${money(maxCash)}.`, '#/cer/setup?a=' + audit.id, 'bond', [`<strong>Accountability over the maximum.</strong> Accountability at the count ₱${money(T('balance'))}, maximum cash accountability ₱${money(maxCash)}: over by ₱${money(r2(T('balance') - maxCash))}.`], r2(T('balance') - maxCash));
   // Beginning checks of a cash advance balance more than the lump sum typed in Audit Setup.
   ['ca', 'sdo', 'pcf'].forEach((k) => { const b = exam.balances?.[k]; if (!b) return; const lump = +b.lump || 0; const s = r2(advs.filter((a) => a.beg && a.begExamId === exam.id && (a.begKey || 'ca') === k).reduce((n, a) => n + (+a.amount || 0), 0));
     if (lump && s > lump + 0.004) add(`beglump|${k}`, 'Audit Setup', `Beginning checks of the cash advance total ₱${money(s)}, more than the ₱${money(lump)} typed as the balance at the last cash exam.`, '#/cer/setup?a=' + audit.id); });
@@ -233,7 +241,7 @@ export async function verifyView(ctx) {
     if (!hit) add(`refund|${l.id}`, 'Cash Advances', `Refund OR No. ${l.ref} of ${fmtDate(l.date)} (₱${money(l.amount)}) is not found in Collections & Deposits.`, '#/cer/collections');
     else if (Math.abs((+hit.amount || 0) - (+l.amount || 0)) > 0.004) add(`refundamt|${l.id}`, 'Cash Advances', `Refund OR No. ${l.ref}: ₱${money(l.amount)} in Cash Advances, ₱${money(hit.amount)} in Collections & Deposits.`, '#/cer/collections');
   });
-  (await bankFindings(audit, refs)).forEach((x) => add(`bank|${x.key}`, 'Bank Statements', x.text, '#/cer/banks?a=' + audit.id));
+  (await bankFindings(audit, refs)).forEach((x) => add(`bank|${x.key}`, 'Bank Statements', x.text, '#/cer/banks?a=' + audit.id, 'bank', [esc(x.text)]));
   // Late deposits per the bank (deposit slip date vs the date the bank credited it) stay under Bank Statements.
 
   const ver = ver0.map(flat).find((v) => v.id === exam.id) || { recon: {}, decisions: {} };
@@ -300,40 +308,111 @@ export async function verifyView(ctx) {
       </tbody></table></div>
       ${auditor ? '<div class="cd-actions"><button class="btn primary" type="button" id="vf-saverc">Save Reconciliation</button></div>' : ''}`;
 
-  const findingsHtml = shownF.length ? `<div class="af-tbl"><table class="af-reg vf-find"><thead><tr><th scope="col">Area</th><th scope="col">Finding</th><th scope="col">Decision</th><th scope="col">Auditor's Remarks</th></tr></thead>
-      <tbody>${shownF.map((x) => { const d = dec(x.key); return `<tr data-fk="${esc(x.key)}"><td><a class="pill p-part vf-area" href="${esc(x.href)}">${esc(x.area)}</a></td><td>${esc(x.text)}</td>
-        <td><select class="input af-sm vf-dec" aria-label="Decision" ${dis}>${DECISIONS.map((v) => `<option ${v === d.decision ? 'selected' : ''}>${v}</option>`).join('')}</select></td>
-        <td><input class="input af-sm vf-rem" aria-label="Remarks" value="${esc(d.remarks || '')}" ${dis}></td></tr>`; }).join('')}</tbody></table></div>
-      ${auditor ? '<div class="cd-actions"><button class="btn primary" type="button" id="vf-savefd">Save Decisions</button></div>' : ''}`
-    : `<div class="empty"><b>${findings.length ? 'No finding matches this filter.' : 'No finding.'}</b>${findings.length ? '' : 'Nothing was flagged in the records encoded for this officer.'}</div>`;
+  // Findings by kind: each kind is its own table (its facts as columns), the decision at the end of each row.
+  const GROUPS = {
+    sh: { t: 'Shortage / overage', cols: ['Accountability', 'Balance of accountability|r', 'Inventory|r', 'Result'] },
+    dis: { t: 'Cash items disallowed', cols: ['Cash item', 'Presented|r', 'Allowed|r', 'Disallowed|r'] },
+    latedep: { t: 'Late deposits', cols: ['Collections of', 'Fund', 'Amount|r', 'Due', 'Deposited', 'Days late|r'] },
+    early: { t: 'Deposits made before the ORs were issued', cols: ['Deposit', 'Amount|r', 'OR series', 'ORs dated', 'Days ahead|r'] },
+    nyr: { t: 'ORs not yet in a submitted report', cols: ['OR series', 'No. of ORs|r', 'Dated', 'Report · Fund', 'Amount|r'] },
+    rep: { t: 'Checks of the reports (SCD / SCR / RCD)', cols: ['Report', 'What was found'] },
+    beg: { t: 'Beginning balance checks', cols: ['Item', 'Audit Setup|r', 'ORs encoded|r', 'Difference|r'] },
+    cnp: { t: 'Collections not remitted as of the last cash exam', cols: ['Form', 'Not remitted|r'] },
+    cb: { t: 'Cashbook checks', cols: ['What was found'] },
+    fnp: { t: 'Forms issued before the last exam, not presented then', cols: ['Form', 'From', 'To', 'Qty|r', 'Date remitted', 'Amount|r'] },
+    af: { t: 'Accountable forms checks', cols: ['What was found'] },
+    ca: { t: 'Unliquidated at the count', cols: ['Check No.', 'Date', 'Purpose', 'Amount|r', 'Unliquidated|r', 'Days|r'] },
+    caover: { t: 'Over-liquidated', cols: ['Check No.', 'Date', 'Amount|r', 'Over by|r'] },
+    banklate: { t: 'Deposits credited late by the bank', cols: ['Deposit', 'Date', 'Amount|r', 'Credited', 'Days|r'] },
+    bank: { t: 'Bank statement checks', cols: ['What was found'] },
+    bond: { t: 'Bond of the accountable officer', cols: ['What was found'] },
+    '': { t: 'Other checks', cols: ['What was found'] } };
+  const AREAS = ['Cash Count', 'Collections', 'Accountable Forms', 'Cash Advances', 'Bank Statements', 'Fidelity Bond', 'Audit Setup'];
+  const AREA_NAME = { Collections: 'Collections & Deposits' };
+  const areaHref = { 'Cash Count': '#/cer/count', Collections: '#/cer/collections', 'Accountable Forms': '#/cer/forms', 'Cash Advances': '#/cer/advances', 'Bank Statements': '#/cer/banks?a=' + audit.id, 'Fidelity Bond': '#/cer/setup?a=' + audit.id, 'Audit Setup': '#/cer/setup?a=' + audit.id };
+  const areaOf = (x) => (AREAS.includes(x.area) ? x.area : 'Audit Setup');
+  const DECB = [['For AOM', 'For AOM'], ['Noted', 'Noted'], ['Cleared', 'Not a finding']];
+  const decCell = (x, span) => { const d = dec(x.key); return `<td ${span > 1 ? `rowspan="${span}"` : ''} class="vf-dcell"><div class="vf-decb" role="group" aria-label="Decision">${DECB.map(([v, l]) => `<button type="button" class="${d.decision === v ? 'on' : ''}" data-v="${v}" aria-pressed="${d.decision === v}" ${dis}>${l}</button>`).join('')}</div>
+      <input class="input af-sm vf-rem" aria-label="Auditor's remarks" placeholder="Remarks" value="${esc(d.remarks || '')}" ${dis}></td>`; };
+  const col = (c) => { const [h, al] = c.split('|'); return { h, r: al === 'r' }; };
+  // Fidelity bond facts (always shown in the details, with a green line when there is nothing to say).
+  const bd = exam.bond || {};
+  const bondState = bd.none ? { t: 'None', bad: true, s: 'The officer has no fidelity bond' } : !bd.amount && !bd.riskNo && !bd.from && !bd.to ? { t: 'Not entered', bad: true, s: 'Enter it in Audit Setup' }
+    : bd.to && bd.to < to ? { t: 'Expired', bad: true } : bd.from && bd.from > to ? { t: 'Not yet effective', bad: true } : { t: 'Valid', bad: false };
+  const bondSub = bondState.s || [bd.amount ? `₱${money(num(bd.amount))}` : '', bd.to ? `valid until ${fmtDate(bd.to)}` : '', num(bd.maxCash) ? `max cash ₱${money(num(bd.maxCash))}` : ''].filter(Boolean).join(' · ');
+  const bondFacts = `<div class="af-tbl"><table class="af-reg vf-facts"><thead><tr><th>Bond / Risk No.</th><th class="r">Bond amount</th><th>Valid</th><th class="r">Max cash accountability</th><th class="r">Accountability at the count</th></tr></thead>
+      <tbody><tr><td>${bd.none ? 'No fidelity bond' : esc(bd.riskNo || '—')}</td><td class="r">${num(bd.amount) ? money(num(bd.amount)) : '—'}</td><td>${bd.from || bd.to ? `${esc(fmtDate(bd.from) || '…')} – ${esc(fmtDate(bd.to) || '…')}` : '—'}</td><td class="r">${num(bd.maxCash) ? money(num(bd.maxCash)) : '—'}</td><td class="r">${fmtAmt(T('balance'))}</td></tr></tbody></table></div>`;
+
+  const groupHtml = (gid, xs) => {
+    const G = GROUPS[gid] || GROUPS[''], cols = G.cols.map(col);
+    const rows = xs.map((x) => { const cs = x.cells ? (Array.isArray(x.cells[0]) ? x.cells : [x.cells]) : [[esc(x.text)]];
+      return cs.map((r, i) => `<tr ${i === 0 ? `data-fk="${esc(x.key)}" data-d="${esc(dec(x.key).decision)}"` : ''}>${r.map((v, j) => `<td class="${cols[j]?.r ? 'r' : ''}">${v}</td>`).join('')}${i === 0 ? decCell(x, cs.length) : ''}</tr>`).join(''); }).join('');
+    return `<div class="vf-grp"><h3>${esc(G.t)}${gid === 'latedep' && lateRule ? ` <span class="cd-sub">rule: ${esc(lateRule)}</span>` : ''}</h3>${gid === 'bond' ? bondFacts : ''}
+      <div class="af-tbl"><table class="af-reg vf-find"><thead><tr>${cols.map((c) => `<th scope="col" class="${c.r ? 'r' : ''}">${esc(c.h)}</th>`).join('')}<th scope="col" class="vf-dcell">Decision</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  };
+  const byArea = AREAS.map((ar) => ({ ar, xs: shownF.filter((x) => areaOf(x) === ar) }));
+  const detailHtml = `${byArea.filter((a2) => a2.xs.length || a2.ar === 'Fidelity Bond').map(({ ar, xs }) => {
+      const gids = [...new Set(xs.map((x) => x.g || ''))];
+      const bondOk = ar === 'Fidelity Bond' && !findings.some((x) => areaOf(x) === 'Fidelity Bond');
+      if (ar === 'Fidelity Bond' && !xs.length && !bondOk) return '';
+      return `<section class="vf-area-sec"><div class="vf-area-h"><span class="pill ${xs.length ? 'p-flag' : 'p-done'}">${esc(AREA_NAME[ar] || ar)}</span><span class="cd-sub">${xs.length} finding${xs.length === 1 ? '' : 's'}</span><a href="${esc(areaHref[ar])}">Open ${esc(ar === 'Fidelity Bond' ? 'Audit Setup' : AREA_NAME[ar] || ar)} →</a></div>
+        ${bondOk ? `<div class="vf-grp"><h3>Bond of the accountable officer</h3>${bondFacts}<p class="vf-okline"><span class="pill p-done">Bond valid and adequate</span></p></div>` : gids.map((g) => groupHtml(g, xs.filter((x) => (x.g || '') === g))).join('')}</section>`; }).join('')
+    || `<div class="empty"><b>${findings.length ? 'No finding matches this filter.' : 'No finding.'}</b>${findings.length ? '' : 'Nothing was flagged in the records encoded for this officer.'}</div>`}
+    ${auditor && shownF.length ? '<div class="cd-actions"><button class="btn primary" type="button" id="vf-savefd">Save Decisions</button></div>' : ''}`;
+
+  // Findings summary: one line per area.
+  const cntD = (xs, v) => xs.filter((x) => dec(x.key).decision === v).length;
+  const sumRows = AREAS.filter((ar) => ar !== 'Audit Setup' || findings.some((x) => areaOf(x) === ar)).map((ar) => {
+    const xs = findings.filter((x) => areaOf(x) === ar);
+    if (!xs.length) return `<tr><td><b>${esc(AREA_NAME[ar] || ar)}</b></td><td class="r">0</td><td class="r">—</td><td colspan="5"><span class="pill p-done">${ar === 'Cash Count' ? (inv ? 'No shortage or overage' : 'No cash count yet') : ar === 'Fidelity Bond' ? 'Bond valid and adequate' : 'Nothing found'}</span></td></tr>`;
+    const amt = r2(xs.reduce((n, x) => n + x.amt, 0));
+    const top = Object.entries(xs.reduce((m, x) => ((m[x.g || ''] = (m[x.g || ''] || 0) + 1), m), {})).sort((p2, q2) => q2[1] - p2[1])[0][0];
+    return `<tr><td><b>${esc(AREA_NAME[ar] || ar)}</b></td><td class="r">${xs.length}</td><td class="r">${amt ? '₱ ' + money(amt) : '—'}</td><td class="r">${cntD(xs, 'For AOM')}</td><td class="r">${cntD(xs, 'Noted')}</td><td class="r">${cntD(xs, 'Cleared')}</td><td class="r">${cntD(xs, 'To decide') ? `<b class="warn-t">${cntD(xs, 'To decide')}</b>` : 0}</td><td><span class="pill p-flag">${esc((GROUPS[top] || GROUPS['']).t)}</span></td></tr>`; });
+  const sumAmt = r2(findings.reduce((n, x) => n + x.amt, 0));
+  const summaryHtml = `<div class="af-tbl"><table class="af-reg vf-sum"><thead><tr><th scope="col">Area</th><th scope="col" class="r">Findings</th><th scope="col" class="r">Amount involved</th><th scope="col" class="r">For AOM</th><th scope="col" class="r">Noted</th><th scope="col" class="r">Not a finding</th><th scope="col" class="r">To decide</th><th scope="col">Main concern</th></tr></thead>
+      <tbody>${sumRows.join('')}<tr class="cc-tot"><td>Total</td><td class="r">${findings.length}</td><td class="r">${sumAmt ? '₱ ' + money(sumAmt) : '—'}</td><td class="r">${cntD(findings, 'For AOM')}</td><td class="r">${cntD(findings, 'Noted')}</td><td class="r">${cntD(findings, 'Cleared')}</td><td class="r">${findings.length - decided}</td><td></td></tr></tbody></table></div>
+    <p class="af-note">Amount involved: the amounts in the findings (shortage, late or early deposits, unliquidated advances…), for a sense of scale. Open 2 · Findings in detail to see each one and decide.</p>`;
+  const progressHtml = `<div class="vf-progress"><b>Encoding in progress</b><ul>${progress.map((t) => `<li>${esc(t)}</li>`).join('')}</ul><p class="af-note">The findings (missing ORs, late deposits, bank items, shortage and the rest) show once every record of this officer is encoded. Tick <b>Encoding complete</b> then.</p></div>`;
+  const TAB = ['sum', 'det', 'soa'].includes(UI.tab) ? UI.tab : 'sum';
+  const tabBtn = (k, n, t, sub) => `<button type="button" role="tab" class="cd-tab ${TAB === k ? 'on' : ''}" data-vtab="${k}" aria-selected="${TAB === k}" aria-controls="vf-pane-${k}"><span class="cd-num">${n}</span><span class="cd-tabt"><b>${t}</b><span class="cd-sub">${sub}</span></span></button>`;
 
   const body = `${hello}${top}
-    <div class="stats">
-      <div class="stat"><span>Balance of Accountability</span><b>₱ ${fmtAmt(T('balance'))}</b><small>per audit, as of the count</small></div>
-      <div class="stat"><span>Inventory Counted</span><b>${inv ? '₱ ' + money(T('inv')) : '—'}</b><small>${inv ? 'cash + allowed cash items' : 'no cash count saved yet'}</small></div>
-      <div class="stat"><span>Shortage / (Overage)</span><b class="${totSh !== null && Math.abs(totSh) > 0.004 ? 'warn' : ''}" style="${totSh !== null && Math.abs(totSh) <= 0.004 ? 'color:var(--ok)' : ''}">${totSh === null ? '—' : '₱ ' + fmtAmt(totSh)}</b><small>${totSh === null ? 'after the cash count' : Math.abs(totSh) <= 0.004 ? 'no shortage or overage' : totSh > 0 ? 'shortage' : 'overage'}</small></div>
-      <div class="stat"><span>Findings</span><b class="${complete && findings.length - decided ? 'warn' : ''}">${complete ? findings.length : '—'}</b><small>${complete ? `${decided} decided · ${findings.length - decided} to decide` : 'shown once encoding is complete'}</small></div>
+    <div class="stats vf-stats">
+      <div class="stat"><span>Accountability (per books)</span><b>₱ ${fmtAmt(T('balance'))}</b><small>${esc(st.map((x) => `${x.label} ₱${fmtAmt(x.balance)}`).join(' · ') || 'as of the count')}</small></div>
+      <div class="stat"><span>Cash and cash items counted</span><b>${inv ? '₱ ' + money(T('inv')) : '—'}</b><small>${inv ? 'cash + allowed cash items' : 'no cash count saved yet'}</small></div>
+      <div class="stat"><span>Shortage / (Overage)</span><b class="${totSh !== null && Math.abs(totSh) > 0.004 ? 'bad' : ''}" style="${totSh !== null && Math.abs(totSh) <= 0.004 ? 'color:var(--ok)' : ''}">${totSh === null ? '—' : Math.abs(totSh) <= 0.004 ? 'None' : '₱ ' + fmtAmt(totSh)}</b><small>${totSh === null ? 'after the cash count' : Math.abs(totSh) <= 0.004 ? 'balance agrees with the count' : totSh > 0 ? 'shortage' : 'overage'}</small></div>
+      <div class="stat ${bondState.bad ? 'vf-badstat' : ''}"><span>Fidelity bond</span><b class="${bondState.bad ? 'bad' : ''}" style="${bondState.bad ? '' : 'color:var(--ok)'}">${esc(bondState.t)}</b><small>${esc(bondSub || '—')}</small></div>
+      <div class="stat ${complete && findings.length ? 'vf-badstat' : ''}"><span>Findings</span><b class="${complete && findings.length ? 'bad' : ''}">${complete ? findings.length : '—'}</b><small>${complete ? `${cntD(findings, 'For AOM')} for AOM · ${cntD(findings, 'Noted')} noted · ${findings.length - decided} to decide` : 'shown once encoding is complete'}</small></div>
     </div>
-    <section class="panel" aria-labelledby="vf-h1"><div class="cc-head"><span class="cd-num">1</span><h2 id="vf-h1">Statement of Accountability</h2><span class="cd-sub">GF 74-A, part D · computed</span>
+    <div class="panel vf-tabsbar"><div class="cd-tabs" role="tablist" aria-label="Verification">${tabBtn('sum', 1, 'Findings Summary', complete ? `${findings.length} finding${findings.length === 1 ? '' : 's'} by area` : 'after encoding')}${tabBtn('det', 2, 'Findings in Detail', complete ? `${findings.length - decided} to decide` : 'after encoding')}${tabBtn('soa', 3, 'Statement &amp; Reconciliation', `balance ₱${fmtAmt(T('balance'))}`)}</div>
+      <label class="vf-complete"><input type="checkbox" id="vf-complete" ${complete ? 'checked' : ''} ${auditor ? '' : 'disabled'}> Encoding complete</label></div>
+    <section class="panel" id="vf-pane-sum" role="tabpanel" ${TAB === 'sum' ? '' : 'hidden'}><div class="cc-head"><span class="cd-num">1</span><h2>Findings Summary</h2><span class="cd-sub">one line per area · found by the app, decided by the auditor</span></div>
+      <div class="cd-body">${complete ? summaryHtml : progressHtml}</div></section>
+    <section class="panel" id="vf-pane-det" role="tabpanel" ${TAB === 'det' ? '' : 'hidden'}><div class="cc-head"><span class="cd-num">2</span><h2>Findings in Detail</h2><span class="cd-sub">decide each row</span>
+      ${complete ? `<label class="sr-only" for="vf-show">Show</label><select class="input af-sm" id="vf-show" style="width:auto;margin-left:auto"><option value="" ${!show ? 'selected' : ''}>All findings (${findings.length})</option><option value="todo" ${show === 'todo' ? 'selected' : ''}>To decide (${findings.length - decided})</option><option value="aom" ${show === 'aom' ? 'selected' : ''}>For AOM</option></select>` : ''}</div>
+      <div class="cd-body">${chkHtml}${complete ? `${detailHtml}<p class="af-note">Nothing is concluded by the app; the auditor decides each finding (click again to undo). Untick Encoding complete to go back to encoding.</p>` : progressHtml}</div></section>
+    <div id="vf-pane-soa" role="tabpanel" ${TAB === 'soa' ? '' : 'hidden'}>
+    <section class="panel" aria-labelledby="vf-h1"><div class="cc-head"><span class="cd-num">3</span><h2 id="vf-h1">Statement of Accountability</h2><span class="cd-sub">GF 74-A, part D · computed</span>
       <div class="seg" role="group" aria-label="View" style="margin-left:auto"><a href="#" data-view="sum" class="${UI.view === 'sum' ? 'on' : ''}" aria-pressed="${UI.view === 'sum'}">Summary</a><a href="#" data-view="month" class="${UI.view === 'month' ? 'on' : ''}" aria-pressed="${UI.view === 'month'}">By Month (Annex C / D)</a></div></div>
-      <div class="cd-body">${statement}<p class="af-note">Only records dated within the scope of audit (${esc(fmtDate(from) || '—')} to ${esc(fmtDate(to))}) are counted. The balance at the last examination comes from Audit Setup.</p></div></section>
-    <section class="panel" aria-labelledby="vf-h2"><div class="cc-head"><span class="cd-num">2</span><h2 id="vf-h2">Reconciliation with the Officer's Books</h2><span class="cd-sub">Annex E – G · type from the cashbook</span></div>
-      <div class="cd-body">${recon}</div></section>
-    <section class="panel" aria-labelledby="vf-h3"><div class="cc-head"><span class="cd-num">3</span><h2 id="vf-h3">Findings</h2><span class="cd-sub">found by the app · decided by the auditor</span>
-      <label class="vf-complete" style="margin-left:auto"><input type="checkbox" id="vf-complete" ${complete ? 'checked' : ''} ${auditor ? '' : 'disabled'}> Encoding complete</label>
-      ${complete ? `<label class="sr-only" for="vf-show">Show</label><select class="input af-sm" id="vf-show" style="width:auto"><option value="" ${!show ? 'selected' : ''}>All findings (${findings.length})</option><option value="todo" ${show === 'todo' ? 'selected' : ''}>To decide (${findings.length - decided})</option><option value="aom" ${show === 'aom' ? 'selected' : ''}>For AOM</option></select>` : ''}</div>
-      <div class="cd-body">${chkHtml}${complete ? `${findingsHtml}<p class="af-note">Nothing is concluded by the app; the auditor decides each finding. Click the area to open the screen it comes from. Untick Encoding complete to go back to encoding.</p>`
-        : `<div class="vf-progress"><b>Encoding in progress</b><ul>${progress.map((t) => `<li>${esc(t)}</li>`).join('')}</ul><p class="af-note">The findings (missing ORs, late deposits, bank items, shortage and the rest) show once every record of this officer is encoded. Tick <b>Encoding complete</b> then.</p></div>`}</div></section>
-    <div class="panel vf-status"><div><b>Status of this examination</b><span>${!complete ? 'Encoding in progress. Tick Encoding complete in Findings when every record is encoded.' : ver.ready ? `Ready for Reports since ${esc(fmtDate(String(ver.readyAt || '').slice(0, 10)))}${ver.readyBy ? ' · ' + esc(ver.readyBy) : ''}.` : findings.length - decided ? `${findings.length - decided} finding${findings.length - decided > 1 ? 's' : ''} still to decide. Mark it ready once every finding is decided.` : 'Every finding is decided.'}</span></div>
+      <div class="cd-body">${statement}<p class="af-note">Same records as the SCDs / RCDs in Collections &amp; Deposits, up to the cash count. The balance at the last examination comes from Audit Setup.</p></div></section>
+    <section class="panel" aria-labelledby="vf-h2"><div class="cc-head"><h2 id="vf-h2">Reconciliation with the Officer's Books</h2><span class="cd-sub">Annex E – G · type from the cashbook</span></div>
+      <div class="cd-body">${recon}</div></section></div>
+    <div class="panel vf-status"><div><b>Status of this examination</b><span>${!complete ? 'Encoding in progress. Tick Encoding complete when every record is encoded.' : ver.ready ? `Ready for Reports since ${esc(fmtDate(String(ver.readyAt || '').slice(0, 10)))}${ver.readyBy ? ' · ' + esc(ver.readyBy) : ''}.` : findings.length - decided ? `${findings.length - decided} finding${findings.length - decided > 1 ? 's' : ''} still to decide. Mark it ready once every finding is decided.` : 'Every finding is decided.'}</span></div>
       <div class="btn-row"><button class="btn" type="button" id="vf-xls">Export to Excel</button>${auditor && complete ? (ver.ready ? '<button class="btn" type="button" id="vf-unready">Reopen</button>' : '<button class="btn primary" type="button" id="vf-ready">Mark Ready for Reports</button>') : ''}</div></div>`;
 
-  return { crumb, body, wire: () => { wireTop(); wireVerify({ refs, rerender: ctx.rerender, exam, audit, o, st, books, findings, ver, dec, auditor, months }); } };
+  return { crumb, body, wire: () => { wireTop(); wireVerify({ refs, rerender: ctx.rerender, exam, audit, o, st, books, findings, ver, dec, auditor, months, lgu, f }); } };
 }
 
 function wireVerify(c) {
-  const { refs, exam, audit, o, st, books, findings, ver, dec, auditor } = c;
+  const { refs, exam, audit, o, st, books, findings, ver, dec, auditor, lgu, f } = c;
   $$('[data-view]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); UI.view = a.dataset.view; c.rerender(); }; });
   if ($('#vf-show')) $('#vf-show').onchange = (e) => go({ show: e.target.value });
+  $$('[data-vtab]').forEach((b) => { b.onclick = () => { UI.tab = b.dataset.vtab;
+    $$('[data-vtab]').forEach((y) => { const on = y === b; y.classList.toggle('on', on); y.setAttribute('aria-selected', on); });
+    ['sum', 'det', 'soa'].forEach((k) => { const el = $('#vf-pane-' + k); if (el) el.hidden = k !== UI.tab; }); }; });
+  // Decision buttons: one per row; clicking the chosen one again sets it back to To decide (saved with Save Decisions).
+  $$('.vf-decb button').forEach((btn) => { btn.onclick = () => { const tr = btn.closest('tr'); const v = tr.dataset.d === btn.dataset.v ? 'To decide' : btn.dataset.v; tr.dataset.d = v;
+    $$('button', btn.parentNode).forEach((y) => { y.classList.toggle('on', y.dataset.v === v); y.setAttribute('aria-pressed', y.dataset.v === v); }); }; });
   const paintRc = () => books.forEach((b) => {
     const g = (f2) => { const el = $(`[data-rc="${b.key}"][data-f="${f2}"]`); return el ? (num(el.value) || 0) : 0; };
     const has = $(`[data-rc="${b.key}"][data-f="cashbook"]`)?.value.trim();
@@ -354,7 +433,7 @@ function wireVerify(c) {
   const sfd = $('#vf-savefd');
   if (sfd) sfd.onclick = () => {
     const decisions = { ...(ver.decisions || {}) };
-    $$('tr[data-fk]').forEach((tr) => { decisions[tr.dataset.fk] = { decision: $('.vf-dec', tr).value, remarks: $('.vf-rem', tr).value.trim() }; });
+    $$('tr[data-fk]').forEach((tr) => { decisions[tr.dataset.fk] = { decision: tr.dataset.d || 'To decide', remarks: $('.vf-rem', tr).value.trim() }; });
     saveVer({ decisions }, 'Decisions saved.');
   };
   const rd = $('#vf-ready');

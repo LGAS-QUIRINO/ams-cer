@@ -308,10 +308,32 @@ table.vf-tbl{min-width:760px}
 .af-reg tr.vf-sub td:first-child{padding-left:36px; color:var(--muted)}
 .vf-tbl .vf-grp{border-left:1px solid var(--line)}
 .vf-rc{width:130px; margin-left:auto}
-table.vf-find{min-width:980px}
+table.vf-find{min-width:820px}
 .vf-find td{vertical-align:middle}
-.vf-find .vf-dec{width:130px}
-.vf-find .vf-rem{min-width:220px}
+.vf-find td.vf-dcell, .vf-find th.vf-dcell{width:290px}
+.vf-find .vf-rem{width:100%; margin-top:6px}
+.vf-decb{display:flex; gap:4px}
+.vf-decb button{font:inherit; font-size:12px; padding:3px 9px; border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--muted); cursor:pointer; white-space:nowrap}
+.vf-decb button:hover:not(:disabled){border-color:#bcd0f5; color:var(--ink)}
+.vf-decb button.on{background:var(--navy); border-color:var(--navy); color:#fff}
+.vf-decb button:disabled{cursor:default}
+.vf-stats{grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; margin-bottom:14px}
+.vf-stats .stat{padding:14px 16px}
+.vf-stats .stat b{font-size:26px}
+.vf-stats .stat small{display:block; font-size:12.5px; color:var(--muted)}
+.vf-badstat{border-color:#f3b8b3; background:var(--bad-bg)}
+.vf-tabsbar{padding:10px 12px; display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+.vf-tabsbar .cd-tabs{flex:1; margin:0; min-width:0}
+.vf-area-sec{margin-bottom:18px}
+.vf-area-h{display:flex; align-items:center; gap:10px; margin:4px 0 8px; padding-bottom:6px; border-bottom:1px solid var(--line)}
+.vf-area-h a{margin-left:auto; font-size:13px; color:var(--blue); text-decoration:none}
+.vf-area-h .pill{font-size:12.5px}
+.vf-grp{margin:0 0 14px}
+.vf-grp h3{margin:0 0 6px; font-size:14px; color:var(--ink)}
+.vf-facts{margin-bottom:8px}
+.vf-okline{margin:6px 0 0}
+table.vf-sum{min-width:820px}
+@media (max-width:1000px){ .vf-stats{grid-template-columns:repeat(2,minmax(0,1fr))} }
 a.vf-area{text-decoration:none}
 .vf-status{padding:16px 20px; display:flex; flex-wrap:wrap; align-items:center; gap:14px}
 .vf-status > div:first-child{display:flex; flex-direction:column; gap:3px}
