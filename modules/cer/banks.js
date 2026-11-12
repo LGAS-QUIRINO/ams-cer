@@ -473,7 +473,13 @@ function matchItems(list, lines, found, lineOf, used) {
   });
   list.filter((x) => x.kind === 'chk' && x.cb).forEach((x) => tryMatch(x, (cs) => cs.sort((a, b) => Math.abs(days(x.date, a.date)) - Math.abs(days(x.date, b.date)))[0]));
   list.filter((x) => x.kind === 'chk' && !x.cb).forEach((x) => tryMatch(x, (cs) => cs.find((l) => x.ref && !l.chq && chqKey(l.desc).includes(chqKey(x.ref))) || cs.filter((l) => !l.chq || !chqKey(x.ref)).sort((a, b) => Math.abs(days(x.date, a.date)) - Math.abs(days(x.date, b.date)))[0]));
-  list.filter((x) => x.kind === 'dep').forEach((x) => tryMatch(x, (cs) => cs.sort((a, b) => Math.abs(days(x.date, a.date)) - Math.abs(days(x.date, b.date)))[0]));
+  // Deposits: when several bank credits fit, the one whose description agrees with the deposit (check deposit ↔ CHECK / CHQ /
+  // ONUS; cash deposit ↔ CASH) comes first, then the nearest date.
+  const isChkTxt = (t) => /check|cheque|chq|\bchk\b|onus|on-us|clearing/i.test(String(t || '')), isCashTxt = (t) => /cash/i.test(String(t || ''));
+  const kindOfDep = (x) => { const t = `${x.label || ''} ${x.ref || ''}`; return x.key.startsWith('tr|') || isChkTxt(t) ? 'chk' : isCashTxt(t) ? 'cash' : ''; };
+  const kindOfLine = (l) => (isChkTxt(l.desc) ? 'chk' : isCashTxt(l.desc) ? 'cash' : '');
+  const off = (x, l) => { const a = kindOfDep(x), b = kindOfLine(l); return a && b && a !== b ? 1 : 0; };
+  list.filter((x) => x.kind === 'dep').sort((a, b) => (kindOfDep(a) ? 0 : 1) - (kindOfDep(b) ? 0 : 1)).forEach((x) => tryMatch(x, (cs) => cs.sort((a, b) => off(x, a) - off(x, b) || Math.abs(days(x.date, a.date)) - Math.abs(days(x.date, b.date)))[0]));
   return n;
 }
 async function importStatement(c, save) {
