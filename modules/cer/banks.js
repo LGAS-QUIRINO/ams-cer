@@ -144,7 +144,7 @@ export async function banksView(ctx) {
       from: `${r.pending ? 'Not yet reported' : repName(r)} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });
   }));
   // Refunds of cash advances deposited in this account with no OR (Liquidation Journal): deposits to find in the statement.
-  depRefunds(liq0.map(flat), audit.lguId, acct, accounts).forEach((l) => items.push({ key: `rf|${l.id}`, kind: 'dep', label: 'Refund deposited', date: l.date, ref: `Refund of cash advance, ${/^\s*DS\b/i.test(l.ref || '') ? l.ref : `DS ${l.ref || ''}`}`, amount: +l.amount || 0,
+  depRefunds(liq0.map(flat), audit.lguId, acct, accounts).forEach((l) => items.push({ key: `rf|${l.id}`, kind: 'dep', label: 'Refund', date: l.date, ref: l.ref || '', amount: +l.amount || 0,
     from: `Liquidation Journal · ${officers.find((o) => o.id === l.officerId)?.name || ''}` }));
   // Cash advance checks of this account only (the fund of the check's checkbook; not identified → the first account).
   const fxB = { booklets: books0.map(flat), accounts, jr: jr0.map(flat) }; const caOfAcct = (a) => { const ac = caAcct(a, fxB); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; };
@@ -260,7 +260,9 @@ export async function banksView(ctx) {
   const heads = rec.heads && rec.heads.length ? rec.heads : ['Date', 'Description', 'Debit', 'Credit', 'Balance', 'Cheque Number'];
   const cellsOf = (l) => l.cells || [fmtDate(l.date), l.desc, l.debit ? money(l.debit) : '', l.credit ? money(l.credit) : '', l.bal !== null && l.bal !== undefined ? money(l.bal) : '', l.chq || ''];
   const numCol = (h) => /debit|credit|balance|amount|withdraw|deposit/i.test(h);
-  const inBooks = (l) => { const x = byLine[l.i]; if (x) return `<span class="pill p-done">${x.label || (x.kind === 'dep' ? 'Deposit' : 'Check')} ${esc(x.ref)}</span>`;
+  // The book item matched: its reference alone when it already says what it is (e.g. "Cash Deposit Slip"), else "Deposit …" / "Check …".
+  const pillText = (x) => { const lb = x.label || (x.kind === 'dep' ? 'Deposit' : 'Check'), r = String(x.ref || '').trim(); return !r ? lb : new RegExp(`\\b${lb.split(' ')[0]}`, 'i').test(r) ? r : `${lb} · ${r}`; };
+  const inBooks = (l) => { const x = byLine[l.i]; if (x) return `<span class="pill p-done">${esc(pillText(x))}</span>`;
     if (!rec.lineOf && l.matched) return '<span class="pill p-done">Matched</span>';
     const k = esc(lineKey(l));
     if (begSet.has(l.i)) return `<span class="pill p-beg" title="Issued before the last cash exam: already in the beginning book balance">${l.credit ? 'Deposit in transit at the last cash exam' : 'Outstanding at the last cash exam'}</span>${enc ? ` <button type="button" class="bk-lnk" data-begmk="${k}" data-v="0" title="Not outstanding at the last cash exam">undo</button>` : ''}`;
@@ -632,7 +634,7 @@ export async function bankFindings(audit, refs) {
     advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg && (() => { const ac = caAcct(a, { booklets: books0.map(flat), accounts, jr: jr0.map(flat) }); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; })()).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
     const jrChecks = bankChecksOf(jr0.map(flat), acct.id), jrNos = new Set(jrChecks.map((c) => chkNo(c.checkNo)));
     jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c) }));
-    depRefunds(liq0.map(flat), audit.lguId, acct, accounts).forEach((l) => items.push({ key: `rf|${l.id}`, kind: 'dep', date: l.date, ref: `Refund of cash advance, ${/^\s*DS\b/i.test(l.ref || '') ? l.ref : `DS ${l.ref || ''}`}`, amount: +l.amount || 0 }));
+    depRefunds(liq0.map(flat), audit.lguId, acct, accounts).forEach((l) => items.push({ key: `rf|${l.id}`, kind: 'dep', label: 'Refund', date: l.date, ref: l.ref || '', amount: +l.amount || 0 }));
     (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0 }));
     items.push(...cashbookItems(settings0.map(flat), examIds, acct.id));
     (remOf(Object.fromEntries(settings0.map((x) => [x.id, x.data])), audit.lguId).list || []).filter((r) => remAcctId(r, accounts) === acct.id).forEach((r) => items.push({ key: `tx|${r.id}`, kind: 'chk', cb: true, win: 3, date: r.date, ref: remText(r), amount: +r.amount || 0 }));
