@@ -102,7 +102,7 @@ const SOURCES = ['Soft copy (imported)', 'PDF', 'Printed', 'Bank confirmation'];
 
 export async function banksView(ctx) {
   const { refs, q } = ctx;
-  const [audits0, settings0, reports0, advs0, recs0, officers0, exams0, books0, cut0, jr0] = await Promise.all(['cer_audits', 'cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_officers', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj'].map(listT));
+  const [audits0, settings0, reports0, advs0, recs0, officers0, exams0, books0, cut0, jr0, liq0] = await Promise.all(['cer_audits', 'cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_officers', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj', 'cer_liquid'].map(listT));
   await loadCer();   // the cycles
   const audits = audits0.map(flat).filter((a) => mayView(refs, refs.lgu[a.lguId]) && (cycleOk(a) || a.id === q.get('a'))).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
   const settings = Object.fromEntries(settings0.map((s) => [s.id, s.data]));
@@ -143,6 +143,9 @@ export async function banksView(ctx) {
     items.push({ key, old, kind: 'dep', date: d.date, ref: depRefText(d), amount: +d.amount || 0,
       from: `${r.pending ? 'Not yet reported' : repName(r)} · ${officers.find((o) => o.id === r.officerId)?.name || ''}` });
   }));
+  // Refunds of cash advances deposited in this account with no OR (Liquidation Journal): deposits to find in the statement.
+  depRefunds(liq0.map(flat), audit.lguId, acct, accounts).forEach((l) => items.push({ key: `rf|${l.id}`, kind: 'dep', label: 'Refund deposited', date: l.date, ref: `Refund of cash advance, ${/^\s*DS\b/i.test(l.ref || '') ? l.ref : `DS ${l.ref || ''}`}`, amount: +l.amount || 0,
+    from: `Liquidation Journal · ${officers.find((o) => o.id === l.officerId)?.name || ''}` }));
   // Cash advance checks of this account only (the fund of the check's checkbook; not identified → the first account).
   const fxB = { booklets: books0.map(flat), accounts, jr: jr0.map(flat) }; const caOfAcct = (a) => { const ac = caAcct(a, fxB); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; };
   advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg && caOfAcct(a)).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0,
@@ -452,6 +455,8 @@ function begLinesOf(rec, cand, jr, acct, booklets, cov) {
 
 /* ---------- import a soft copy ---------- */
 // Check Nos. compared by digits only, without leading zeros (bank 0001749813 = books 1749813).
+// Refunds of cash advances deposited in the bank with no OR (Liquidation Journal), of this account (none named: the first account).
+const depRefunds = (liqs, lguId, acct, accounts) => liqs.filter((l) => l.lguId === lguId && l.type === 'refund' && l.deposited && (l.depAcctId || accounts[0]?.id) === acct.id && l.date);
 const chqKey = (v) => String(v ?? '').replace(/\D/g, '').replace(/^0+/, '');
 // Matches the book items to the bank lines: a check No. in the Cheque Number column wins; otherwise deposits to credits and
 // checks to debits of the same amount, nearest date (bank on or after the book date: within 15 days for a deposit, a year for a check).
@@ -608,7 +613,7 @@ export async function accountsModal(refs, lguId, accounts, funds, enc) {
 
 /* ---------- for Verification: the bank accounts of the auditee, as findings ---------- */
 export async function bankFindings(audit, refs) {
-  const [settings0, reports0, advs0, recs0, exams0, books0, cut0, jr0] = await Promise.all(['cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj'].map(listT));
+  const [settings0, reports0, advs0, recs0, exams0, books0, cut0, jr0, liq0] = await Promise.all(['cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj', 'cer_liquid'].map(listT));
   const accounts = (settings0.map(flat).find((x) => x.id === 'banks|' + audit.lguId) || {}).list || [];
   const examIds = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => e.id));
   const cuts = lastChecksOf({ cutoffs: cut0.map(flat), booklets: books0.map(flat) }, examIds);
@@ -627,6 +632,7 @@ export async function bankFindings(audit, refs) {
     advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg && (() => { const ac = caAcct(a, { booklets: books0.map(flat), accounts, jr: jr0.map(flat) }); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; })()).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, amount: +a.amount || 0 }));
     const jrChecks = bankChecksOf(jr0.map(flat), acct.id), jrNos = new Set(jrChecks.map((c) => chkNo(c.checkNo)));
     jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: checkAmountOf(c) }));
+    depRefunds(liq0.map(flat), audit.lguId, acct, accounts).forEach((l) => items.push({ key: `rf|${l.id}`, kind: 'dep', date: l.date, ref: `Refund of cash advance, ${/^\s*DS\b/i.test(l.ref || '') ? l.ref : `DS ${l.ref || ''}`}`, amount: +l.amount || 0 }));
     (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, amount: +c.amount || 0 }));
     items.push(...cashbookItems(settings0.map(flat), examIds, acct.id));
     (remOf(Object.fromEntries(settings0.map((x) => [x.id, x.data])), audit.lguId).list || []).filter((r) => remAcctId(r, accounts) === acct.id).forEach((r) => items.push({ key: `tx|${r.id}`, kind: 'chk', cb: true, win: 3, date: r.date, ref: remText(r), amount: +r.amount || 0 }));

@@ -5,7 +5,8 @@
 //
 //   cer_liquid  { lguId, officerId, date, ref (LR No.; refund: OR No.), particulars ('' = "Liquidation of cash advance under
 //                 Check No. …"), amount (= the debits), advanceId, type: 'liq' | 'refund', lines: [{ code, name, amount }]
-//                 (the debits of a liquidation), credit (the Advances account code), countAnyway }
+//                 (the debits of a liquidation), credit (the Advances account code), countAnyway,
+//                 deposited (refund deposited in the bank with no OR: ref = deposit slip No.; debit Cash in Bank), depAcctId }
 // Shown under the bank account of the cash advance check (from the CkDJ, else its checkbook), for the month of the liquidation.
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
@@ -22,15 +23,18 @@ const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, ...rest } = x; return rest; };
 const bad = (m) => { toast(m, 'bad'); return false; };
 const CASH = '1-01-01-010';
+const BANK = '1-01-02-010';   // Cash in Bank – Local Currency, Current Account (a refund deposited with no OR)
+const BANK_NAME = 'Cash in Bank - Local Currency, Current Account';
 const ADV_DEFAULT = '1-03-03-020';
 const LQ = { key: '', id: '', d: null };   // the liquidation in the entry line (kept across redraws)
-const blank = (type = 'liq', date = '') => ({ type, date, ref: '', advanceId: '', lines: [{ code: '', amount: '' }], credit: '' });
+const blank = (type = 'liq', date = '', dep = false, depAcct = '') => ({ type, dep, depAcct, date, ref: '', advanceId: '', lines: [{ code: '', amount: '' }], credit: '' });
 const lastDayOf = (m) => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
 const dateIn = (m, v) => { const n = parseInt(String(v || '').trim(), 10); return n >= 1 && n <= lastDayOf(m) ? `${m}-${String(n).padStart(2, '0')}` : ''; };
-export const debitsOf = (l) => (l.type === 'refund' ? [{ code: CASH, amount: r2(l.amount) }] : (l.lines || []));
+export const debitsOf = (l) => (l.type === 'refund' ? [{ code: l.deposited ? BANK : CASH, name: l.deposited ? BANK_NAME : '', amount: r2(l.amount) }] : (l.lines || []));
+export const typeText = (l) => (l.type === 'refund' ? (l.deposited ? 'Refund (deposited, no OR)' : 'Refund') : 'Liquidation');
 const noEntryL = (l) => l.type !== 'refund' && !(l.lines || []).length;
 // A liquidation loaded in the entry line; with no entry yet, the debit amount starts as the liquidation amount.
-const loadL = (l, credit) => ({ type: l.type === 'refund' ? 'refund' : 'liq', date: l.date, ref: l.ref || '', advanceId: l.advanceId, credit,
+const loadL = (l, credit) => ({ type: l.type === 'refund' ? 'refund' : 'liq', dep: !!l.deposited, depAcct: l.depAcctId || '', date: l.date, ref: l.ref || '', advanceId: l.advanceId, credit,
   lines: l.type === 'refund' ? [{ code: CASH, amount: l.amount }] : (l.lines && l.lines.length ? l.lines.map((x) => ({ code: x.code, amount: x.amount })) : [{ code: '', amount: l.amount }]) });
 const goM = (mm) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); q.set('m', mm); location.hash = '#/src?' + q.toString(); };
 const sumOf = (ls) => r2(ls.reduce((n, x) => n + (+x.amount || 0), 0));
@@ -61,7 +65,7 @@ export async function liqView(c) {
   if (LQ.key !== key) Object.assign(LQ, { key, id: '', d: null });
   if (LQ.id && !list.some((l) => l.id === LQ.id)) Object.assign(LQ, { id: '', d: null });
   if (!LQ.d) LQ.d = blank();
-  const d = LQ.d, editing = !!LQ.id, isRf = d.type === 'refund';
+  const d = LQ.d, editing = !!LQ.id, isRf = d.type === 'refund', isDep = isRf && !!d.dep;
   const advLabel = (a) => `${a.checkNo} · ${a.officer || 'no officer'} · ₱${money(a.bal + (editing && a.id === d.advanceId ? r2(list.find((l) => l.id === LQ.id)?.amount) : 0))} left`;
   const open = mine.filter((a) => a.bal > 0.004 || a.id === d.advanceId), done = mine.filter((a) => !open.includes(a));
   const forOpts = `<option value="">— Check No. —</option>${open.map((a) => `<option value="${esc(a.id)}" ${a.id === d.advanceId ? 'selected' : ''}>${esc(advLabel(a))}</option>`).join('')}${done.length ? `<optgroup label="Fully liquidated">${done.map((a) => `<option value="${esc(a.id)}" ${a.id === d.advanceId ? 'selected' : ''}>${esc(advLabel(a))}</option>`).join('')}</optgroup>` : ''}${d.advanceId === '__beg' ? '<option value="__beg" selected>Beginning balance</option>' : ''}`;
@@ -70,12 +74,13 @@ export async function liqView(c) {
   const form = !enc ? '' : !mine.length && !editing ? `<div class="panel sd-pan"><div class="cd-info">No cash advance check from this bank account yet. Encode the cash advance check in the CkDJ (or in Cash Examination, Cash Advances) first.</div></div>`
     : `<div class="panel sd-pan" id="lq-form">${editing ? `<div class="cd-orhead"><h3 class="cer-h3">Edit ${isRf ? 'refund' : 'liquidation'} ${esc(d.ref)}</h3><button class="btn sm" type="button" id="lq-del">Delete</button><button class="btn sm" type="button" id="lq-new">Cancel</button></div>` : ''}
     <div class="sd-line">
-      <div class="sd-f sd-w-typ"><label for="lq-type">Type</label><select class="input" id="lq-type"><option value="liq" ${isRf ? '' : 'selected'}>Liquidation</option><option value="refund" ${isRf ? 'selected' : ''}>Refund</option></select></div>
+      <div class="sd-f sd-w-typ"><label for="lq-type">Type</label><select class="input" id="lq-type"><option value="liq" ${isRf ? '' : 'selected'}>Liquidation</option><option value="refund" ${isRf && !isDep ? 'selected' : ''}>Refund (OR)</option><option value="refundDep" ${isDep ? 'selected' : ''}>Refund (deposited, no OR)</option></select></div>
       <div class="sd-f sd-w-day"><label for="lq-day">Day</label><input class="input r" id="lq-day" inputmode="numeric" maxlength="2" value="${d.date ? +d.date.slice(8, 10) : ''}" title="${esc(monthLabel(m))}"></div>
-      <div class="sd-f sd-w-ref"><label for="lq-ref">${isRf ? 'OR No.' : 'LR No. / JEV'}</label><input class="input mono" id="lq-ref" value="${esc(d.ref)}"></div>
+      <div class="sd-f sd-w-ref"><label for="lq-ref">${isDep ? 'Deposit Slip No.' : isRf ? 'OR No.' : 'LR No. / JEV'}</label><input class="input mono" id="lq-ref" value="${esc(d.ref)}" ${isDep ? 'placeholder="e.g. DS 12-09"' : ''}></div>
+      ${isDep ? `<div class="sd-f sd-w-for"><label for="lq-dacct">Deposited in</label><select class="input" id="lq-dacct">${accounts.map((x) => `<option value="${esc(x.id)}" ${x.id === (d.depAcct || acct.id) ? 'selected' : ''}>${esc(acctLabel(x))}</option>`).join('')}</select></div>` : ''}
       <div class="sd-f sd-w-for"><label for="lq-for">For Check No.</label><select class="input" id="lq-for">${forOpts}</select></div>
       <div class="sd-f sd-w-acct"><div class="sd-acch"><label>Debit</label><label class="r">Amount</label><span></span></div>
-        <div class="sd-accts">${isRf ? `<div class="sd-ln"><div class="input cd-ro mono" title="Cash Local Treasury">${CASH} Cash Local Treasury</div><input class="input r sd-gross" id="lq-rfamt" inputmode="decimal" value="${d.lines[0] && d.lines[0].amount !== '' ? esc(money(d.lines[0].amount)) : ''}" aria-label="Refund amount"></div>`
+        <div class="sd-accts">${isRf ? `<div class="sd-ln"><div class="input cd-ro mono" title="${isDep ? esc(names[BANK] || BANK_NAME) : 'Cash Local Treasury'}">${isDep ? `${BANK} ${esc(names[BANK] || BANK_NAME)}` : `${CASH} Cash Local Treasury`}</div><input class="input r sd-gross" id="lq-rfamt" inputmode="decimal" value="${d.lines[0] && d.lines[0].amount !== '' ? esc(money(d.lines[0].amount)) : ''}" aria-label="Refund amount"></div>`
           : `${d.lines.map(ln).join('')}<button type="button" class="sd-add" id="lq-addln">+ another account</button>`}</div></div>
       <div class="sd-f sd-w-cr"><label for="lq-cr">Credit</label><select class="input" id="lq-cr">${CA_CODES.map((k) => `<option value="${k}" ${k === (d.credit || ADV_DEFAULT) ? 'selected' : ''}>${k} ${esc(names[k] || '')}</option>`).join('')}</select></div>
       <div class="sd-f sd-w-amt"><label>Total</label><div class="input cd-ro r" id="lq-tot">0.00</div></div>
@@ -88,7 +93,7 @@ export async function liqView(c) {
     const deb = debitsOf(l), fl = flagsOf(l), a = advOf(l.advanceId), cr = creditOf(l), n = Math.max(deb.length, 1), on = l.id === LQ.id ? ' class="cd-on"' : '';
     const rs = n > 1 ? ` rowspan="${n}"` : '';
     const dc = (x) => (x ? `<td class="lq-code">${esc(x.code)}</td><td>${esc(names[x.code] || x.name || '')}</td><td class="r">${money(x.amount)}</td>` : '<td></td><td></td><td></td>');
-    const first = `<tr${on}><td${rs}>${esc(fmtDate(l.date))}</td><td${rs}>${l.type === 'refund' ? 'Refund' : 'Liquidation'}</td><td${rs}>${esc(l.ref || '')}</td><td${rs}>${esc(liqText(l, a))}</td>${dc(deb[0])}
+    const first = `<tr${on}><td${rs}>${esc(fmtDate(l.date))}</td><td${rs}>${esc(typeText(l))}</td><td${rs}>${esc(l.ref || '')}</td><td${rs}>${esc(liqText(l, a))}</td>${dc(deb[0])}
       <td${rs} class="lq-code">${esc(cr)}</td><td${rs}>${esc(names[cr] || '')}</td><td${rs} class="r">${money(l.amount)}</td><td${rs}>${esc(forTxt(l))}${a && a.officer ? `<small class="dim lq-off">${esc(a.officer)}</small>` : ''}</td>
       <td${rs} class="af-noprint lq-flags">${fl.map((t) => `<span class="sd-flag">${esc(t)}</span>`).join('')}${enc ? `<button class="btn sm ${fl.includes('No entry yet') ? 'primary' : ''}" type="button" data-lqedit="${esc(l.id)}">${fl.includes('No entry yet') ? 'Fill entry' : 'Edit'}</button>` : ''}</td></tr>`;
     return first + deb.slice(1).map((x) => `<tr${on}>${dc(x)}</tr>`).join('');
@@ -116,7 +121,7 @@ export async function liqView(c) {
       { h: 'Account Code', w: 0.95, g: 'CREDIT' }, { h: 'Account Name', w: 1.3, g: 'CREDIT' }, { h: 'Amount', w: 1.0, right: true, g: 'CREDIT' }, { h: 'For Check No.', w: 0.8 }],
     // One row per debit account; the date, particulars, credit and check on the first.
     rows: list.flatMap((l) => { const deb = debitsOf(l), a = advOf(l.advanceId), cr = creditOf(l);
-      return (deb.length ? deb : [null]).map((x, i) => [...(i ? ['', '', '', ''] : [fmtDate(l.date), l.type === 'refund' ? 'Refund' : 'Liquidation', l.ref || '', liqText(l, a)]),
+      return (deb.length ? deb : [null]).map((x, i) => [...(i ? ['', '', '', ''] : [fmtDate(l.date), typeText(l), l.ref || '', liqText(l, a)]),
         x ? x.code : '', x ? names[x.code] || x.name || '' : '', x ? r2(x.amount) : '',
         ...(i ? ['', '', '', ''] : [cr, names[cr] || '', r2(l.amount), forTxt(l)])]); }),
     total: [{ t: 'Total', span: 4 }, '', '', sumOf(list.flatMap(debitsOf)), '', '', total, ''] });
@@ -137,7 +142,8 @@ export async function liqView(c) {
     const toCode = (v) => { const t = String(v || '').trim(); if (names[t]) return t; const hit = coa.accounts.find(([, n]) => n.toLowerCase() === t.toLowerCase()); return hit ? hit[0] : t; };
     const read = () => {
       d.date = dateIn(m, $('#lq-day').value); d.ref = $('#lq-ref').value.trim(); d.advanceId = $('#lq-for').value; d.credit = $('#lq-cr').value;
-      d.lines = d.type === 'refund' ? [{ code: CASH, amount: num($('#lq-rfamt').value) ?? '' }] : $$('.sd-ln[data-ln]').map((el) => ({ code: toCode($('.sd-code', el).value), amount: num($('.sd-gross', el).value) ?? '' }));
+      if ($('#lq-dacct')) d.depAcct = $('#lq-dacct').value;
+      d.lines = d.type === 'refund' ? [{ code: d.dep ? BANK : CASH, amount: num($('#lq-rfamt').value) ?? '' }] : $$('.sd-ln[data-ln]').map((el) => ({ code: toCode($('.sd-code', el).value), amount: num($('.sd-gross', el).value) ?? '' }));
     };
     const paint = () => {
       read();
@@ -149,7 +155,8 @@ export async function liqView(c) {
     };
     // Picking the check: its Advances account (from the CkDJ) becomes the credit.
     $('#lq-for').onchange = () => { const a = advOf($('#lq-for').value); if (a && a.credit) $('#lq-cr').value = a.credit; paint(); };
-    $('#lq-type').onchange = () => { read(); d.type = $('#lq-type').value; d.lines = d.type === 'refund' ? [{ code: CASH, amount: sumOf(d.lines) || '' }] : [{ code: '', amount: sumOf(d.lines) || '' }]; rerender(); };
+    $('#lq-type').onchange = () => { read(); const v = $('#lq-type').value; d.type = v === 'liq' ? 'liq' : 'refund'; d.dep = v === 'refundDep'; if (d.dep && !d.depAcct) d.depAcct = acct.id;
+      d.lines = d.type === 'refund' ? [{ code: d.dep ? BANK : CASH, amount: sumOf(d.lines) || '' }] : [{ code: '', amount: sumOf(d.lines) || '' }]; rerender(); };
     $$('#lq-form input').forEach((el) => { el.oninput = paint; });
     $$('.sd-code').forEach((el) => { el.onchange = () => { el.value = toCode(el.value); paint(); }; });
     $$('#lq-form .sd-gross').forEach((el) => { el.onblur = () => { const v = num(el.value); if (v !== null) el.value = money(v); paint(); }; });
@@ -164,12 +171,12 @@ export async function liqView(c) {
     const save = async () => {
       read();
       if (!d.date) return bad(`Enter the day (1 to ${lastDayOf(m)}).`);
-      if (!d.ref) return bad(d.type === 'refund' ? 'Enter the OR No. of the refund.' : 'Enter the LR No. (or JEV).');
+      if (!d.ref) return bad(d.type === 'refund' ? (d.dep ? 'Enter the deposit slip No. (or "DS" and the date if it has none).' : 'Enter the OR No. of the refund.') : 'Enter the LR No. (or JEV).');
       if (!d.advanceId) return bad('Choose the check (For Check No.).');
       const lines = d.lines.filter((l) => l.code || l.amount !== '');
       if (!lines.length) return bad('Enter the debit account and the amount.');
       if (lines.some((l) => !l.code)) return bad('Enter the account of each debit.');
-      if (lines.some((l) => !names[l.code])) return bad(`${lines.find((l) => !names[l.code]).code} is not in the Chart of Accounts.`);
+      if (lines.some((l) => !names[l.code] && l.code !== BANK)) return bad(`${lines.find((l) => !names[l.code]).code} is not in the Chart of Accounts.`);
       if (lines.some((l) => !(+l.amount > 0))) return bad('Enter the amount of each debit.');
       const amount = sumOf(lines), a = advOf(d.advanceId), cur = LQ.id ? list.find((x) => x.id === LQ.id) : null;
       const left = a ? r2(a.bal + (cur && cur.advanceId === a.id ? r2(cur.amount) : 0)) : null;
@@ -177,16 +184,18 @@ export async function liqView(c) {
         const go = await modal({ title: 'More than what is left?', body: `<p style="margin:0">Check No. ${esc(a.checkNo)} has ₱${money(left)} left. This is ₱${money(amount)}. Save it anyway? It is flagged.</p>`, buttons: [{ label: 'Go back', value: false }, { label: 'Save', cls: 'primary', value: true }] });
         if (!go) return;
       }
-      const rec = { ...(cur ? strip(cur) : { particulars: '' }), lguId: lgu.id, officerId: a ? a.officerId : (cur && cur.officerId) || '', type: d.type, date: d.date, ref: d.ref, advanceId: d.advanceId, amount,
-        lines: d.type === 'refund' ? [] : lines.map((l) => ({ code: l.code, name: names[l.code], amount: r2(l.amount) })), credit: d.credit };
+      const { deposited: _dp, depAcctId: _da, ...base } = cur ? strip(cur) : { particulars: '' };
+      const rec = { ...base, lguId: lgu.id, officerId: a ? a.officerId : (cur && cur.officerId) || '', type: d.type, date: d.date, ref: d.ref, advanceId: d.advanceId, amount,
+        lines: d.type === 'refund' ? [] : lines.map((l) => ({ code: l.code, name: names[l.code], amount: r2(l.amount) })), credit: d.credit,
+        ...(d.type === 'refund' && d.dep ? { deposited: true, depAcctId: d.depAcct || acct.id } : {}) };
       const id = LQ.id || newId('cerlq'), was = !LQ.id;
       // Filling one that had no entry: the next one of the month with no entry opens.
       let next = null;
       if (cur && noEntryL(cur)) { const i = list.findIndex((x) => x.id === cur.id); next = [...list.slice(i + 1), ...list.slice(0, i)].find((x) => x.id !== cur.id && noEntryL(x)) || null; }
-      LQ.id = next ? next.id : ''; LQ.d = next ? loadL(next, creditOf(next)) : was ? blank(d.type, d.date) : null;
+      LQ.id = next ? next.id : ''; LQ.d = next ? loadL(next, creditOf(next)) : was ? blank(d.type, d.date, d.dep, d.depAcct) : null;
       focusAfter('#lq-form', next ? '.sd-code' : '#lq-ref', !!next);
       await store.save('cer_liquid', id, rec, by(refs));
-      toast(`${d.type === 'refund' ? 'Refund' : 'Liquidation'} ${d.ref} saved.${next ? ` Next: ${next.ref || ''}.` : ''}`, 'ok');
+      toast(`${d.type === 'refund' ? (d.dep ? 'Refund (deposited)' : 'Refund') : 'Liquidation'} ${d.ref} saved.${next ? ` Next: ${next.ref || ''}.` : ''}`, 'ok');
     };
     $('#lq-save').onclick = save;
     $('#lq-form').onkeydown = (e) => {
@@ -237,11 +246,12 @@ async function importLiq({ refs, lgu, advs, liqsAll, names }) {
       if (!ref) { problems.push({ line, why: 'LR No. / OR No. is missing.' }); return; }
       if (!(amt > 0)) { problems.push({ line, why: 'Amount is missing or not a number.' }); return; }
       const code = String(get(row, 'code') ?? '').trim();
-      const x = g || { ref, forTxt, type, date: date || (tTxt ? '' : last.date), part: '', lines: [], rows: [] };
+      const dep = type === 'refund' && (tTxt ? /deposit|no\s*or/i.test(tTxt) : g ? g.dep : last.dep);
+      const x = g || { ref, forTxt, type, dep, date: date || (tTxt ? '' : last.date), part: '', lines: [], rows: [] };
       if (date && !x.date) x.date = date;
       const p = String(get(row, 'part') ?? '').trim(); if (p && !x.part) x.part = p;
       x.lines.push({ code: type === 'refund' ? (code || '1-01-01-010') : code, amount: amt }); x.rows.push(line);
-      groups.set(k, x); last = { type: x.type, date: x.date };
+      groups.set(k, x); last = { type: x.type, dep: x.dep, date: x.date };
     });
     const add = [], upd = [];
     groups.forEach((g) => {
@@ -266,18 +276,19 @@ async function importLiq({ refs, lgu, advs, liqsAll, names }) {
     const box = $('#lj-res', bg);
     if (p.error) { box.innerHTML = `<div class="msg bad">${esc(p.error)}</div>`; return; }
     box.innerHTML = `<div class="oi-sum"><b>${p.add.length} liquidation${p.add.length === 1 ? '' : 's'} to add</b> · ₱ ${money(sumOf(p.add.map((x) => ({ amount: x.amount }))))}${p.upd.length ? `<span>${p.upd.length} already in: debits filled</span>` : ''}</div>
-      ${p.add.length ? `<div class="af-tbl oi-prev"><table class="af-reg"><thead><tr><th>Date</th><th>Type</th><th>LR / OR No.</th><th>Check No.</th><th>Debits</th><th class="r">Amount</th></tr></thead><tbody>${p.add.slice(0, 200).map((x) => `<tr><td>${esc(fmtDate(x.g.date))}</td><td>${x.g.type === 'refund' ? 'Refund' : 'Liquidation'}</td><td class="mono">${esc(x.g.ref)}</td><td class="mono">${esc(x.a.checkNo)}</td><td class="mono">${esc(x.g.lines.map((l) => l.code).join(', '))}</td><td class="r">${money(x.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${p.add.length ? `<div class="af-tbl oi-prev"><table class="af-reg"><thead><tr><th>Date</th><th>Type</th><th>LR / OR No.</th><th>Check No.</th><th>Debits</th><th class="r">Amount</th></tr></thead><tbody>${p.add.slice(0, 200).map((x) => `<tr><td>${esc(fmtDate(x.g.date))}</td><td>${x.g.type === 'refund' ? (x.g.dep ? 'Refund (deposited, no OR)' : 'Refund') : 'Liquidation'}</td><td class="mono">${esc(x.g.ref)}</td><td class="mono">${esc(x.a.checkNo)}</td><td class="mono">${esc(x.g.lines.map((l) => l.code).join(', '))}</td><td class="r">${money(x.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
       ${p.problems.length ? `<div class="af-probs"><b>Not imported (${p.problems.length})</b>${p.problems.slice(0, 60).map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
   };
   const v = await modal({ title: `Import Liquidations · ${agencyName(refs, lgu)}`, wide: true,
-    body: `<p class="af-note">Excel columns: <b>Type, Date, LR No. / OR No., For Check No., Account Code, Amount</b> (see the Template). Rows with the same LR No. and check become one liquidation with several debits. Type Refund: the OR No.; the debit is Cash Local Treasury.</p>
+    body: `<p class="af-note">Excel columns: <b>Type, Date, LR No. / OR No., For Check No., Account Code, Amount</b> (see the Template). Rows with the same LR No. and check become one liquidation with several debits. Type Refund: the OR No.; the debit is Cash Local Treasury. Type "Refund (deposited)" (refund deposited in the bank with no OR): the deposit slip No.; the debit is Cash in Bank, of the bank account of the check.</p>
       <div class="field"><label for="lj-file">Excel file</label><input class="input" type="file" id="lj-file" accept=".xlsx,.xlsm,.xls,.csv"></div><div id="lj-res"></div>`,
     onOpen: (bg) => { $('#lj-file', bg).onchange = async (e) => { const fl = e.target.files[0]; if (!fl) return; $('#lj-res', bg).innerHTML = '<p class="af-note">Reading…</p>'; try { plan = await read(fl); show(bg, plan); } catch (err) { plan = null; $('#lj-res', bg).innerHTML = `<div class="msg bad">${esc(err.message || String(err))}</div>`; } }; },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; } if (!plan.add.length && !plan.upd.length) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
   if (v !== 'go') return;
   for (const { g, a, amount } of plan.add) {
     await store.save('cer_liquid', newId('cerlq'), { lguId: lgu.id, officerId: a.officerId, type: g.type, date: g.date, ref: g.ref, particulars: g.part || '', amount, advanceId: a.id,
-      lines: g.type === 'refund' ? [] : g.lines.map((l) => ({ code: l.code, name: names[l.code], amount: r2(l.amount) })), credit: a.credit || ADV_DEFAULT }, by(refs), { quiet: true });
+      lines: g.type === 'refund' ? [] : g.lines.map((l) => ({ code: l.code, name: names[l.code], amount: r2(l.amount) })), credit: a.credit || ADV_DEFAULT,
+      ...(g.type === 'refund' && g.dep ? { deposited: true, depAcctId: a.acctId || '' } : {}) }, by(refs), { quiet: true });
   }
   for (const { cur, lines, credit } of plan.upd) await store.save('cer_liquid', cur.id, { ...strip(cur), lines: lines.map((l) => ({ code: l.code, name: names[l.code], amount: r2(l.amount) })), credit: credit || ADV_DEFAULT }, by(refs), { quiet: true });
   emitChange('local');

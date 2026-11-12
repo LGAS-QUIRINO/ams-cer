@@ -41,7 +41,7 @@ function figures(advs, liqs) {
 }
 
 // A liquidation's particulars: as typed (older entries), else "Liquidation of cash advance under Check No. …".
-export const liqText = (l, a) => l.particulars || `${l.type === 'refund' ? 'Refund' : 'Liquidation'} of ${a && !a.rest && a.checkNo ? `cash advance under Check No. ${a.checkNo}` : 'the beginning cash advance'}`;
+export const liqText = (l, a) => l.particulars || `${l.type === 'refund' ? (l.deposited ? 'Refund (deposited in the bank, no OR)' : 'Refund') : 'Liquidation'} of ${a && !a.rest && a.checkNo ? `cash advance under Check No. ${a.checkNo}` : 'the beginning cash advance'}`;
 export async function advancesView(ctx) {
   const { refs, q } = ctx;
   const [audits0, exams0, officers0, advs0, liqs0] = await Promise.all(['cer_audits', 'cer_exams', 'cer_officers', 'cer_cashadv', 'cer_liquid'].map(listT));

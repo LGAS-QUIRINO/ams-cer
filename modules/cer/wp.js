@@ -35,7 +35,7 @@ export function wpLines(c, paper, ver) {
     mine.filter((a) => !a.beg && inScope(a.date)).forEach((a) => lines.push({ key: `ca|${a.id}`, date: a.date, part: a.particulars || '', no: a.checkNo || '', d: +a.amount || 0, c: 0, ord: 0 }));
     liqs.filter((l) => l.officerId === o.id && A.liqIn(l)).forEach((l) => {
       const a = mine.find((x) => x.id === l.advanceId);
-      const part = [l.type === 'refund' ? `Refund, OR No. ${l.ref}` : l.ref, l.particulars, a ? `check No. ${a.checkNo}` : l.advanceId === '__beg' ? 'beginning balance' : ''].filter(Boolean).join(' · ');
+      const part = [l.type === 'refund' ? (l.deposited ? `Refund deposited, ${/^\s*DS\b/i.test(l.ref || '') ? l.ref : `DS ${l.ref}`}` : `Refund, OR No. ${l.ref}`) : l.ref, l.particulars, a ? `check No. ${a.checkNo}` : l.advanceId === '__beg' ? 'beginning balance' : ''].filter(Boolean).join(' · ');
       lines.push({ key: `lq|${l.id}`, date: l.date, part, no: '', d: 0, c: +l.amount || 0, ord: 1 });
     });
   } else {

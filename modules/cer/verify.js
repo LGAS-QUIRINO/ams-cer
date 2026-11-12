@@ -232,10 +232,14 @@ export async function verifyView(ctx) {
   liqs.filter((l) => l.officerId === o.id && l.date && !inScope(l.date)).forEach((l) => {
     const before = from && l.date < from;
     if (!l.countAnyway && !before) return;   // after the count: a later liquidation, nothing to say
-    const what = `${l.type === 'refund' ? 'Refund OR' : 'Liquidation'} ${l.ref || ''}, ${fmtDate(l.date)}, ₱${money(l.amount)}`;
+    const what = `${l.type === 'refund' ? (l.deposited ? 'Refund deposited, DS' : 'Refund OR') : 'Liquidation'} ${l.ref || ''}, ${fmtDate(l.date)}, ₱${money(l.amount)}`;
     add(`liqout|${l.id}|${l.countAnyway ? 1 : 0}`, 'Cash Advances', `${what}: ${before ? 'before the last cash exam' : 'after the cash count'}, ${l.countAnyway ? 'counted' : 'not counted'}.`, '#/cer/advances');
   });
-  liqs.filter((l) => l.officerId === o.id && l.type === 'refund' && liqIn(l)).forEach((l) => {
+  // Refunds deposited in the bank with no OR: refunds should be acknowledged with an official receipt.
+  liqs.filter((l) => l.officerId === o.id && l.type === 'refund' && l.deposited && liqIn(l)).forEach((l) => { const a = advs.find((x) => x.id === l.advanceId);
+    add(`rfdep|${l.id}`, 'Cash Advances', `Refund of ₱${money(l.amount)}${a ? ` for Check No. ${a.checkNo}` : ''} deposited in the bank on ${fmtDate(l.date)} (${/^\s*DS\b/i.test(l.ref || '') ? l.ref : `DS ${l.ref || '—'}`}) without an official receipt.`, '#/cer/advances',
+      'rfdep', [esc(fmtDate(l.date)), esc(l.ref || '—'), esc(a ? a.checkNo : 'Beginning balance'), money(l.amount)], l.amount); });
+  liqs.filter((l) => l.officerId === o.id && l.type === 'refund' && !l.deposited && liqIn(l)).forEach((l) => {
     const n = parseInt(String(l.ref || '').replace(/[^\d]/g, ''), 10);
     const hit = n ? f.ors.find((x) => x.lguId === audit.lguId && +x.serial === n && x.status !== 'cancelled') : null;
     if (!hit) add(`refund|${l.id}`, 'Cash Advances', `Refund OR No. ${l.ref} of ${fmtDate(l.date)} (₱${money(l.amount)}) is not found in Collections & Deposits.`, '#/cer/collections');
@@ -322,6 +326,7 @@ export async function verifyView(ctx) {
     fnp: { t: 'Forms issued before the last exam, not presented then', cols: ['Form', 'From', 'To', 'Qty|r', 'Date remitted', 'Amount|r'] },
     af: { t: 'Accountable forms checks', cols: ['What was found'] },
     ca: { t: 'Unliquidated at the count', cols: ['Check No.', 'Date', 'Purpose', 'Amount|r', 'Unliquidated|r', 'Days|r'] },
+    rfdep: { t: 'Refunds deposited without an official receipt', cols: ['Date deposited', 'Deposit slip', 'For Check No.', 'Amount|r'] },
     caover: { t: 'Over-liquidated', cols: ['Check No.', 'Date', 'Amount|r', 'Over by|r'] },
     banklate: { t: 'Deposits credited late by the bank', cols: ['Deposit', 'Date', 'Amount|r', 'Credited', 'Days|r'] },
     bank: { t: 'Bank statement checks', cols: ['What was found'] },
