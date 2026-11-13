@@ -946,3 +946,6 @@ table.af-reg.tr-month{min-width:0}
 .sd-crtx{white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .sd-tally.sd-ok{color:var(--ok, #2e7d32); background:var(--ok-bg, #e8f5e9); border-color:#b9dfbd}
 .sd-tbl .sd-sg{background:#f4f7ff}
+.sd-rech{margin:18px 0 8px; font-size:14px; color:var(--navy, #0b2a6b)}
+.sd-recap{max-width:760px}
+.sd-recap table.af-reg{min-width:0; width:100%}

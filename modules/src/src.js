@@ -134,7 +134,10 @@ async function journalView(ctx) {
         ${enc ? fillHead : ''}${enc ? '<button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-xls">Export to Excel</button></div>
       ${list.length ? `<div class="af-tbl sd-scroll"><table class="af-reg sd-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">DV / Payroll</th><th scope="col">Payee</th><th scope="col">Particulars</th><th scope="col" class="r">Check Amount</th><th scope="col" class="r">Tax</th><th scope="col" class="sd-sg">Sundry Credit</th><th scope="col" class="r sd-sg">Amount</th><th scope="col">Account</th><th scope="col" class="r">Gross Amount</th><th scope="col">Taxable</th><th scope="col">Auditor's Note</th><th scope="col"></th></tr></thead>
         <tbody>${rows}</tbody><tfoot><tr class="cd-foot"><td colspan="5">Total, ${esc(monthLabel(m))}</td><td class="r">${money(totals.a)}</td><td class="r">${money(totals.t)}</td><td class="sd-sg"></td><td class="r sd-sg">${money(totals.s)}</td><td></td><td class="r">${money(totals.g)}</td><td colspan="3"></td></tr></tfoot></table></div>`
-        : `<div class="empty"><b>No check encoded for ${esc(monthLabel(m))}.</b></div>`}</div>`;
+        : `<div class="empty"><b>No check encoded for ${esc(monthLabel(m))}.</b></div>`}
+      ${(() => { const rc = recapOf(list, names); return rc.rows.length ? `<h4 class="sd-rech">Recapitulation · ${esc(monthLabel(m))}</h4><div class="af-tbl sd-recap"><table class="af-reg"><thead><tr><th scope="col">Account Code</th><th scope="col">Account Title</th><th scope="col" class="r">Debit</th><th scope="col" class="r">Credit</th></tr></thead>
+        <tbody>${rc.rows.map((x) => `<tr><td class="mono">${esc(x.code)}</td><td>${esc(x.name)}</td><td class="r">${x.d ? money(x.d) : ''}</td><td class="r">${x.c ? money(x.c) : ''}</td></tr>`).join('')}</tbody>
+        <tfoot><tr class="cd-foot"><td></td><td>Total</td><td class="r">${money(rc.d)}</td><td class="r">${money(rc.c)}</td></tr></tfoot></table></div>${Math.abs(rc.diff) > 0.004 ? `<p class="sd-tally">Debits and credits differ by ₱${money(Math.abs(rc.diff))}: a check does not tally (see its flag).</p>` : ''}` : ''; })()}</div>`;
   } else {
     const tl = list.filter(isTaxable);
     inner = `<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Tax Register · ${esc(monthLabel(m))}</h3><span class="pill">${tl.length}</span><button class="btn sm" type="button" id="sd-txls">Export to Excel</button></div>
@@ -186,6 +189,24 @@ async function journalView(ctx) {
   return { body, wire };
 }
 
+/* ---------- Recapitulation of the CkDJ: each account of the month with its debits and credits ---------- */
+// Debits first (the expense / asset accounts), then the credits: Cash in Bank (the checks), Due to BIR (the tax), the sundry credits.
+const CIB = '1-01-02-010', BIR = '2-02-01-010';
+function recapOf(list, names) {
+  const dr = new Map(), cr = new Map(), addTo = (m, k, v) => { if (k && v) m.set(k, r2((m.get(k) || 0) + v)); };
+  list.filter((c) => !c.cancelled).forEach((c) => {
+    (c.lines || []).forEach((l) => addTo(dr, l.code || l.old, +l.gross || 0));
+    addTo(cr, CIB, checkAmountOf(c)); addTo(cr, BIR, taxOf(c).amount);
+    (c.credits || []).forEach((l) => addTo(cr, l.code, +l.amount || 0));
+  });
+  const byCode = (a, b) => a[0].localeCompare(b[0], undefined, { numeric: true });
+  const first = [CIB, BIR];
+  const crs = [...cr.entries()].sort((a, b) => (first.includes(a[0]) ? first.indexOf(a[0]) : 9) - (first.includes(b[0]) ? first.indexOf(b[0]) : 9) || byCode(a, b));
+  const rows = [...[...dr.entries()].sort(byCode).map(([k, v]) => ({ code: k, name: names[k] || '', d: v, c: 0 })), ...crs.map(([k, v]) => ({ code: k, name: names[k] || (k === CIB ? 'Cash in Bank - Local Currency, Current Account' : k === BIR ? 'Due to BIR' : ''), d: 0, c: v }))];
+  const d = r2(rows.reduce((n, x) => n + x.d, 0)), c = r2(rows.reduce((n, x) => n + x.c, 0));
+  return { rows, d, c, diff: r2(d - c) };
+}
+
 /* ---------- Excel: the Check Disbursements Journal in the barangay form ---------- */
 // DATE · DV No. · Serial No. of Checks · Name of Payee · Nature of Expense · CREDIT: 1-01-02-010 (Cash in Bank), 2-02-01-010 (1% or 2%,
 // 3% or 5%), SUNDRY (UACS Object Code, P, Amount) · DEBIT: SUNDRY (UACS Object Code, P, Amount). One row per account line.
@@ -228,6 +249,20 @@ async function ckdjXlsx({ list, names, office, acct, month, file }) {
   const col = (k) => String.fromCharCode(64 + k);
   [6, 7, 8, 11, 14].forEach((k) => { const c = ws.getCell(r, k); c.value = { formula: `SUM(${col(k)}${first}:${col(k)}${r - 1})`, result: r2(list.reduce((s, x) => s + (k === 6 ? checkAmountOf(x) : k === 7 ? taxOf(x).one : k === 8 ? taxOf(x).main : k === 11 ? creditsOf(x) : (x.cancelled ? 0 : grossOf(x))), 0)) }; c.numFmt = '#,##0.00;(#,##0.00);"-"'; });
   for (let k = 1; k <= 14; k++) { const x = ws.getCell(r, k); x.border = box; x.font = { bold: true, size: 10 }; }
+  // Recapitulation below the entries.
+  const rc = recapOf(list, names);
+  if (rc.rows.length) {
+    r += 3; ws.mergeCells(r, 1, r, 8); ws.getCell(r, 1).value = 'RECAPITULATION'; ws.getCell(r, 1).font = { bold: true, size: 11 }; r++;
+    const cellsOf = (row) => [[row, 1, row, 2], [row, 3, row, 5], [row, 6, row, 6], [row, 7, row, 8]];
+    const line = (row, vals, bold, hdr) => cellsOf(row).forEach(([r1, c1, r2_, c2], i) => { if (c1 !== c2) ws.mergeCells(r1, c1, r2_, c2); const c = ws.getCell(r1, c1); const v = vals[i];
+      if (v !== '' && v !== null && v !== undefined) c.value = v; c.font = { bold: !!bold, size: 10 };
+      if (i >= 2 && !hdr) { c.numFmt = '#,##0.00;(#,##0.00);""'; c.alignment = { horizontal: 'right' }; } else if (hdr) c.alignment = { horizontal: 'center', vertical: 'middle' };
+      for (let k = c1; k <= c2; k++) ws.getCell(r1, k).border = box; });
+    line(r, ['Account Code', 'Account Title', 'Debit', 'Credit'], true, true); r++;
+    rc.rows.forEach((x) => { line(r, [x.code, x.name, x.d || '', x.c || '']); r++; });
+    line(r, ['', 'Total', rc.d, rc.c], true); r++;
+    if (Math.abs(rc.diff) > 0.004) { ws.mergeCells(r, 1, r, 8); ws.getCell(r, 1).value = `Debits and credits differ by ${money(Math.abs(rc.diff))}: a check does not tally.`; ws.getCell(r, 1).font = { italic: true, size: 10, color: { argb: 'FFB3261E' } }; }
+  }
   ws.views = [{ state: 'frozen', ySplit: H + 2 }];
   ws.pageSetup.printTitlesRow = `${H}:${H + 2}`;
   const buf = await wb.xlsx.writeBuffer();
