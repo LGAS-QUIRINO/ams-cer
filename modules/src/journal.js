@@ -50,10 +50,13 @@ export function taxOf(c) {
 export const isTaxable = (c) => !c.cancelled && (!!(c.tax || {}).taxable || taxOf(c).amount > 0);
 // The check amount: as typed in the Report of Checks Issued (amount); older entries without it: gross − tax.
 export const hasAmount = (c) => c.amount !== undefined && c.amount !== null && c.amount !== '';
-export const checkAmountOf = (c) => (c.cancelled ? 0 : hasAmount(c) ? r2(c.amount) : r2(grossOf(c) - taxOf(c).amount));
+// Sundry credits of the entry (retention, liquidated damages…): credits [{ code, name, amount }] besides the tax and the check.
+export const creditsOf = (c) => (c.cancelled ? 0 : r2((c.credits || []).reduce((n, l) => n + (+l.amount || 0), 0)));
+export const netOf = (c) => r2(grossOf(c) - taxOf(c).amount - creditsOf(c));   // gross − tax − sundry credits = the check
+export const checkAmountOf = (c) => (c.cancelled ? 0 : hasAmount(c) ? r2(c.amount) : netOf(c));
 // The journal entry (accounts and gross amounts) is filled; it tallies when gross − tax = the check amount.
 export const hasEntry = (c) => (c.lines || []).some((l) => (l.code || l.old) && +l.gross > 0);
-export const tallies = (c) => !hasAmount(c) || Math.abs(r2(grossOf(c) - taxOf(c).amount) - r2(c.amount)) < 0.005;
+export const tallies = (c) => !hasAmount(c) || Math.abs(netOf(c) - r2(c.amount)) < 0.005;
 export const caGrossOf = (c) => r2((c.lines || []).filter((l) => CA_CODES.includes(l.code)).reduce((n, l) => n + (+l.gross || 0), 0));
 export const isCa = (c) => !c.cancelled && caGrossOf(c) > 0;
 export const chkNo = (v) => +String(v ?? '').replace(/\D/g, '') || 0;

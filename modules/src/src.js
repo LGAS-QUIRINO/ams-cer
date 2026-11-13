@@ -10,11 +10,12 @@ import { hasRole, by, mayView, agencyName, fmtDate, money, num } from '../cer/ce
 import { exportXlsx, loadXlsx, excelDate } from '../cer/forms.js';
 import { accountsModal, DEFAULT_FUNDS } from '../cer/banks.js';
 import { rciSpec, outButtons, wireOut } from './rciout.js';
+import { loadExcelJS } from '../cer/wp.js';
 import { liqView } from './liq.js';
 import { unliqView } from './unliq.js';
 import { taxRemView } from './taxrem.js';
 import { focusAfter } from './focus.js';
-import { loadCoa, loadJournal, matchAo, CA_CODES, grossOf, taxOf, checkAmountOf, isCa, isTaxable, chkNo, hasEntry, tallies, hasAmount } from './journal.js';
+import { loadCoa, loadJournal, matchAo, CA_CODES, grossOf, taxOf, checkAmountOf, isCa, isTaxable, chkNo, hasEntry, tallies, hasAmount, creditsOf, netOf } from './journal.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -85,14 +86,14 @@ async function journalView(ctx) {
   const mine = jr.filter((c) => c.lguId === lgu.id && c.acctId === acct.id);
   const list = mine.filter((c) => String(c.date || '').startsWith(m)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || chkNo(a.checkNo) - chkNo(b.checkNo));
   const tabs = `<div class="sd-tabs" role="tablist">${[['rci', 'Report of Checks Issued'], ['ckdj', 'Check Disbursements Journal'], ['tax', 'Tax Register'], ['liq', 'Liquidation Journal'], ['unl', 'Unliquidated Cash Advances']].map(([k, t]) => `<button type="button" role="tab" class="sd-tab ${k === tab ? 'on' : ''}" data-tab="${k}" aria-selected="${k === tab}">${t}</button>`).join('')}</div>`;
-  const totals = { g: r2(list.reduce((n, c) => n + (c.cancelled ? 0 : grossOf(c)), 0)), t: r2(list.reduce((n, c) => n + taxOf(c).amount, 0)), a: r2(list.reduce((n, c) => n + checkAmountOf(c), 0)) };
+  const totals = { g: r2(list.reduce((n, c) => n + (c.cancelled ? 0 : grossOf(c)), 0)), t: r2(list.reduce((n, c) => n + taxOf(c).amount, 0)), a: r2(list.reduce((n, c) => n + checkAmountOf(c), 0)), s: r2(list.reduce((n, c) => n + creditsOf(c), 0)) };
   const vatText = (c) => { const v = taxOf(c).vat; return v === true ? 'VAT' : v === false ? 'Non-VAT' : ''; };
   // The entry being typed: per tab (the RCI line, or the CkDJ line), a new check or the one being edited.
   const key = `${lgu.id}|${acct.id}|${tab}`;
   if (ED.key !== key) Object.assign(ED, { key, id: '', d: null });
   if (ED.id && !mine.some((c) => c.id === ED.id)) Object.assign(ED, { id: '', d: null });
   if (!ED.d) ED.d = blankCheck('', '');
-  const flagsOf = (c) => [inBook(c.checkNo) ? '' : 'Not in a checkbook', !c.cancelled && !hasEntry(c) ? 'No entry yet' : '', !c.cancelled && hasEntry(c) && !tallies(c) ? `Does not tally: gross − tax = ₱${money(r2(grossOf(c) - taxOf(c).amount))}` : '',
+  const flagsOf = (c) => [inBook(c.checkNo) ? '' : 'Not in a checkbook', !c.cancelled && !hasEntry(c) ? 'No entry yet' : '', !c.cancelled && hasEntry(c) && !tallies(c) ? `Does not tally: gross − tax${creditsOf(c) ? ' − sundry' : ''} = ₱${money(netOf(c))}` : '',
 ...(c.lines || []).filter((l) => l.old).map((l) => `Old code ${l.old} (${l.oldName}): choose the new account`)].filter(Boolean);
 
   let inner = '', lqWire = null;
@@ -120,9 +121,10 @@ async function journalView(ctx) {
     const fillHead = blanks.length ? `<button class="btn sm primary" type="button" id="sd-fillnext" data-id="${esc((blanks.find((c) => c.id !== ED.id) || blanks[0]).id)}">Fill next entry (${blanks.length} left)</button>`
       : list.length ? `<span class="sd-done">✓ All entries filled for ${esc(monthLabel(m))}${nm ? ` · <a href="#" id="sd-nextm" data-m="${nm.m}">Next: ${esc(monthLabel(nm.m))} (${nm.n} left) →</a>` : ''}</span>` : '';
     const rows = list.map((c) => {
-      const t = taxOf(c), ls = c.lines || [], fl = flagsOf(c);
+      const t = taxOf(c), ls = c.lines || [], fl = flagsOf(c), cs = c.cancelled ? [] : c.credits || [];
       return `<tr class="${c.id === ED.id ? 'cd-on' : ''}"><td>${esc(fmtDate(c.date))}</td><td class="mono">${esc(c.checkNo)}</td><td>${esc(c.ref || '')}</td><td title="${esc(c.payee || '')}">${esc(c.payee || '')}</td><td title="${esc(c.particulars || '')}">${esc(c.cancelled ? 'Cancelled' : c.particulars || '')}</td>
         <td class="r">${c.cancelled ? '' : money(checkAmountOf(c))}</td><td class="r">${c.cancelled || !hasEntry(c) ? '' : money(t.amount)}</td>
+        <td class="sd-sg" title="${esc(cs.map((l) => `${l.code} ${l.name || names[l.code] || ''} ₱${money(l.amount)}`).join('\n'))}">${cs.length ? `<span class="mono">${esc(cs[0].code)}</span> <small class="dim">${esc(cs[0].name || names[cs[0].code] || '')}</small>${cs.length > 1 ? ` <span class="pill">+${cs.length - 1}</span>` : ''}` : ''}</td><td class="r sd-sg">${cs.length ? money(creditsOf(c)) : ''}</td>
         <td title="${esc(ls.map((l) => `${l.code} ${l.name || names[l.code] || ''} ₱${money(l.gross)}`).join('\n'))}">${ls.length ? `<span class="mono">${esc(ls[0].code)}</span> <small class="dim">${esc(ls[0].name || names[ls[0].code] || '')}</small>${ls.length > 1 ? ` <span class="pill">+${ls.length - 1}</span>` : ''}` : ''}</td>
         <td class="r">${ls.length ? money(grossOf(c)) : ''}</td><td>${c.cancelled || !hasEntry(c) ? '' : isTaxable(c) ? `Yes${vatText(c) ? ` <small class="dim">${vatText(c)}</small>` : ''}` : 'No'}</td>
         <td class="sd-notec">${fl.map((t) => `<span class="sd-flag">${esc(t)}</span>`).join('')}${enc ? `<button type="button" class="sd-note" data-note="${esc(c.id)}" title="Auditor's note">${c.note ? esc(c.note) : '<span class="dim">+ note</span>'}</button>` : esc(c.note || '')}</td>
@@ -130,8 +132,8 @@ async function journalView(ctx) {
     }).join('');
     inner = `${form}<div class="panel sd-pan"><div class="cd-orhead"><h3 class="cer-h3">Check Disbursements Journal · ${esc(monthLabel(m))}</h3><span class="pill">${list.length}</span>
         ${enc ? fillHead : ''}${enc ? '<button class="btn sm" type="button" id="sd-imp">Import from Excel</button>' : ''}<button class="btn sm" type="button" id="sd-xls">Export to Excel</button></div>
-      ${list.length ? `<div class="af-tbl sd-scroll"><table class="af-reg sd-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">DV / Payroll</th><th scope="col">Payee</th><th scope="col">Particulars</th><th scope="col" class="r">Check Amount</th><th scope="col" class="r">Tax</th><th scope="col">Account</th><th scope="col" class="r">Gross Amount</th><th scope="col">Taxable</th><th scope="col">Auditor's Note</th><th scope="col"></th></tr></thead>
-        <tbody>${rows}</tbody><tfoot><tr class="cd-foot"><td colspan="5">Total, ${esc(monthLabel(m))}</td><td class="r">${money(totals.a)}</td><td class="r">${money(totals.t)}</td><td></td><td class="r">${money(totals.g)}</td><td colspan="3"></td></tr></tfoot></table></div>`
+      ${list.length ? `<div class="af-tbl sd-scroll"><table class="af-reg sd-tbl"><thead><tr><th scope="col">Date</th><th scope="col">Check No.</th><th scope="col">DV / Payroll</th><th scope="col">Payee</th><th scope="col">Particulars</th><th scope="col" class="r">Check Amount</th><th scope="col" class="r">Tax</th><th scope="col" class="sd-sg">Sundry Credit</th><th scope="col" class="r sd-sg">Amount</th><th scope="col">Account</th><th scope="col" class="r">Gross Amount</th><th scope="col">Taxable</th><th scope="col">Auditor's Note</th><th scope="col"></th></tr></thead>
+        <tbody>${rows}</tbody><tfoot><tr class="cd-foot"><td colspan="5">Total, ${esc(monthLabel(m))}</td><td class="r">${money(totals.a)}</td><td class="r">${money(totals.t)}</td><td class="sd-sg"></td><td class="r sd-sg">${money(totals.s)}</td><td></td><td class="r">${money(totals.g)}</td><td colspan="3"></td></tr></tfoot></table></div>`
         : `<div class="empty"><b>No check encoded for ${esc(monthLabel(m))}.</b></div>`}</div>`;
   } else {
     const tl = list.filter(isTaxable);
@@ -148,11 +150,8 @@ async function journalView(ctx) {
   const wire = () => {
     wireTop();
     $$('[data-tab]').forEach((b) => { b.onclick = () => go({ tab: b.dataset.tab }); });
-    const xRows = () => list.map((c) => ({ Date: fmtDate(c.date), 'Check No.': c.checkNo, 'Reference No.': c.ref || '', Payee: c.payee || '', Particulars: c.cancelled ? 'Cancelled' : c.particulars || '',
-      'Check Amount': checkAmountOf(c), 'Tax Amount': taxOf(c).amount, 'Account Code': (c.lines || []).map((l) => l.code).join('; '), 'Account Name': (c.lines || []).map((l) => l.name || names[l.code] || '').join('; '),
-      'Gross Amount': c.cancelled ? 0 : grossOf(c), Taxable: c.cancelled || !hasEntry(c) ? '' : isTaxable(c) ? 'YES' : 'NO', "Auditor's Note": c.note || '' }));
     const fileBase = `${agencyName(refs, lgu)} ${acct.accountNo || ''} ${m}`;
-    if ($('#sd-xls')) $('#sd-xls').onclick = () => exportXlsx(`Check Disbursements Journal ${fileBase}.xlsx`, 'CkDJ', xRows());
+    if ($('#sd-xls')) $('#sd-xls').onclick = () => ckdjXlsx({ list, names, office: agencyName(refs, lgu), acct: acctLabel(acct), month: monthLabel(m), file: `Check Disbursements Journal ${fileBase}.xlsx` }).catch((err) => toast(err.message || String(err), 'bad'));
     if ($('#sd-txls')) $('#sd-txls').onclick = () => exportXlsx(`Tax Register ${fileBase}.xlsx`, 'Tax Register', list.filter(isTaxable).map((c) => { const t = taxOf(c); return { 'Check No.': c.checkNo, Date: fmtDate(c.date), Payee: c.payee || '', 'VAT / Non-VAT': vatText(c), 'Goods / Services': t.svc ? 'Services' : 'Goods', 'Gross Amount': grossOf(c), 'Tax Base': t.base || '', 'Business Tax (5% / 3%)': t.main, 'EWT (1% / 2%)': t.one, 'Tax Amount': t.amount }; }));
     const rciData = () => ({ office: agencyName(refs, lgu), acct: acctLabel(acct), month: monthLabel(m), total: totals.a,
       rows: list.map((c) => ({ date: fmtDate(c.date), checkNo: c.checkNo || '', ref: c.cancelled ? '' : c.ref || '', payee: c.payee || '', nature: c.particulars || '', amount: checkAmountOf(c), cancelled: !!c.cancelled })) });
@@ -173,7 +172,7 @@ async function journalView(ctx) {
     // Tax Register: edit the tax of a check.
     $$('[data-sdtax]').forEach((b) => { b.onclick = async () => {
       const c = mine.find((x) => x.id === b.dataset.sdtax); const t = await taxModal(c); if (!t) return;
-      const { id, ...rec } = c; const next = { ...rec, tax: t }; if (next.amountSrc !== 'rci') next.amount = r2(grossOf(next) - taxOf(next).amount);
+      const { id, ...rec } = c; const next = { ...rec, tax: t }; if (next.amountSrc !== 'rci') next.amount = netOf(next);
       await store.save('src_ckdj', id, next, by(refs)); toast(`Tax of Check No. ${c.checkNo} saved.`, 'ok');
     }; });
     if ($('#sd-imp')) $('#sd-imp').onclick = () => importJournal({ refs, lgu, acct, mine, coa, names });
@@ -185,6 +184,55 @@ async function journalView(ctx) {
     if (enc && tab === 'rci') wireRci({ refs, lgu, acct, mine, m, rerender: ctx.rerender });
   };
   return { body, wire };
+}
+
+/* ---------- Excel: the Check Disbursements Journal in the barangay form ---------- */
+// DATE · DV No. · Serial No. of Checks · Name of Payee · Nature of Expense · CREDIT: 10102010 (Cash in Bank), 20201010-00 (1% or 2%,
+// 3% or 5%), SUNDRY (UACS Object Code, P, Amount) · DEBIT: SUNDRY (UACS Object Code, P, Amount). One row per account line.
+async function ckdjXlsx({ list, names, office, acct, month, file }) {
+  const ExcelJS = await loadExcelJS();
+  const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('CkDJ', { pageSetup: { orientation: 'landscape', paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.3, right: 0.3, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } } });
+  const uacs = (code) => String(code || '').replace(/-/g, '');
+  const widths = [11, 13, 12, 26, 36, 14, 11, 11, 12, 3, 13, 12, 3, 14]; widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  const thin = { style: 'thin' }, box = { top: thin, left: thin, bottom: thin, right: thin };
+  const YEL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } }, BLU = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF8DB4E2' } };
+  const title = (r, t, sz = 11, b = true) => { ws.mergeCells(r, 1, r, 14); const c = ws.getCell(r, 1); c.value = t; c.font = { bold: b, size: sz }; c.alignment = { horizontal: 'center' }; };
+  title(1, 'CHECK DISBURSEMENTS JOURNAL', 13); title(2, office); title(3, acct, 11, false); title(4, month, 11, false);
+  const H = 6;   // header rows 6–8
+  const head = (r1, c1, r2, c2, v, fill) => { if (r1 !== r2 || c1 !== c2) ws.mergeCells(r1, c1, r2, c2); const c = ws.getCell(r1, c1); c.value = v; c.font = { bold: true, size: 10 }; c.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    for (let r = r1; r <= r2; r++) for (let k = c1; k <= c2; k++) { const x = ws.getCell(r, k); x.border = box; if (fill) x.fill = fill; } };
+  ['DATE', 'DV No.', 'Serial No. of Checks', 'Name of Payee', 'Nature of Expense'].forEach((t, i) => head(H, i + 1, H + 2, i + 1, t));
+  head(H, 6, H, 11, 'CREDIT', YEL); head(H, 12, H, 14, 'DEBIT', BLU);
+  head(H + 1, 6, H + 2, 6, '10102010 (Cash in Bank)', YEL); head(H + 1, 7, H + 1, 8, '20201010-00', YEL); head(H + 1, 9, H + 1, 11, 'SUNDRY', YEL); head(H + 1, 12, H + 1, 14, 'SUNDRY', BLU);
+  [['1% or 2%', 7], ['3% or 5%', 8], ['UACS Object Code', 9], ['P', 10], ['Amount', 11]].forEach(([t, k]) => head(H + 2, k, H + 2, k, t, YEL));
+  [['UACS Object Code', 12], ['P', 13], ['Amount', 14]].forEach(([t, k]) => head(H + 2, k, H + 2, k, t, BLU));
+  ws.getRow(H + 2).height = 30;
+  let r = H + 3; const first = r;
+  const put = (row, k, v, money2) => { const c = ws.getCell(row, k); if (v !== '' && v !== null && v !== undefined) c.value = v; if (money2) { c.numFmt = '#,##0.00;(#,##0.00);"-"'; c.alignment = { horizontal: 'right' }; } };
+  list.forEach((c) => {
+    const t = taxOf(c), deb = c.cancelled ? [] : (c.lines || []), cr = c.cancelled ? [] : (c.credits || []), n = Math.max(deb.length, cr.length, 1);
+    for (let i = 0; i < n; i++) {
+      if (i === 0) {
+        put(r, 1, fmtDate(c.date)); put(r, 2, c.cancelled ? '' : c.ref || ''); put(r, 3, c.checkNo || ''); put(r, 4, c.cancelled ? '' : c.payee || ''); put(r, 5, c.cancelled ? 'Cancelled' : c.particulars || '');
+        if (!c.cancelled) { put(r, 6, checkAmountOf(c), true); if (t.one) put(r, 7, t.one, true); if (t.main) put(r, 8, t.main, true); }
+      }
+      if (cr[i]) { put(r, 9, uacs(cr[i].code)); put(r, 11, r2(cr[i].amount), true); }
+      if (deb[i]) { put(r, 12, uacs(deb[i].code || deb[i].old)); put(r, 14, r2(deb[i].gross), true); }
+      for (let k = 1; k <= 14; k++) { const x = ws.getCell(r, k); x.border = box; x.font = { size: 10 }; if (k === 5 || k === 4) x.alignment = { ...(x.alignment || {}), wrapText: true, vertical: 'top' }; }
+      r++;
+    }
+  });
+  if (!list.length) { ws.mergeCells(r, 1, r, 14); ws.getCell(r, 1).value = 'No check this month.'; ws.getCell(r, 1).alignment = { horizontal: 'center' }; r++; }
+  // Total
+  ws.mergeCells(r, 1, r, 5); ws.getCell(r, 1).value = 'TOTAL';
+  const col = (k) => String.fromCharCode(64 + k);
+  [6, 7, 8, 11, 14].forEach((k) => { const c = ws.getCell(r, k); c.value = { formula: `SUM(${col(k)}${first}:${col(k)}${r - 1})`, result: r2(list.reduce((s, x) => s + (k === 6 ? checkAmountOf(x) : k === 7 ? taxOf(x).one : k === 8 ? taxOf(x).main : k === 11 ? creditsOf(x) : (x.cancelled ? 0 : grossOf(x))), 0)) }; c.numFmt = '#,##0.00;(#,##0.00);"-"'; });
+  for (let k = 1; k <= 14; k++) { const x = ws.getCell(r, k); x.border = box; x.font = { bold: true, size: 10 }; }
+  ws.views = [{ state: 'frozen', ySplit: H + 2 }];
+  ws.pageSetup.printTitlesRow = `${H}:${H + 2}`;
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  const a = document.createElement('a'); a.href = url; a.download = file; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
 /* ---------- the tax window (Tax Register) ---------- */
@@ -239,7 +287,7 @@ function loadD(c) {
   if (!d.lines.length) d.lines = [{ ...blankLine(), gross: !c.cancelled && hasAmount(c) ? r2(c.amount) : '' }];
   return d;
 }
-const blankCheck = (date, checkNo) => ({ coa: 3, date, checkNo, ref: '', payee: '', particulars: '', amount: '', lines: [blankLine()], tax: { taxable: false }, cancelled: false, officerId: '', note: '' });
+const blankCheck = (date, checkNo) => ({ coa: 3, date, checkNo, ref: '', payee: '', particulars: '', amount: '', lines: [blankLine()], credits: [], tax: { taxable: false }, cancelled: false, officerId: '', note: '' });
 const isCancelText = (s) => /^\s*cancell?ed\s*$/i.test(s || '');
 const nextNo = (no) => { const m = /^(.*?)(\d+)$/.exec(String(no || '')); if (!m) return ''; const n = String(+m[2] + 1).padStart(m[2].length, '0'); return m[1] + n; };
 const lastDayOf = (m) => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
@@ -322,6 +370,9 @@ function entryHtml(d, officers, editing, m) {
       <input class="input mono sd-code" list="sd-coa" value="${esc(l.code)}" placeholder="${l.old ? `Old ${esc(l.old)}: choose` : 'Code or title'}" aria-label="Account" title="${esc(l.name || (l.old ? `Old code ${l.old} · ${l.oldName}: choose the new account` : ''))}">
       <input class="input r sd-gross" inputmode="decimal" value="${l.gross === '' || l.gross === undefined ? '' : esc(money(l.gross))}" aria-label="Gross amount">
       ${i ? '<button class="btn sm sd-xl" type="button" aria-label="Remove account">✕</button>' : ''}</div>`;
+  // Sundry credits (retention, liquidated damages…): any account of the Chart of Accounts, like the debit lines.
+  const crl = (l, i) => `<div class="sd-crl" data-cr="${i}"><input class="input mono sd-ccode" list="sd-coa" value="${esc(l.code)}" placeholder="Credit account" aria-label="Credit account" title="${esc(l.name || '')}">
+      <input class="input r sd-camt" inputmode="decimal" value="${l.amount === '' || l.amount === undefined ? '' : esc(money(l.amount))}" aria-label="Credit amount"><button class="btn sm sd-xc" type="button" aria-label="Remove credit">✕</button></div>`;
   const tx = d.tax || {};
   const fixed = d.amountSrc === 'rci';
   return `<div class="panel sd-pan" id="sd-form">${editHead(d, editing)}
@@ -329,7 +380,10 @@ function entryHtml(d, officers, editing, m) {
       <div class="sd-f sd-w-amt"><label title="${fixed ? 'From the Report of Checks Issued' : 'Gross − Tax'}">Check Amount${fixed ? ' ·RCI' : ''}</label><div class="input cd-ro r" id="sd-chk"></div></div>
       <div class="sd-f sd-w-tax"><label for="sd-tax">Tax</label><button type="button" class="input cd-ro r sd-taxbtn" id="sd-tax" title="Tax Register">0.00</button></div>
       <div class="sd-f sd-w-acct"><div class="sd-acch"><label>Account</label><label class="r">Gross Amount</label><span></span></div>
-        <div class="sd-accts">${d.lines.map(ln).join('')}<button type="button" class="sd-add" id="sd-addln">+ another account</button></div></div>
+        <div class="sd-accts">${d.lines.map(ln).join('')}<button type="button" class="sd-add" id="sd-addln">+ another account</button>
+          <div class="sd-crs"><span class="sd-crh">Credits</span>
+            <div class="sd-crl"><div class="input cd-ro mono sd-crtx" title="Due to BIR: the tax">2-02-01-010 <small class="dim">Due to BIR (tax)</small></div><div class="input cd-ro r" id="sd-crtax">0.00</div><span></span></div>
+            ${(d.credits || []).map(crl).join('')}<button type="button" class="sd-add" id="sd-addcr">+ credit account</button></div></div></div>
       <div class="sd-f sd-w-yn"><label for="sd-taxable">Taxable</label><select class="input" id="sd-taxable"><option value="0" ${tx.taxable ? '' : 'selected'}>No</option><option value="1" ${tx.taxable ? 'selected' : ''}>Yes</option></select></div>
       <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="sd-save">${editing ? 'Save' : 'Enter'}</button></div>
     </div>
@@ -352,23 +406,28 @@ function wireEntry(c) {
     d.cancelled = isCancelText(d.particulars); d.officerId = $('#sd-off').value;
     const g0 = grossOf(d);
     d.lines = $$('.sd-ln').map((el, i) => { const code = toCode($('.sd-code', el).value), was = d.lines[i] || {}; return { code, name: names[code] || '', gross: num($('.sd-gross', el).value) ?? '', ...(!code && was.old ? { old: was.old, oldName: was.oldName } : {}) }; });
+    d.credits = $$('.sd-crl[data-cr]').map((el) => { const code = toCode($('.sd-ccode', el).value); return { code, name: names[code] || '', amount: num($('.sd-camt', el).value) ?? '' }; });
     const taxable = $('#sd-taxable').value === '1';
     if (!taxable) d.tax = { taxable: false };
     else { d.tax = { ...d.tax, taxable: true }; if (grossOf(d) !== g0) { d.tax.main = null; d.tax.one = null; } }   // a new gross: the tax is computed again
   };
-  const net = () => r2(grossOf(d) - taxOf(d).amount);
+  const net = () => netOf(d);
   const paint = () => {
     read();
     $$('.sd-ln').forEach((el, i) => { const l = d.lines[i]; $('.sd-code', el).title = l.name || (l.code ? 'Not in the Chart of Accounts' : ''); $('.sd-code', el).classList.toggle('sd-bad', !!l.code && !l.name); });
     const off = d.cancelled;
     ['#sd-ref', '#sd-payee', '#sd-taxable'].forEach((k) => { $(k).disabled = off; });
-    $$('.sd-ln input, #sd-addln').forEach((el) => { el.disabled = off; });
+    $$('.sd-ln input, #sd-addln, .sd-crl input, .sd-xc, #sd-addcr').forEach((el) => { el.disabled = off; });
+    $$('.sd-crl[data-cr]').forEach((el, i) => { const l = d.credits[i]; $('.sd-ccode', el).title = l.name || (l.code ? 'Not in the Chart of Accounts' : ''); $('.sd-ccode', el).classList.toggle('sd-bad', !!l.code && !l.name); });
+    $('#sd-crtax').textContent = off ? '0.00' : money(taxOf(d).amount) || '0.00';
     $('#sd-form').classList.toggle('sd-cancelled', off);
     $('#sd-tax').textContent = money(taxOf(d).amount) || '0.00';
     $('#sd-tax').classList.toggle('sd-need', !off && d.tax.taxable && d.tax.vat !== true && d.tax.vat !== false);
     $('#sd-chk').textContent = off ? '0.00' : money(fixed ? r2(d.amount) : net());
-    const tl = $('#sd-tally'), diff = fixed && !off && grossOf(d) ? r2(net() - r2(d.amount)) : 0;
-    tl.hidden = !diff; tl.textContent = diff ? `Gross − Tax = ₱${money(net())}; the check is ₱${money(r2(d.amount))} (difference ₱${money(diff)}).` : '';
+    const tl = $('#sd-tally'), diff = fixed && !off && grossOf(d) ? r2(net() - r2(d.amount)) : 0, cr = creditsOf(d);
+    const eq = `Gross ${money(grossOf(d))} − Tax ${money(taxOf(d).amount)}${cr ? ` − Sundry ${money(cr)}` : ''}`;
+    tl.hidden = off || !(diff || (cr && grossOf(d))); tl.classList.toggle('sd-ok', !diff);
+    tl.textContent = diff ? `${eq} = ₱${money(net())}; the check is ₱${money(r2(d.amount))} (difference ₱${money(diff)}).` : cr && grossOf(d) ? `✓ ${eq} = Check ${money(fixed ? r2(d.amount) : net())}` : '';
     $('#sd-offbox').hidden = off || !d.lines.some((l) => CA_CODES.includes(l.code));
     // The person of the cash advance is the payee; an AO is matched by name (or picked with change).
     const ao = d.officerId ? c.officers.find((o) => o.id === d.officerId) : matchAo(d.payee, c.officers, lgu.id);
@@ -387,11 +446,16 @@ function wireEntry(c) {
       if (lines.some((l) => !names[l.code])) return bad(`${lines.find((l) => !names[l.code]).code} is not in the Chart of Accounts.`);
       if (lines.some((l) => !(+l.gross > 0))) return bad('Enter the gross amount of each account.');
       if (d.tax.taxable && d.tax.vat !== true && d.tax.vat !== false && !taxOf(d).amount) { if (!(await openTax())) return; }
-      if (net() < 0) return bad('The tax is more than the gross amount.');
-    } else lines = [];
+      const crs = d.credits.filter((l) => l.code || l.amount !== '');
+      if (crs.some((l) => !l.code)) return bad('Enter the account of each credit.');
+      if (crs.some((l) => !names[l.code])) return bad(`${crs.find((l) => !names[l.code]).code} is not in the Chart of Accounts.`);
+      if (crs.some((l) => !(+l.amount > 0))) return bad('Enter the amount of each credit.');
+      d.credits = crs;
+      if (net() < 0) return bad('The tax and the credits are more than the gross amount.');
+    } else { lines = []; d.credits = []; }
     const cur = ED.id ? mine.find((x) => x.id === ED.id) : null;
     const rec = { ...(cur ? (({ id, ...r }) => r)(cur) : {}), coa: 3, lguId: lgu.id, acctId: acct.id, date: d.date, checkNo: d.checkNo, ref: d.cancelled ? '' : d.ref, payee: d.cancelled ? '' : d.payee, particulars: d.cancelled ? 'Cancelled' : d.particulars,
-      lines: lines.map((l) => ({ code: l.code, name: names[l.code], gross: r2(l.gross) })), tax: d.cancelled ? { taxable: false } : d.tax, cancelled: d.cancelled,
+      lines: lines.map((l) => ({ code: l.code, name: names[l.code], gross: r2(l.gross) })), credits: d.credits.map((l) => ({ code: l.code, name: names[l.code], amount: r2(l.amount) })), tax: d.cancelled ? { taxable: false } : d.tax, cancelled: d.cancelled,
       officerId: lines.some((l) => CA_CODES.includes(l.code)) ? d.officerId : '', note: d.note || (cur && cur.note) || '' };
     // Encoded here first: the check amount is gross − tax (it shows in the RCI); from the RCI: it stays as typed there.
     if (fixed && !d.cancelled) { rec.amount = r2(d.amount); rec.amountSrc = 'rci'; } else { rec.amount = d.cancelled ? 0 : net(); rec.amountSrc = 'ckdj'; }
@@ -406,6 +470,10 @@ function wireEntry(c) {
   };
   $$('.sd-ln input').forEach((el) => { el.oninput = paint; el.onchange = () => { if (el.classList.contains('sd-code')) el.value = toCode(el.value); paint(); }; });
   $$('.sd-xl').forEach((b) => { b.onclick = () => { read(); d.lines.splice(+b.closest('.sd-ln').dataset.ln, 1); rerender(); }; });
+  $$('.sd-crl input').forEach((el) => { el.oninput = paint; el.onchange = () => { if (el.classList.contains('sd-ccode')) el.value = toCode(el.value); paint(); }; });
+  $$('.sd-camt').forEach((el) => { el.onblur = () => { const v = num(el.value); if (v !== null) el.value = money(v); paint(); }; });
+  $$('.sd-xc').forEach((b) => { b.onclick = () => { read(); d.credits.splice(+b.closest('.sd-crl').dataset.cr, 1); rerender(); }; });
+  $('#sd-addcr').onclick = () => { read(); d.credits.push({ code: '', name: '', amount: '' }); rerender(); setTimeout(() => { const all = $$('.sd-ccode'); if (all.length) all[all.length - 1].focus(); }, 0); };
   ['#sd-date', '#sd-no', '#sd-ref', '#sd-payee', '#sd-part'].forEach((k) => { $(k).oninput = paint; });
   $('#sd-off').onchange = paint;
   $('#sd-offchg').onclick = (e) => { e.preventDefault(); $('#sd-off').hidden = false; $('#sd-off').focus(); };
@@ -413,9 +481,9 @@ function wireEntry(c) {
   $('#sd-tax').onclick = () => { if ($('#sd-taxable').value === '1') openTax(); };
   $('#sd-addln').onclick = () => { read(); d.lines.push(blankLine()); rerender(); setTimeout(() => { const all = $$('.sd-code'); if (all.length) all[all.length - 1].focus(); }, 0); };
   // Enter in an account or gross box saves when the entry is complete and gross − tax = the check amount (from the RCI).
-  const quick = (e) => { if (!fixed || !e.target.matches('.sd-code, .sd-gross')) return false; read();
-    return !d.cancelled && d.lines.length > 0 && d.lines.every((l) => l.code && names[l.code] && +l.gross > 0) && Math.abs(net() - r2(d.amount)) < 0.005; };
-  wireCommon(c, save, () => ['#sd-date', '#sd-no', '#sd-ref', '#sd-payee', '#sd-part', ...$$('.sd-ln').flatMap((el, i) => [`.sd-ln[data-ln="${i}"] .sd-code`, `.sd-ln[data-ln="${i}"] .sd-gross`]), '#sd-taxable'].map((k) => $(k)).filter((el) => el && !el.disabled), quick);
+  const quick = (e) => { if (!fixed || !e.target.matches('.sd-code, .sd-gross, .sd-ccode, .sd-camt')) return false; read();
+    return !d.cancelled && d.lines.length > 0 && d.lines.every((l) => l.code && names[l.code] && +l.gross > 0) && d.credits.every((l) => l.code && names[l.code] && +l.amount > 0) && Math.abs(net() - r2(d.amount)) < 0.005; };
+  wireCommon(c, save, () => ['#sd-date', '#sd-no', '#sd-ref', '#sd-payee', '#sd-part', ...$$('.sd-ln').flatMap((el, i) => [`.sd-ln[data-ln="${i}"] .sd-code`, `.sd-ln[data-ln="${i}"] .sd-gross`]), ...$$('.sd-crl[data-cr]').flatMap((el, i) => [`.sd-crl[data-cr="${i}"] .sd-ccode`, `.sd-crl[data-cr="${i}"] .sd-camt`]), '#sd-taxable'].map((k) => $(k)).filter((el) => el && !el.disabled), quick);
   paint();
 }
 
@@ -427,7 +495,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
   const read = async (file) => {
     const XLSX = await loadXlsx();
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-    const cols = [['date', /^date/i], ['no', /check\s*no/i], ['ref', /reference|dv|payroll/i], ['payee', /payee/i], ['part', /particular|nature/i], ['chk', /check\s*amount/i], ['amt', /^\s*amount\s*(\(.*\))?\s*$/i], ['tax', /tax\s*amount/i], ['code', /account\s*code/i], ['name', /account\s*name/i], ['gross', /gross/i], ['note', /note/i], ['taxyn', /^\s*(tax|taxable)\s*$/i]];
+    const cols = [['date', /^date/i], ['no', /check\s*no/i], ['ref', /reference|dv|payroll/i], ['payee', /payee/i], ['part', /particular|nature/i], ['chk', /check\s*amount/i], ['amt', /^\s*amount\s*(\(.*\))?\s*$/i], ['tax', /tax\s*amount/i], ['ccode', /credit\s*(account\s*)?code/i], ['camt', /credit\s*amount/i], ['code', /^(?!.*credit).*account\s*code/i], ['name', /^(?!.*credit).*account\s*name/i], ['gross', /gross/i], ['note', /note/i], ['taxyn', /^\s*(tax|taxable)\s*$/i]];
     let sheet = null;
     for (const n of [...wb.SheetNames].sort((a, b) => (/check/i.test(b) ? 1 : 0) - (/check/i.test(a) ? 1 : 0))) {
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
@@ -447,7 +515,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
       const line = sheet.header + i + 2, noTxt = String(get(row, 'no')).trim();
       if (!noTxt || /total/i.test(String(get(row, 'date')))) return;
       const n = chkNo(noTxt); if (!n) { problems.push({ line, why: `Check No. "${noTxt}" is not a number.` }); return; }
-      const g = byNo.get(n) || { n, no: noTxt, date: '', ref: '', payee: '', part: '', tax: 0, taxyn: false, note: '', lines: [], rows: [] };
+      const g = byNo.get(n) || { n, no: noTxt, date: '', ref: '', payee: '', part: '', tax: 0, taxyn: false, note: '', lines: [], credits: [], rows: [] };
       g.rows.push(line);
       const date = excelDate(XLSX, get(row, 'date')); if (date) lastDate = date; if (date && !g.date) g.date = date;
       // A cancelled check without a date takes the date of the row above.
@@ -458,6 +526,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
       if (/^y/i.test(String(get(row, 'taxyn') ?? '').trim())) g.taxyn = true;
       const code = String(get(row, 'code') ?? '').trim(), gross = num(get(row, 'gross')) ?? (num(get(row, 'chk')) === null ? null : r2(num(get(row, 'chk')) + (num(get(row, 'tax')) || 0)));
       if (code || gross) g.lines.push({ code, name: names[code] || String(get(row, 'name') || ''), gross: gross || 0 });
+      { const cc = String(get(row, 'ccode') ?? '').trim(), ca = num(get(row, 'camt')); if (cc || ca) g.credits.push({ code: cc, name: names[cc] || '', amount: ca || 0 }); }
       byNo.set(n, g);
     });
     const byChk = new Map(mine.map((c) => [chkNo(c.checkNo), c]));
@@ -477,6 +546,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
           if (!cur.ref && g.ref) fill.ref = g.ref;
           if (rci && !hasAmount(cur) && !hasEntry(cur) && g.amount > 0) { fill.amount = g.amount; fill.amountSrc = 'rci'; }
           if (!cur.note && g.note) fill.note = g.note;
+          if (!(cur.credits || []).length && (g.credits || []).length) fill.credits = g.credits.map((l) => ({ code: l.code, name: l.name, amount: r2(l.amount) }));
         }
         // Corrections: what the file says differently from what is in (shown for the auditor to tick; nothing changes unticked).
         const fix = {}, diffs = [], warn = [];
@@ -504,7 +574,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
       }
       const cancelled = /cancel/i.test(g.part) && !g.lines.some((l) => l.gross) && !g.amount;
       if (rci && !cancelled && !(g.amount > 0)) { problems.push({ line: g.rows[0], why: `Check No. ${g.no}: the amount is missing.` }); return; }
-      const unknown = g.lines.filter((l) => l.code && !names[l.code]).map((l) => l.code);
+      const unknown = [...g.lines, ...(g.credits || [])].filter((l) => l.code && !names[l.code]).map((l) => l.code);
       add.push({ ...g, cancelled, unknown });
     });
     return { add, upd, problems, rci };
@@ -523,7 +593,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
       ${fixHtml}${p.problems.length ? `<div class="af-probs"><b>Not imported (${p.problems.length})</b>${p.problems.slice(0, 60).map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
   };
   const v = await modal({ title: `Import Check Disbursements · ${acctLabel(acct)}`, wide: true,
-    body: `<p class="af-note">An RCI (Date, Check No., DV / Payroll No., Payee, Nature of Payment, Amount; see the RCI Template) or the Check Register sheet of the barangay template (Date, Check No., Reference No., Payee, Particulars, Tax Amount, Account Code, Gross Amount). Rows with the same check No. become one check. A check No. already in: its blanks are filled, and what the file says differently (date, payee, DV No., nature of payment, amount, cancelled) is listed for you to correct.</p>
+    body: `<p class="af-note">An RCI (Date, Check No., DV / Payroll No., Payee, Nature of Payment, Amount; see the RCI Template) or the Check Register sheet of the barangay template (Date, Check No., Reference No., Payee, Particulars, Tax Amount, Account Code, Gross Amount; optional Credit Account Code, Credit Amount for sundry credits). Rows with the same check No. become one check. A check No. already in: its blanks are filled, and what the file says differently (date, payee, DV No., nature of payment, amount, cancelled) is listed for you to correct.</p>
       <div class="field"><label for="sj-file">Excel file</label><input class="input" type="file" id="sj-file" accept=".xlsx,.xlsm,.xls,.csv"></div><div id="sj-res"></div>`,
     onOpen: (bg) => { $('#sj-file', bg).onchange = async (e) => { const fl = e.target.files[0]; if (!fl) return; $('#sj-res', bg).innerHTML = '<p class="af-note">Reading…</p>'; try { plan = await read(fl); show(bg, plan); } catch (err) { plan = null; $('#sj-res', bg).innerHTML = `<div class="msg bad">${esc(err.message || String(err))}</div>`; } }; },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: (bg) => { if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; }
@@ -534,6 +604,7 @@ async function importJournal({ refs, lgu, acct, mine, names }) {
     if (plan.rci) { await store.save('src_ckdj', newId('ckdj'), { coa: 3, lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.cancelled ? '' : g.ref, payee: g.cancelled ? '' : g.payee, particulars: g.cancelled ? 'Cancelled' : g.part,
       amount: g.cancelled ? 0 : g.amount, amountSrc: 'rci', lines: [], tax: { taxable: false }, cancelled: g.cancelled, officerId: '', note: g.note || '' }, by(refs), { quiet: true }); continue; }
     await store.save('src_ckdj', newId('ckdj'), { coa: 3, lguId: lgu.id, acctId: acct.id, date: g.date, checkNo: g.no, ref: g.ref, payee: g.payee, particulars: g.part, lines: g.cancelled ? [] : g.lines.map((l) => ({ code: l.code, name: l.name, gross: r2(l.gross) })),
+      credits: g.cancelled ? [] : g.credits.map((l) => ({ code: l.code, name: l.name, amount: r2(l.amount) })),
       tax: g.cancelled || !(g.tax || g.taxyn) ? { taxable: false } : { taxable: true, vat: null, main: g.tax, one: 0 }, cancelled: g.cancelled, officerId: '', note: g.note }, by(refs), { quiet: true });
   }
   let nFixed = 0, nFilled = 0;
