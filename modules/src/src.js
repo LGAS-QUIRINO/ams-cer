@@ -214,7 +214,7 @@ async function ckdjXlsx({ list, names, office, acct, month, file }) {
   const ExcelJS = await loadExcelJS();
   const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('CkDJ', { pageSetup: { orientation: 'landscape', paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.3, right: 0.3, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } } });
   const uacs = (code) => String(code || '');   // as in the system (e.g. 1-07-04-990)
-  const widths = [11, 13, 12, 26, 36, 14, 11, 11, 12, 3, 13, 12, 3, 14]; widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  const widths = [11, 13, 12, 26, 36, 14, 13, 11, 12, 3, 13, 12, 3, 14]; widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
   const thin = { style: 'thin' }, box = { top: thin, left: thin, bottom: thin, right: thin };
   const YEL = null, BLU = null;   // no fill
   const title = (r, t, sz = 11, b = true) => { ws.mergeCells(r, 1, r, 14); const c = ws.getCell(r, 1); c.value = t; c.font = { bold: b, size: sz }; c.alignment = { horizontal: 'center' }; };
@@ -239,7 +239,7 @@ async function ckdjXlsx({ list, names, office, acct, month, file }) {
       }
       if (cr[i]) { put(r, 9, uacs(cr[i].code)); put(r, 11, r2(cr[i].amount), true); }
       if (deb[i]) { put(r, 12, uacs(deb[i].code || deb[i].old)); put(r, 14, r2(deb[i].gross), true); }
-      for (let k = 1; k <= 14; k++) { const x = ws.getCell(r, k); x.border = box; x.font = { size: 10 }; if (k === 5 || k === 4) x.alignment = { ...(x.alignment || {}), wrapText: true, vertical: 'top' }; }
+      for (let k = 1; k <= 14; k++) { const x = ws.getCell(r, k); x.border = box; x.font = { size: 11 }; if (k === 5 || k === 4) x.alignment = { ...(x.alignment || {}), wrapText: true, vertical: 'top' }; }
       r++;
     }
   });
@@ -248,20 +248,18 @@ async function ckdjXlsx({ list, names, office, acct, month, file }) {
   ws.mergeCells(r, 1, r, 5); ws.getCell(r, 1).value = 'TOTAL';
   const col = (k) => String.fromCharCode(64 + k);
   [6, 7, 8, 11, 14].forEach((k) => { const c = ws.getCell(r, k); c.value = { formula: `SUM(${col(k)}${first}:${col(k)}${r - 1})`, result: r2(list.reduce((s, x) => s + (k === 6 ? checkAmountOf(x) : k === 7 ? taxOf(x).one : k === 8 ? taxOf(x).main : k === 11 ? creditsOf(x) : (x.cancelled ? 0 : grossOf(x))), 0)) }; c.numFmt = '#,##0.00;(#,##0.00);"-"'; });
-  for (let k = 1; k <= 14; k++) { const x = ws.getCell(r, k); x.border = box; x.font = { bold: true, size: 10 }; }
-  // Recapitulation below the entries.
+  for (let k = 1; k <= 14; k++) { const x = ws.getCell(r, k); x.border = box; x.font = { bold: true, size: 11 }; }
+  // Recapitulation below the entries: Account Code (D), Account Title (E), Debit (F), Credit (G).
   const rc = recapOf(list, names);
   if (rc.rows.length) {
-    r += 3; ws.mergeCells(r, 1, r, 8); ws.getCell(r, 1).value = 'RECAPITULATION'; ws.getCell(r, 1).font = { bold: true, size: 11 }; r++;
-    const cellsOf = (row) => [[row, 1, row, 2], [row, 3, row, 5], [row, 6, row, 6], [row, 7, row, 8]];
-    const line = (row, vals, bold, hdr) => cellsOf(row).forEach(([r1, c1, r2_, c2], i) => { if (c1 !== c2) ws.mergeCells(r1, c1, r2_, c2); const c = ws.getCell(r1, c1); const v = vals[i];
-      if (v !== '' && v !== null && v !== undefined) c.value = v; c.font = { bold: !!bold, size: 10 };
-      if (i >= 2 && !hdr) { c.numFmt = '#,##0.00;(#,##0.00);""'; c.alignment = { horizontal: 'right' }; } else if (hdr) c.alignment = { horizontal: 'center', vertical: 'middle' };
-      for (let k = c1; k <= c2; k++) ws.getCell(r1, k).border = box; });
-    line(r, ['Account Code', 'Account Title', 'Debit', 'Credit'], true, true); r++;
-    rc.rows.forEach((x) => { line(r, [x.code, x.name, x.d || '', x.c || '']); r++; });
-    line(r, ['', 'Total', rc.d, rc.c], true); r++;
-    if (Math.abs(rc.diff) > 0.004) { ws.mergeCells(r, 1, r, 8); ws.getCell(r, 1).value = `Debits and credits differ by ${money(Math.abs(rc.diff))}: a check does not tally.`; ws.getCell(r, 1).font = { italic: true, size: 10, color: { argb: 'FFB3261E' } }; }
+    r += 3; ws.getCell(r, 4).value = 'RECAPITULATION'; ws.getCell(r, 4).font = { bold: true, size: 11 }; r++;
+    const NUM = '#,##0.00;(#,##0.00);""';
+    const line = (vals, bold, hdr) => { vals.forEach((v, i) => { const c = ws.getCell(r, 4 + i); if (v !== '' && v !== null && v !== undefined) c.value = v; c.border = box; c.font = { bold: !!bold, size: 11 };
+      if (i === 0) c.alignment = { horizontal: 'center' }; else if (i >= 2 && !hdr) { c.numFmt = NUM; c.alignment = { horizontal: 'right' }; } else if (hdr && i >= 2) c.alignment = { horizontal: 'center' }; }); r++; };
+    line(['Account Code', 'Account Title', 'Debit', 'Credit'], true, true);
+    rc.rows.forEach((x) => line([x.code, x.name, x.d || '', x.c || '']));
+    line(['', 'Total', rc.d, rc.c], true);
+    if (Math.abs(rc.diff) > 0.004) { r++; const c = ws.getCell(r, 1); c.value = `***Debits and credits differ by ${money(Math.abs(rc.diff))}: a check does not tally.`; c.font = { italic: true, size: 11, color: { argb: 'FFC00000' } }; }
   }
   ws.views = [{ state: 'frozen', ySplit: H + 2 }];
   ws.pageSetup.printTitlesRow = `${H}:${H + 2}`;
