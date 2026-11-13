@@ -949,3 +949,10 @@ table.af-reg.tr-month{min-width:0}
 .sd-rech{margin:18px 0 8px; font-size:14px; color:var(--navy, #0b2a6b)}
 .sd-recap{max-width:760px}
 .sd-recap table.af-reg{min-width:0; width:100%}
+.sd-entry2{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line)}
+.sd-box{border:1px solid var(--line); border-radius:12px; padding:10px 12px; background:#fbfcff; display:flex; flex-direction:column; gap:4px}
+.sd-boxh{display:flex; justify-content:space-between; font-size:12px; letter-spacing:.05em; text-transform:uppercase; color:var(--navy, #0b2a6b); margin-bottom:4px}
+.sd-boxh span{color:var(--muted); font-weight:600}
+.sd-box .sd-ln, .sd-box .sd-crl, .sd-box .sd-acch{grid-template-columns:1fr 150px 26px}
+@media (max-width:900px){ .sd-entry2{grid-template-columns:1fr} }
+#sd-form .sd-w-amt{width:124px} #sd-form .sd-w-tax{width:96px} #sd-form .sd-w-ref{width:110px}

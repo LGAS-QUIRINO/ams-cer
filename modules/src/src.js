@@ -412,13 +412,16 @@ function entryHtml(d, officers, editing, m) {
     <div class="sd-line">${headHtml(d, m, 'Particulars')}
       <div class="sd-f sd-w-amt"><label title="${fixed ? 'From the Report of Checks Issued' : 'Gross − Tax'}">Check Amount${fixed ? ' ·RCI' : ''}</label><div class="input cd-ro r" id="sd-chk"></div></div>
       <div class="sd-f sd-w-tax"><label for="sd-tax">Tax</label><button type="button" class="input cd-ro r sd-taxbtn" id="sd-tax" title="Tax Register">0.00</button></div>
-      <div class="sd-f sd-w-acct"><div class="sd-acch"><label>Account</label><label class="r">Gross Amount</label><span></span></div>
-        <div class="sd-accts">${d.lines.map(ln).join('')}<button type="button" class="sd-add" id="sd-addln">+ another account</button>
-          <div class="sd-crs"><span class="sd-crh">Credits</span>
-            <div class="sd-crl"><div class="input cd-ro mono sd-crtx" title="Due to BIR: the tax">2-02-01-010 <small class="dim">Due to BIR (tax)</small></div><div class="input cd-ro r" id="sd-crtax">0.00</div><span></span></div>
-            ${(d.credits || []).map(crl).join('')}<button type="button" class="sd-add" id="sd-addcr">+ credit account</button></div></div></div>
       <div class="sd-f sd-w-yn"><label for="sd-taxable">Taxable</label><select class="input" id="sd-taxable"><option value="0" ${tx.taxable ? '' : 'selected'}>No</option><option value="1" ${tx.taxable ? 'selected' : ''}>Yes</option></select></div>
       <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="sd-save">${editing ? 'Save' : 'Enter'}</button></div>
+    </div>
+    <div class="sd-entry2">
+      <div class="sd-box"><div class="sd-boxh"><b>Debit</b><span id="sd-dtot"></span></div>
+        <div class="sd-acch"><label>Account</label><label class="r">Gross Amount</label><span></span></div>
+        <div class="sd-accts">${d.lines.map(ln).join('')}<button type="button" class="sd-add" id="sd-addln">+ debit account</button></div></div>
+      <div class="sd-box"><div class="sd-boxh"><b>Credit · Sundry</b><span id="sd-ctot"></span></div>
+        ${(d.credits || []).length ? '<div class="sd-acch"><label>Account</label><label class="r">Amount</label><span></span></div>' : ''}
+        <div class="sd-accts">${(d.credits || []).map(crl).join('')}<button type="button" class="sd-add" id="sd-addcr">+ credit account</button>${(d.credits || []).length ? '' : ' <small class="dim">retention, liquidated damages, other deductions</small>'}</div></div>
     </div>
     <div class="sd-tally" id="sd-tally" hidden></div>
     <div class="sd-offrow" id="sd-offbox" hidden><span id="sd-offtxt"></span> <a href="#" class="cd-link" id="sd-offchg">${d.officerId ? 'change' : 'change'}</a>
@@ -452,7 +455,7 @@ function wireEntry(c) {
     ['#sd-ref', '#sd-payee', '#sd-taxable'].forEach((k) => { $(k).disabled = off; });
     $$('.sd-ln input, #sd-addln, .sd-crl input, .sd-xc, #sd-addcr').forEach((el) => { el.disabled = off; });
     $$('.sd-crl[data-cr]').forEach((el, i) => { const l = d.credits[i]; $('.sd-ccode', el).title = l.name || (l.code ? 'Not in the Chart of Accounts' : ''); $('.sd-ccode', el).classList.toggle('sd-bad', !!l.code && !l.name); });
-    $('#sd-crtax').textContent = off ? '0.00' : money(taxOf(d).amount) || '0.00';
+    $('#sd-dtot').textContent = off ? '' : money(grossOf(d)); $('#sd-ctot').textContent = off || !creditsOf(d) ? '—' : money(creditsOf(d));
     $('#sd-form').classList.toggle('sd-cancelled', off);
     $('#sd-tax').textContent = money(taxOf(d).amount) || '0.00';
     $('#sd-tax').classList.toggle('sd-need', !off && d.tax.taxable && d.tax.vat !== true && d.tax.vat !== false);
