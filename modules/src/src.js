@@ -187,15 +187,15 @@ async function journalView(ctx) {
 }
 
 /* ---------- Excel: the Check Disbursements Journal in the barangay form ---------- */
-// DATE · DV No. · Serial No. of Checks · Name of Payee · Nature of Expense · CREDIT: 10102010 (Cash in Bank), 20201010-00 (1% or 2%,
+// DATE · DV No. · Serial No. of Checks · Name of Payee · Nature of Expense · CREDIT: 1-01-02-010 (Cash in Bank), 2-02-01-010 (1% or 2%,
 // 3% or 5%), SUNDRY (UACS Object Code, P, Amount) · DEBIT: SUNDRY (UACS Object Code, P, Amount). One row per account line.
 async function ckdjXlsx({ list, names, office, acct, month, file }) {
   const ExcelJS = await loadExcelJS();
   const wb = new ExcelJS.Workbook(), ws = wb.addWorksheet('CkDJ', { pageSetup: { orientation: 'landscape', paperSize: 5, fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.3, right: 0.3, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } } });
-  const uacs = (code) => String(code || '').replace(/-/g, '');
+  const uacs = (code) => String(code || '');   // as in the system (e.g. 1-07-04-990)
   const widths = [11, 13, 12, 26, 36, 14, 11, 11, 12, 3, 13, 12, 3, 14]; widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
   const thin = { style: 'thin' }, box = { top: thin, left: thin, bottom: thin, right: thin };
-  const YEL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } }, BLU = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF8DB4E2' } };
+  const YEL = null, BLU = null;   // no fill
   const title = (r, t, sz = 11, b = true) => { ws.mergeCells(r, 1, r, 14); const c = ws.getCell(r, 1); c.value = t; c.font = { bold: b, size: sz }; c.alignment = { horizontal: 'center' }; };
   title(1, 'CHECK DISBURSEMENTS JOURNAL', 13); title(2, office); title(3, acct, 11, false); title(4, month, 11, false);
   const H = 6;   // header rows 6–8
@@ -203,7 +203,7 @@ async function ckdjXlsx({ list, names, office, acct, month, file }) {
     for (let r = r1; r <= r2; r++) for (let k = c1; k <= c2; k++) { const x = ws.getCell(r, k); x.border = box; if (fill) x.fill = fill; } };
   ['DATE', 'DV No.', 'Serial No. of Checks', 'Name of Payee', 'Nature of Expense'].forEach((t, i) => head(H, i + 1, H + 2, i + 1, t));
   head(H, 6, H, 11, 'CREDIT', YEL); head(H, 12, H, 14, 'DEBIT', BLU);
-  head(H + 1, 6, H + 2, 6, '10102010 (Cash in Bank)', YEL); head(H + 1, 7, H + 1, 8, '20201010-00', YEL); head(H + 1, 9, H + 1, 11, 'SUNDRY', YEL); head(H + 1, 12, H + 1, 14, 'SUNDRY', BLU);
+  head(H + 1, 6, H + 2, 6, '1-01-02-010 (Cash in Bank)', YEL); head(H + 1, 7, H + 1, 8, '2-02-01-010 (Due to BIR)', YEL); head(H + 1, 9, H + 1, 11, 'SUNDRY', YEL); head(H + 1, 12, H + 1, 14, 'SUNDRY', BLU);
   [['1% or 2%', 7], ['3% or 5%', 8], ['UACS Object Code', 9], ['P', 10], ['Amount', 11]].forEach(([t, k]) => head(H + 2, k, H + 2, k, t, YEL));
   [['UACS Object Code', 12], ['P', 13], ['Amount', 14]].forEach(([t, k]) => head(H + 2, k, H + 2, k, t, BLU));
   ws.getRow(H + 2).height = 30;
