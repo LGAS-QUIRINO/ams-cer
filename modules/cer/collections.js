@@ -264,10 +264,10 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
     }
     const start = op.setup ? 0 : op.v, serTxt = begSer(kind);
     // Lines from the other side placed in this chain's reports. LO: each collector's remittance in the LO's report that has it
-    // ticked (colIn), else the first dated on or after it unless unticked there (colOut); else not yet in a report. Collector:
+    // ticked (colIn); else not yet in a report. Collector:
     // each line typed by the LO in its own report (reportId), else not yet in a report.
     const myColAll = kind === kinds[0] ? colLines.filter((m) => (m.fund || allFunds[0]) === fund) : [];
-    const colTgt = (m) => { const inc = list.find((r) => (r.colIn || []).includes(m.key)); if (inc) return inc.id; const d1 = list.find((r) => String(r.date || '') >= m.date); return d1 && !(d1.colOut || []).includes(m.key) ? d1.id : pid; };
+    const colTgt = (m) => { const inc = list.find((r) => (r.colIn || []).includes(m.key)); return inc ? inc.id : pid; };   // only where ticked
     const myLoAll = loLines.filter((m) => loKind(m) === kind && ((reals.find((r) => r.id === m.reportId)?.fund) || m.fund || allFunds[0]) === fund);
     const loTgt = (m) => (list.some((r) => r.id === m.reportId) ? m.reportId : pid);
     const withSide = (r) => { const c0 = clean(r); const ds = myLoAll.filter((m) => loTgt(m) === r.id), rs = myColAll.filter((m) => colTgt(m) === r.id);
@@ -401,7 +401,7 @@ export async function collectionsView(ctx) {
   const colFree = cur.pending ? [] : (fig.chains[curKey]?.pend.rec?.remittances || []).filter((m) => m.fromCol);
   const colRow = (m, on) => `<tr class="${on || cur.pending ? '' : 'cd-off'}">${cur.pending ? '' : `<td><input type="checkbox" data-colk="${esc(m.key)}" ${on ? 'checked' : ''} ${enc ? '' : 'disabled'} aria-label="In this RCD"></td>`}<td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td></tr>`;
   const remBlock = isLO ? `<div class="cd-block"><h3 class="cer-h3">Remittances received from collectors</h3>
-      ${colIn.length || colFree.length ? `<h3 class="cer-h3" style="margin-top:4px">From the collectors' SCR / RCD <small class="dim">${cur.pending ? '(not yet in an RCD of this officer)' : '(ticked by date; untick or tick to match the hard copy of this RCD)'}</small></h3>
+      ${colIn.length || colFree.length ? `<h3 class="cer-h3" style="margin-top:4px">From the collectors' SCR / RCD <small class="dim">${cur.pending ? '(not yet in an RCD of this officer: tick them in her RCD)' : '(tick those listed on the hard copy of this RCD)'}</small></h3>
         <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr>${cur.pending ? '' : '<th style="width:30px"></th>'}<th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
         <tbody>${colIn.map((m) => colRow(m, true)).join('')}${colFree.map((m) => colRow(m, false)).join('')}</tbody></table></div>` : ''}
       <h3 class="cer-h3" style="margin-top:10px">Typed here <small class="dim">(only for a collector whose SCR / RCD is not in the app yet; it then shows on the collector's side by itself)</small></h3>
@@ -632,10 +632,10 @@ function wireAll(c) {
     const k = cb.dataset.colk, ch = c.fig.chains[c.curKey]; if (!ch) return;
     for (const g of ch.figs) {
       const r = f.reports.find((y) => y.id === g.id); if (!r) continue;
-      let inn = (r.colIn || []).filter((x) => x !== k), outt = (r.colOut || []).filter((x) => x !== k);
-      if (g.id === selId) { if (cb.checked) inn = [...inn, k]; else outt = [...outt, k]; }
-      if (inn.length === (r.colIn || []).length && outt.length === (r.colOut || []).length && g.id !== selId) continue;
-      await store.save('cer_reports', r.id, { ...strip(r), colIn: inn, colOut: outt }, by(refs), { quiet: true });
+      let inn = (r.colIn || []).filter((x) => x !== k);
+      if (g.id === selId && cb.checked) inn = [...inn, k];
+      if (inn.length === (r.colIn || []).length && g.id !== selId) continue;
+      await store.save('cer_reports', r.id, { ...strip(r), colIn: inn }, by(refs), { quiet: true });
     }
     emitChange('local'); toast(cb.checked ? 'Put in this RCD.' : 'Taken out of this RCD.', 'ok');
   }; });
@@ -1134,8 +1134,12 @@ async function importOrs(c) {
 
 /* ---------- + SCD / SCR / RCD and Edit: one window ---------- */
 async function reportModal(c, K, g) {
-  const { refs, f, audit, o, fig, curFund, isLO } = c;
+  const { refs, f, audit, o, fig, curFund, isLO, exam } = c;
   const isNew = !g, rec = g ? g.rec : {};
+  // A pure Liquidating Officer (not also collecting): no OR Range; the collectors' SCR / RCD remitted to her are ticked instead.
+  const pureLO = isLO && !(exam.functions || []).includes('collecting');
+  const colChoices = (fund) => { const ch = chainOf(fund); if (!ch) return [];
+    return [...(g ? (g.rec.remittances || []).filter((m) => m.fromCol).map((m) => ({ m, on: true })) : []), ...(ch.pend.rec?.remittances || []).filter((m) => m.fromCol).map((m) => ({ m, on: false }))]; };
   const fund0 = isNew ? curFund : rec.fund;
   const chainOf = (fund) => fig.chains[`${K}|${fund}`];
   const firstOf = (fund) => (isNew ? !(chainOf(fund)?.figs.length) : chainOf(rec.fund)?.figs[0]?.id === g.id);
@@ -1146,6 +1150,8 @@ async function reportModal(c, K, g) {
   const preview = (bg) => {
     const box = $('#rp-prev', bg), date = $('#rp-date', bg).value, fund = $('#rp-fund', bg).value, ch = chainOf(fund);
     $('#rp-begbox', bg).hidden = !firstOf(fund);
+    if (pureLO) { const keys = new Set($$('[data-rpk]:checked', bg).map((x) => x.dataset.rpk)); const t = r2(colChoices(fund).filter(({ m }) => keys.has(m.key)).reduce((n, { m }) => n + m.amount, 0)), hard = num($('#rp-hard', bg).value);
+      box.innerHTML = `Ticked <b>${keys.size}</b> · ₱ ${money(t)}${hard ? ` · hard copy ₱ ${money(hard)}: ${Math.abs(hard - t) < 0.005 ? '<b>agrees</b>' : `<b class="warn-t">difference ₱ ${money(Math.abs(r2(hard - t)))}</b>`}` : ''}.`; return; }
     const rr = readRanges($('#rp-range', bg).value);
     if (rr.error) { box.innerHTML = `<b class="warn-t">${esc(rr.error)}</b>`; return; }
     if (!rr.ranges.length) { box.textContent = `Type the OR Range of the ${K} to see which ORs go into it.`; return; }
@@ -1159,9 +1165,9 @@ async function reportModal(c, K, g) {
     const no = $('#rp-no', bg).value.trim(), date = $('#rp-date', bg).value, fund = $('#rp-fund', bg).value, hard = $('#rp-hard', bg).value.trim();
     if (!date) return bad(`Enter the ${K} date.`) || null;
     { const hit = f.reports.find((r) => !r.pending && r.id !== (g ? g.id : '') && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return bad(hit.madeFrom ? `${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.` : `${K} No. ${no} is already encoded for this officer.`); }
-    const rr = readRanges($('#rp-range', bg).value);
+    const rr = pureLO ? { ranges: [] } : readRanges($('#rp-range', bg).value);
     if (rr.error) return bad(rr.error) || null;
-    if (!rr.ranges.length) return bad(`Type the OR Range of the ${K} (e.g. 3764059-3764100; 3765951-3765971).`) || null;
+    if (!pureLO && !rr.ranges.length) return bad(`Type the OR Range of the ${K} (e.g. 3764059-3764100; 3765951-3765971).`) || null;
     const clash = (chainOf(fund)?.figs || []).find((x) => x.id !== (g ? g.id : '') && hasRange(x) && x.rec.ranges.some(([a, z]) => rr.ranges.some(([p, q]) => p <= z && a <= q)));
     if (clash) {
       const same = clash.rec.date === date && rangesTyped(clash.rec.ranges) === rangesTyped(rr.ranges);
@@ -1169,6 +1175,7 @@ async function reportModal(c, K, g) {
     }
     const v = { no, date, fund, ranges: rr.ranges, hardTotal: hard ? num(hard) : null, received: $('#rp-recv', bg).value, dupe: no ? 0 : dupeOf(f, o.id, K, date, fund, g ? g.id : undefined) };
     if (firstOf(fund)) { const t = num($('#rp-beg', bg).value); v.begTyped = t === null ? '' : t; }
+    if (pureLO) v.colIn = $$('[data-rpk]:checked', bg).map((x) => x.dataset.rpk);
     return v;
   };
   await modal({ title: isNew ? `New ${K} · ${KIND_NAME[K]}` : `Edit ${repName(rec, K)}`, wide: true,
@@ -1176,14 +1183,18 @@ async function reportModal(c, K, g) {
         <div class="field"><label for="rp-no">${K} No. (if any)</label><input class="input mono" id="rp-no" value="${esc(rec.no || '')}" placeholder="Leave blank if none" autocomplete="off"></div>
         <div class="field"><label for="rp-date">${K} Date</label><input class="input" type="date" id="rp-date" value="${esc(rec.date || '')}"></div>
         <div class="field"><label for="rp-fund">Fund</label><select class="input" id="rp-fund">${fig.funds.map((x) => `<option ${x === fund0 ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
-        <div class="field rp-wide"><label for="rp-range">OR Range (from the ${K})</label><input class="input mono" id="rp-range" value="${esc(rangesTyped(rec.ranges))}" placeholder="e.g. 3764059-3764100; 3765951-3765971" autocomplete="off"></div>
+        ${pureLO ? '' : `<div class="field rp-wide"><label for="rp-range">OR Range (from the ${K})</label><input class="input mono" id="rp-range" value="${esc(rangesTyped(rec.ranges))}" placeholder="e.g. 3764059-3764100; 3765951-3765971" autocomplete="off"></div>`}
         <div class="field"><label for="rp-hard">Total per Hard Copy</label><input class="input r" id="rp-hard" inputmode="decimal" placeholder="0.00" value="${rec.hardTotal !== null && rec.hardTotal !== undefined && rec.hardTotal !== '' ? esc(money(rec.hardTotal)) : ''}"></div>
         <div class="field"><label for="rp-recv">Date Received</label><input class="input" type="date" id="rp-recv" value="${esc(rec.received || '')}"></div>
         <div class="field" id="rp-begbox"><label for="rp-beg">${UND} per last ${K} (first in the app)</label><input class="input r" id="rp-beg" inputmode="decimal" placeholder="0.00" value="${esc(beg0)}"></div>
       </div>
-      <p class="af-note">${K} Date: the date written on the ${K}; if none, the date of the last OR it covers. ORs go into the ${K} by their number in the OR Range.</p>
+      ${pureLO ? `<div class="rp-cols"><b>Remittances in this ${K}</b> <span class="dim">· tick the collectors' SCR / RCD listed on the hard copy</span>
+        ${colChoices(fund0).length ? `<div class="af-tbl rp-colt"><table class="af-reg"><thead><tr><th style="width:30px"></th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount</th></tr></thead><tbody>
+          ${colChoices(fund0).map(({ m, on }) => `<tr><td><input type="checkbox" data-rpk="${esc(m.key)}" ${on ? 'checked' : ''} aria-label="In this ${K}"></td><td>${esc(fmtDate(m.date))}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td></tr>`).join('')}</tbody></table></div>`
+          : '<p class="dim" style="margin:6px 0">No collector\'s SCR / RCD naming this officer is waiting. Type a remittance in the RCD (Typed here) when the collector\'s report is not in the app.</p>'}</div>` : ''}
+      <p class="af-note">${pureLO ? `${K} Date: the date written on the ${K}. Remittances typed by hand go in the ${K} under "Typed here".` : `${K} Date: the date written on the ${K}; if none, the date of the last OR it covers. ORs go into the ${K} by their number in the OR Range.`}</p>
       <p class="af-note" id="rp-prev"></p>`,
-    onOpen: (bg) => { $$('#rp-date, #rp-fund, #rp-range, #rp-hard', bg).forEach((el) => { el.addEventListener('input', () => preview(bg)); el.addEventListener('change', () => preview(bg)); }); preview(bg); },
+    onOpen: (bg) => { $$('#rp-date, #rp-fund, #rp-range, #rp-hard, [data-rpk]', bg).forEach((el) => { el.addEventListener('input', () => preview(bg)); el.addEventListener('change', () => preview(bg)); }); preview(bg); },
     buttons: [...(isNew ? [] : [{ label: 'Delete', cls: 'danger', value: 'del' }]), { label: 'Cancel', value: null },
       { label: `Save ${K}`, cls: 'primary', value: 'save', check: (bg) => { out = read(bg); return !!out; } }] }).then((v) => { act = v; });
   if (act === 'del') return deleteReport(c, K, g);
@@ -1193,9 +1204,13 @@ async function reportModal(c, K, g) {
       buttons: [{ label: 'Cancel', value: false }, { label: 'Save as Separate', cls: 'primary', value: true }] });
     if (!ok) return;
   }
-  if (isNew) { const id = await createReport(c, K, out); emitChange('local'); toast(`${repName({ kind: K, ...out })} saved.`, 'ok'); go({ r: id }); return; }
+  // Ticked remittances: in this report only (taken out of the officer's other reports).
+  const oneHome = async (keepId) => { if (!out.colIn) return; for (const r of f.reports.filter((y) => y.officerId === o.id && !y.pending && y.id !== keepId && (y.colIn || []).some((k) => out.colIn.includes(k))))
+    await store.save('cer_reports', r.id, { ...strip(r), colIn: (r.colIn || []).filter((k) => !out.colIn.includes(k)) }, by(refs), { quiet: true }); };
+  if (isNew) { const id = await createReport(c, K, out); await oneHome(id); emitChange('local'); toast(`${repName({ kind: K, ...out })} saved.`, 'ok'); go({ r: id }); return; }
+  await oneHome(g.id);
   if (out.fund !== rec.fund) for (const x of g.ors) await store.save('cer_ors', x.id, { ...strip(x), fund: out.fund }, by(refs), { quiet: true });
-  await store.save('cer_reports', g.id, { ...strip(rec), ...out }, by(refs));
+  await store.save('cer_reports', g.id, { ...strip(rec), deposits: (rec.deposits || []).filter((d) => !d.fromLO), remittances: (rec.remittances || []).filter((m) => !m.fromCol), ...out }, by(refs));
   toast(`${repName({ kind: K, ...out })} saved.`, 'ok');
 }
 async function deleteReport(c, K, g) {
@@ -1206,7 +1221,7 @@ async function deleteReport(c, K, g) {
   for (const x of g.ors) await store.save('cer_ors', x.id, { ...strip(x), reportId: '' }, by(refs), { quiet: true });
   const pid = pendId(o.id, K, rec.fund); const p = f.reports.find((r) => r.id === pid);
   const pbase = p ? strip(p) : { lguId: audit.lguId, officerId: o.id, kind: K, fund: rec.fund, pending: true, deposits: [], remittances: [] };
-  await store.save('cer_reports', pid, { ...pbase, pending: true, deposits: [...(pbase.deposits || []), ...(rec.deposits || [])], remittances: [...(pbase.remittances || []), ...(rec.remittances || [])] }, by(refs), { quiet: true });
+  await store.save('cer_reports', pid, { ...pbase, pending: true, deposits: [...(pbase.deposits || []).filter((d) => !d.fromLO), ...(rec.deposits || []).filter((d) => !d.fromLO)], remittances: [...(pbase.remittances || []).filter((m) => !m.fromCol), ...(rec.remittances || []).filter((m) => !m.fromCol)] }, by(refs), { quiet: true });
   await store.save('cer_reports', g.id, strip(rec), by(refs), { deleted: true, quiet: true });
   emitChange('local'); toast(`${K} deleted.`, 'ok'); go({ r: pid });
 }
