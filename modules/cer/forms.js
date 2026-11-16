@@ -10,6 +10,7 @@
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer } from './cer.js';
+import { sameFund } from './funds.js';
 
 export const FORM_SHORT = { af51: 'Accountable Form 51 – LGU', af51b: 'Accountable Form 51 – Barangay', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate',
   af52: 'AF 52 – Transfer of Large Cattle', af53: 'AF 53 – Ownership of Large Cattle', af54: 'AF 54 – Marriage License', af56: 'AF 56 – Real Property Tax (RPT)', cash: 'Cash Tickets', chk: 'Checks' };
@@ -70,6 +71,24 @@ function wireSrcSelect(sel, refs, f, lguId, after, direct = false) {
 }
 const DEFAULT_FUNDS = ['General Fund'];
 // Each register keeps its own fund list (starts with General Fund; Add Fund for the others). A fund already used stays listed.
+// A checkbook's bank account: the account of the fund chosen (Bank Accounts), shown, or picked when the fund has several.
+// Saved as "<bank> · <account No.>" in bankAccount (its account No. ties it to the account).
+const acctText = (a) => [a.bank, a.accountNo].filter(Boolean).join(' · ');
+const acctBox = (p, cur, hidden) => `<div class="field af-span2" id="${p}-acctbox" ${hidden ? 'hidden' : ''}><span class="cd-lbl">Bank Account</span><div id="${p}-acctv"></div><input type="hidden" id="${p}-acct" value="${esc(cur || '')}"></div>`;
+function wireAcct(bg, p, f, lguId) {
+  const fundEl = $(`#${p}-fund`, bg), h = $(`#${p}-acct`, bg), v = $(`#${p}-acctv`, bg); if (!fundEl || !h || !v) return;
+  const typed = h.value;
+  const paint = () => {
+    const fund = fundEl.value, list = (f.settings['banks|' + lguId]?.list || []).filter((a) => sameFund(a.fund, fund));
+    if (!fund) { v.innerHTML = '<div class="input cd-ro dim">Choose the fund</div>'; h.value = typed; return; }
+    if (list.length === 1) { h.value = acctText(list[0]); v.innerHTML = `<div class="input cd-ro">${esc(acctText(list[0]))} · ${esc(list[0].fund)}</div>`; return; }
+    if (list.length > 1) { if (!list.some((a) => acctText(a) === h.value)) h.value = acctText(list[0]);
+      v.innerHTML = `<select class="input" id="${p}-acctsel" aria-label="Bank account">${list.map((a) => `<option value="${esc(acctText(a))}" ${acctText(a) === h.value ? 'selected' : ''}>${esc(acctText(a))} · ${esc(a.fund)}</option>`).join('')}</select>`;
+      $(`#${p}-acctsel`, bg).onchange = (e) => { h.value = e.target.value; }; return; }
+    h.value = typed; v.innerHTML = `<div class="input cd-ro warn-t">No bank account for this fund. Add it in Bank Accounts${typed ? ` (kept: ${esc(typed)})` : ''}.</div>`;
+  };
+  fundEl.addEventListener('change', paint); paint();
+}
 const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || [...new Set([...DEFAULT_FUNDS, ...(f.booklets || []).filter((b) => b.lguId === lguId && b.fund).map((b) => b.fund)])];
 // Checkbooks come from the bank straight to the disbursing officer, so by default they are the AOs' only and stay out of the
 // custodian's register (entered per officer with Add Checkbook). Ticked: the custodian controls the checks like other forms.
@@ -784,8 +803,8 @@ async function editBooklet(ctx, f, b, offs) {
       <div class="field"><label for="x-rdate">Date Received</label><input class="input" type="date" id="x-rdate" value="${esc(b.receivedDate || '')}"></div>
       <div class="field"><label for="x-src">Received From</label><select class="input" id="x-src">${srcOptions(f, b.lguId, { extra: [['', '—']], cur: b.receivedFrom || '', bank: b.form === 'chk' || chkByCustodian(f, b.lguId) })}</select></div>
       <div class="field"><label for="x-ref">Reference</label><input class="input" id="x-ref" value="${esc(b.reference || '')}"></div>
-      ${b.form === 'chk' ? `<div class="field"><label for="x-fund">Fund (optional)</label>${fundSel('x-fund', checkFunds(f, b.officerId ? (f.officers.find((o) => o.id === b.officerId)?.lguId || b.lguId) : b.lguId), b.fund || '')}</div>
-        <div class="field af-span2"><label for="x-acct">Bank / Account (optional)</label><input class="input" id="x-acct" value="${esc(b.bankAccount || '')}" placeholder="e.g. LBP – Maddela"></div>` : ''}
+      ${b.form === 'chk' ? `<div class="field"><label for="x-fund">Fund</label>${fundSel('x-fund', checkFunds(f, b.officerId ? (f.officers.find((o) => o.id === b.officerId)?.lguId || b.lguId) : b.lguId), b.fund || '')}</div>
+        ${acctBox('x', b.bankAccount || '')}` : ''}
       ${withOff ? `<div class="field af-span2"><label for="x-off">Accountable Officer</label><select class="input" id="x-off"><option value="">— Choose the officer —</option>${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, b.officerId)}>${esc(officerLabel(refs, o))}</option>`).join('')}</select></div>
       <div class="field"><label for="x-idate">Date Issued</label><input class="input" type="date" id="x-idate" value="${esc(b.issuedAsOf ? '' : b.issuedDate || '')}">${b.issuedAsOf ? `<span class="hint">Not yet known · on hand as of ${esc(fmtDate(b.issuedDate))}. Enter the real date if known.</span>` : ''}</div>
       <div class="af-span">${partBox('x', { on: partly, text: partly ? (b.noSerial ? String(countRanges(b.unusedAtStart)) : rangesText(b.unusedAtStart)) : '', note: b.noSerial ? 'Partly used (type the number of pieces)' : 'Partly used (unused on hand as of the start / last cash exam)' })}
@@ -831,7 +850,7 @@ async function editBooklet(ctx, f, b, offs) {
     box.innerHTML = `Before receipts in Collections: ${n.qty - q} used · <b>${q} unused</b>${q && q < n.qty && !b.noSerial ? ` (${rangesText(un)})` : ''}${faceOf({ ...b, ...n }) && q ? ` · ${peso(q * faceOf({ ...b, ...n }))}` : ''}${sk.length ? ` · <b class="warn-t">skipped ${rangesText(sk)}</b>` : ''}.`;
   };
   const v = await modal({ title: `Edit ${FORM_SHORT[b.form] || b.form} ${serialText(b)}`, wide: true, body,
-    onOpen: (bg) => { wireSrcSelect($('#x-src', bg), refs, f, b.lguId); $$('#x-from, #x-to, #x-form, #x-qty, #x-face', bg).forEach((el) => { el.oninput = () => showPrev(bg); el.onchange = () => showPrev(bg); }); wirePart('x', bg, () => showPrev(bg)); showPrev(bg); },
+    onOpen: (bg) => { wireAcct(bg, 'x', f, b.officerId ? (f.officers.find((o) => o.id === b.officerId)?.lguId || b.lguId) : b.lguId); wireSrcSelect($('#x-src', bg), refs, f, b.lguId); $$('#x-from, #x-to, #x-form, #x-qty, #x-face', bg).forEach((el) => { el.oninput = () => showPrev(bg); el.onchange = () => showPrev(bg); }); wirePart('x', bg, () => showPrev(bg)); showPrev(bg); },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Save Correction', cls: 'primary', value: 'save', check: (bg) => {
       const r = read(bg); if (r.error) { toast(r.error, 'bad'); return false; }
       out = { next: r.next, why: $('#x-why', bg).value.trim() }; return true; } }] });
@@ -958,14 +977,14 @@ async function addCheckbook(refs, f, lguId, o) {
         <div class="field"><label for="k-from">Check No. From</label><input class="input r mono" id="k-from" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="k-to">Check No. To</label><input class="input r mono" id="k-to" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="k-per">Checks per Book</label><input class="input r" id="k-per" inputmode="numeric" value="${LASTCHK.per}"></div>
-        <div class="field"><label for="k-fund">Fund (optional)</label>${fundSel('k-fund', checkFunds(f, o.lguId), LASTCHK.fund || '')}</div>
-        <div class="field af-span2"><label for="k-acct">Bank / Account (optional)</label><input class="input" id="k-acct" list="k-accts" value="${esc(LASTCHK.acct)}" placeholder="e.g. LBP – Maddela"><datalist id="k-accts">${accts.map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
+        <div class="field"><label for="k-fund">Fund</label>${fundSel('k-fund', checkFunds(f, o.lguId), LASTCHK.fund || '')}</div>
+        ${acctBox('k', LASTCHK.acct)}
         <div class="field"><label for="k-date">Date Received from the Bank</label><input class="input" type="date" id="k-date"></div>
         <div class="af-span">${partBox('k', { note: 'Partly used checkbooks (already in use at the start)' })}</div>
       </div>
       <p class="af-note">Enter the complete series. A date not known: use the start date of the register. These checkbooks show only on this officer's page, never in the custodian's register.</p>
       <div class="af-note" id="k-prev"></div>`,
-    onOpen: (bg) => { $$('#k-from, #k-to, #k-per', bg).forEach((el) => { el.oninput = () => show(bg); });
+    onOpen: (bg) => { wireAcct(bg, 'k', f, o.lguId); $$('#k-from, #k-to, #k-per', bg).forEach((el) => { el.oninput = () => show(bg); });
       $('#k-from', bg).addEventListener('change', () => { const a = int($('#k-from', bg).value), t = $('#k-to', bg); if (a && autoTo(t, a, bookletOf(a, int($('#k-per', bg).value) || CHK_PER)[1])) show(bg); });
       wirePart('k', bg, () => show(bg)); },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Save Checkbooks', cls: 'primary', value: 'save', check: (bg) => {
@@ -1707,8 +1726,8 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
         <div class="field" id="g-formbox"><label for="g-form">Form Type</label><select class="input" id="g-form">${formOpts(forms, pick)}${mine.length && mine.length < allForms.length ? '<option value="__other">Other form…</option>' : ''}</select>
           <span class="hint" id="g-formhint">${mine.length ? '' : opts.custodian ? '' : 'Tick the officer\'s forms in Audit Setup to shorten this list.'}</span></div>
         <div class="field" id="g-srcbox"><label for="g-srcsel">Received From</label><select class="input" id="g-srcsel">${srcOptions(f, regId, { extra: [[CUST, `Custodian (${cust})`]], cur: CUST, direct: true })}</select></div>
-        <div class="field" id="g-acctbox" hidden><label for="g-acct">Bank / Account (optional)</label><input class="input" id="g-acct" value="${esc(LASTCHK.acct)}" placeholder="e.g. LBP – Maddela"></div>
-        <div class="field" id="g-fundbox" hidden><label for="g-fund">Fund (optional)</label>${fundSel('g-fund', checkFunds(f, o.lguId), LASTCHK.fund || '')}</div>
+        <div class="field" id="g-fundbox" hidden><label for="g-fund">Fund</label>${fundSel('g-fund', checkFunds(f, o.lguId), LASTCHK.fund || '')}</div>
+        ${acctBox('g', LASTCHK.acct, true)}
         <div class="field"><label for="g-from">Serial From</label><input class="input r mono" id="g-from" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="g-to">Serial To</label><input class="input r mono" id="g-to" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="g-per">Per Booklet</label><input class="input r" id="g-per" inputmode="numeric" value="${LAST.per}"></div>
@@ -1718,6 +1737,7 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
       <p class="af-note">Enter complete series. ${cut ? `For a booklet the officer presented at the cash count (${esc(fmtDate(asOf))}) that is not in the register yet. Then type its unused numbers in the cut-off.` : `Everything here is the officer's beginning <b>as of the last cash exam (${esc(fmtDate(asOf))})</b>;`} the real date received and date issued, if known, are added later with Edit in Accountable Forms. Receipts encoded in Collections &amp; Deposits are taken out on top of this.</p>
       <div class="af-note" id="g-prev"></div>`,
     onOpen: (bg) => {
+      wireAcct(bg, 'g', f, o.lguId);
       $$('input[name="g-kind"]', bg).forEach((r) => { r.onchange = () => show(bg); });
       wireSrcSelect($('#g-srcsel', bg), refs, f, regId, () => show(bg), true);
       $$('#g-from, #g-to, #g-per, #g-form, #g-ns', bg).forEach((el) => { el.oninput = () => show(bg); el.onchange = () => show(bg); });
