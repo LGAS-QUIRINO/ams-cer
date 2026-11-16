@@ -469,8 +469,10 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const nextSerial = (b) => { if (!b) return ''; const rs = bookletUnused(b); const last = rs[rs.length - 1]; return last && last[1] === b.to ? last[0] : ''; };
   const serial = LASTC.serial !== '' && LASTC.serial !== undefined ? LASTC.serial : nextSerial(bk);
   const parts = [...new Set(f.ors.filter((x) => x.lguId === audit.lguId).flatMap((x) => (x.items || []).map((i) => i.p)).filter((p) => p && p !== NO_PART))].sort();
-  const show = q.get('show') === 'sel' ? 'sel' : q.get('show') === 'all' || cur.pending ? 'all' : 'sel';
-  const listOrs = (show === 'all' ? f.ors.filter((x) => x.officerId === o.id) : cur.ors).slice().sort((a, b) => String(a.form).localeCompare(String(b.form)) || a.serial - b.serial);
+  const show = q.get('show') === 'nyr' && !cur.pending ? 'nyr' : q.get('show') === 'sel' ? 'sel' : q.get('show') === 'all' || cur.pending ? 'all' : 'sel';
+  // Not yet in a report: the ORs of the officer not in any submitted report of the type shown.
+  const nyrOrs = () => Object.values(fig.chains).filter((ch) => usedKinds.includes(ch.kind)).flatMap((ch) => ch.pend.ors);
+  const listOrs = (show === 'all' ? f.ors.filter((x) => x.officerId === o.id) : show === 'nyr' ? nyrOrs() : cur.ors).slice().sort((a, b) => String(a.form).localeCompare(String(b.form)) || a.serial - b.serial);
   const repPill = (x) => { if (!x.reportId) return `<span class="pill p-part">Not yet in an ${K}</span>`; const r = f.reports.find((y) => y.id === x.reportId); return `<span class="pill p-stock">${esc(r ? (r.no ? `${K} ${r.no}` : repName(r, K)) : '—')}</span>`; };
   // The first line also carries the Date of Collection (one date per OR); the other lines leave that column empty.
   const dateCell = `<div class="cd-dcell"><label class="sr-only" for="cd-ordate">Date of Collection</label><input class="input" type="date" id="cd-ordate" value="${esc(LASTC.date)}"></div>`;
@@ -509,7 +511,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       </div>` : ''}
       <div class="cd-listhead"><h3 class="cer-h3">Encoded ORs</h3>
         <label class="sr-only" for="cd-search">Search ORs</label><input class="input af-sm" id="cd-search" placeholder="Search OR No. or particular…">
-        <label class="sr-only" for="cd-show">Show</label><select class="input af-sm" id="cd-show"><option value="sel" ${show === 'sel' ? 'selected' : ''}>${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</option><option value="all" ${show === 'all' ? 'selected' : ''}>All of this officer</option></select>
+        <label class="sr-only" for="cd-show">Show</label><select class="input af-sm" id="cd-show"><option value="sel" ${show === 'sel' ? 'selected' : ''}>${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</option>${cur.pending ? '' : `<option value="nyr" ${show === 'nyr' ? 'selected' : ''}>Not yet in an ${K}</option>`}<option value="all" ${show === 'all' ? 'selected' : ''}>All of this officer</option></select>
         <span class="cd-total">Total <b>₱ ${money(listOrs.reduce((n, x) => n + orAmount(x), 0))}</b></span>
         ${enc && forms.length ? '<a href="#" class="cd-link cd-tpl" id="cd-ortpl">Template</a><button class="btn" type="button" id="cd-orimp">Import from Excel</button>' : ''}<button class="btn" type="button" id="cd-xls">Export to Excel</button></div>
       ${listOrs.length ? `<div class="af-tbl cd-orscroll"><table class="af-reg cd-ors"><thead><tr><th scope="col">No.</th><th scope="col">OR No.</th><th scope="col">Date</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Status</th><th scope="col">${K}</th><th scope="col" class="r"></th></tr></thead>
@@ -552,9 +554,9 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
     return s.ok ? '<span class="pill p-done" title="The ORs encoded in the series add up to the amount">✓</span>'
       : `<span class="pill p-flag" title="${esc(`ORs encoded in ${s.a}–${s.z}: ₱${money(s.tot)}${s.beg ? `, ₱${money(s.beg)} of them dated before the last cash exam` : ''}${s.miss.length ? `; not encoded: ${rangesText(s.miss)}` : ''}`)}">₱${money(Math.abs(r2((+d.amount || 0) - s.tot)))} ${(+d.amount || 0) > s.tot ? 'not found' : 'more in the ORs'}</span>`; };
   allDeps.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.ref).localeCompare(String(b.ref)));
-  const shownDeps = DEPSHOW.v === 'sel' ? allDeps.filter((d) => d.g.id === selId) : allDeps;
+  const shownDeps = DEPSHOW.v === 'sel' ? allDeps.filter((d) => d.g.id === selId) : DEPSHOW.v === 'nyr' ? allDeps.filter((d) => d.g.pending) : allDeps;
   const depReg = `<div class="cd-block cd-depreg"><div class="cd-orhead"><h3 class="cer-h3">${remish ? 'Remittances' : 'Deposits'} register</h3><span class="pill">${shownDeps.length}</span>
-      <label class="sr-only" for="cd-depshow">Show</label><select class="input af-sm" id="cd-depshow"><option value="all" ${DEPSHOW.v !== 'sel' ? 'selected' : ''}>All of this officer</option><option value="sel" ${DEPSHOW.v === 'sel' ? 'selected' : ''}>${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</option></select>
+      <label class="sr-only" for="cd-depshow">Show</label><select class="input af-sm" id="cd-depshow"><option value="all" ${DEPSHOW.v !== 'sel' && DEPSHOW.v !== 'nyr' ? 'selected' : ''}>All of this officer</option><option value="sel" ${DEPSHOW.v === 'sel' ? 'selected' : ''}>${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</option>${cur.pending ? '' : `<option value="nyr" ${DEPSHOW.v === 'nyr' ? 'selected' : ''}>Not yet in an ${K}</option>`}</select>
       <button class="btn sm" type="button" id="cd-depxls">Export to Excel</button></div>
     ${shownDeps.length ? `<div class="af-tbl cd-depscroll"><table class="af-reg cd-deptbl"><thead><tr><th scope="col">Date</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th><th scope="col" class="r">Amount (₱)</th>${dSplit ? '<th scope="col" class="r">AF 51</th><th scope="col" class="r">CTC</th>' : ''}${dHasSer ? '<th scope="col">Check</th>' : ''}<th scope="col">${isRem ? 'SCR' : usedKinds.filter((k) => k !== 'SCR').join(' / ')}</th><th scope="col">Fund</th></tr></thead>
       <tbody>${shownDeps.map((d) => `<tr data-pickdep="${esc(d.g.id)}" tabindex="0" class="${d.g.id === selId ? 'cd-on' : ''}"><td>${esc(fmtDate(d.date))}${earlyPill(d.src)}</td><td class="mono">${esc(depRefText(d, d.kind === 'SCR'))}</td><td class="r">${money(+d.amount || 0)}</td>${dSplit ? `<td class="r">${money(r2((+d.amount || 0) - dCtc(d)))}</td><td class="r">${money(dCtc(d))}</td>` : ''}${dHasSer ? `<td>${dChk(d)}</td>` : ''}<td>${esc(d.g.pending ? `Not yet in an ${d.kind}` : repName(d.g.rec, d.kind))}</td><td>${esc(d.fund)}</td></tr>`).join('')}</tbody>
@@ -630,7 +632,7 @@ function wireAll(c) {
     Fund: x.fund || '', Amount: orAmount(x), Status: x.status === 'cancelled' ? 'Cancelled' : 'Issued', [K]: x.reportId ? repName(f.reports.find((r) => r.id === x.reportId), K) : `Not yet in an ${K}` })));
   const sr = $('#cd-search');
   if (sr) sr.oninput = () => { const t = sr.value.trim().toLowerCase(); $$('tr[data-or]').forEach((tr) => { tr.hidden = !!t && !tr.dataset.s.includes(t); }); };
-  const sh = $('#cd-show'); if (sh) sh.onchange = () => go({ show: sh.value === 'all' ? 'all' : 'sel' });
+  const sh = $('#cd-show'); if (sh) sh.onchange = () => go({ show: sh.value });
   if (!enc) return;
 
   /* SCD / RCD */
