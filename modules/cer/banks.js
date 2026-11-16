@@ -191,6 +191,7 @@ export async function banksView(ctx) {
   list.forEach((x) => { x.pre = preCheck(x, cov.from, rec); });
   const preList = list.filter((x) => x.pre), books = list.filter((x) => !x.pre);
   const result = (x) => {
+    if (rec.noStmt) return ['p-stock', 'Not verified with the bank', 'The bank statement is not available'];
     const bd = rec.found[x.key];
     if (x.after) return ['p-stock', 'Issued after the cut-off'];
     if (!bd && nmByKey[x.key]) { const l = nmByKey[x.key]; return ['p-nm', 'Not Matched', `The bank shows ₱${money(l.debit)} for check ${l.chq} on ${fmtDate(l.date)}`]; }
@@ -294,8 +295,15 @@ export async function banksView(ctx) {
         <tbody>${rec.bankItems.map((b, i) => `<tr><td>${esc(fmtDate(b.date))}</td><td><span class="pill ${b.type === 'credit' ? 'p-done' : 'p-flag'}">Bank ${b.type}</span></td><td>${esc(b.particulars || '')}</td><td class="r">${money(b.amount)}</td>
           <td class="r">${enc ? `<button class="btn sm" type="button" data-rmbi="${i}" aria-label="Remove ${esc(b.particulars || 'item')}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="af-note">None yet.</p>'}</div>
     <p class="af-note">Then tick each deposit and check found in the bank in tab 2.</p>`;
-  const stBody = `${enc ? `<div class="cd-pick"><button class="btn primary" type="button" id="bk-import">${imported ? 'Import Again' : 'Import Soft Copy (Excel / CSV)'}</button>
-        <label class="cer-chip"><input type="checkbox" id="bk-manual" ${manual && !imported ? 'checked disabled' : manual ? 'checked' : ''}> No soft copy (PDF / printed)</label></div>` : ''}
+  // Bank statement not available: the books' side only, not verified with the bank (a finding in Verification).
+  const naBox = `<label class="cer-chip"><input type="checkbox" id="bk-na" ${rec.noStmt ? 'checked' : ''} ${dis}> Bank statement not available</label>`;
+  const stBody = rec.noStmt ? `${enc ? `<div class="cd-pick">${naBox}</div>` : ''}
+      <div class="bk-na"><b>Bank statement not available</b> for ${esc(fmtDate(cov.from) || '—')} – ${esc(fmtDate(cov.to || asOf))}. The deposits and checks in the books are shown in tab 2 as <i>Not verified with the bank</i>; no reconciliation. It is listed in Verification as a finding.
+        <div class="field" style="margin-top:8px"><label for="bk-nanote">Note (optional)</label><input class="input" id="bk-nanote" value="${esc(rec.noStmtNote || '')}" placeholder="e.g. requested from LBP, not yet given" ${dis}></div>
+        <p class="af-note" style="margin:6px 0 0">When the statement arrives, untick it and import the statement.</p></div>`
+    : `${enc ? `<div class="cd-pick"><button class="btn primary" type="button" id="bk-import">${imported ? 'Import Again' : 'Import Soft Copy (Excel / CSV)'}</button>
+        ${imported ? '<button class="btn" type="button" id="bk-rmst">Remove Statement</button>' : ''}
+        <label class="cer-chip"><input type="checkbox" id="bk-manual" ${manual && !imported ? 'checked disabled' : manual ? 'checked' : ''}> No soft copy (PDF / printed)</label>${imported ? '' : naBox}</div>` : ''}
     ${proof}${begProof}
     ${imported && !manual ? stmtTbl : ''}
     ${manual ? manualBox : ''}
@@ -350,9 +358,9 @@ export async function banksView(ctx) {
       <span class="${hasSt ? 'ok' : 'no'}">${hasSt ? '✓ Statement imported' : '✗ No statement yet'}</span><span class="${nCk ? 'ok' : 'no'}">${nCk ? `✓ CkDJ ${nCk} check${nCk > 1 ? 's' : ''}` : '✗ No CkDJ yet'}</span></a>`;
   }).join('')}</div>`;
   const body = hello(btnAccts) + top(true) + chips + figs + tabs([
-    ['st', 'Bank Statement', esc(imported ? `${lns.length} lines · ${unmatched.length} not in the books` : hasEnd ? `${rec.source || ''} · ending ₱${money(rec.ending)}` : 'Import the soft copy'), stBody],
+    ['st', 'Bank Statement', rec.noStmt ? 'Not available' : esc(imported ? `${lns.length} lines · ${unmatched.length} not in the books` : hasEnd ? `${rec.source || ''} · ending ₱${money(rec.ending)}` : 'Import the soft copy'), stBody],
     ['dc', 'Deposits and Checks', `${nFound} of ${books.length} found in the bank`, dcBody],
-    ['rc', 'Reconciliation', diff === null ? 'Type the cashbook balance' : Math.abs(diff) < 0.005 ? 'Agrees' : `Difference ₱${money(diff)}`, rcBody]]);
+    ['rc', 'Reconciliation', rec.noStmt ? 'No bank statement' : diff === null ? 'Type the cashbook balance' : Math.abs(diff) < 0.005 ? 'Agrees' : `Difference ₱${money(diff)}`, rec.noStmt ? '<div class="bk-na">No reconciliation: the bank statement is not available.</div>' : rcBody]]);
 
   const ctxw = { refs, audit, acct, recId, rec, rec0, list, auto, asOf, enc, cov, unmatched, accounts, funds, settings, credits, debits, dit, oc, adjBank, adjBook, diff };
   return { crumb, body, wire: () => { wireTop(); wireBanks(ctxw); } };
@@ -367,7 +375,7 @@ function wireBanks(c) {
   }; });
   const rr = () => window.dispatchEvent(new HashChangeEvent('hashchange'));
   const only = $('#bk-only'); if (only) only.onchange = () => { UI.only = only.checked; rr(); };
-  $('#bk-xls').onclick = () => exportXlsx(`Bank Reconciliation ${acct.accountNo || acct.fund} ${c.asOf}.xlsx`, 'Bank Reconciliation', [
+  if ($('#bk-xls')) $('#bk-xls').onclick = () => exportXlsx(`Bank Reconciliation ${acct.accountNo || acct.fund} ${c.asOf}.xlsx`, 'Bank Reconciliation', [
     ...list.map((x) => ({ Item: x.label || (x.kind === 'dep' ? 'Deposit' : 'Check'), 'Date (Books)': fmtDate(x.date), Reference: x.ref, From: x.from, Amount: x.amount, 'Date (Bank)': fmtDate(rec.found[x.key] || ''), Result: rec.found[x.key] ? (x.kind === 'dep' ? 'In the bank' : 'Cleared') : x.after ? 'Issued after the cut-off' : (x.kind === 'dep' ? 'Deposit in transit' : 'Outstanding check') })),
     ...c.unmatched.map((l) => ({ Item: l.credit ? 'Bank credit' : 'Bank debit', 'Date (Books)': '', Reference: l.chq || '', From: l.desc, Amount: l.credit || l.debit, 'Date (Bank)': fmtDate(l.date), Result: 'Not in the books' })),
     ...(rec.bankItems || []).map((b) => ({ Item: b.type === 'credit' ? 'Bank credit' : 'Bank debit', 'Date (Books)': '', Reference: '', From: b.particulars || '', Amount: b.amount, 'Date (Bank)': fmtDate(b.date), Result: 'Not in the books' })),
@@ -376,6 +384,18 @@ function wireBanks(c) {
     { Item: 'Difference', Amount: c.diff ?? '' }]);
   if (!enc) return;
   const man = $('#bk-manual'); if (man && !man.disabled) man.onchange = () => { UI.manual = man.checked; rr(); };
+  // Bank statement not available (ticked), with its note.
+  const na = $('#bk-na'); if (na && !na.disabled) na.onchange = () => save({ noStmt: na.checked }, na.checked ? 'Marked: bank statement not available.' : 'Bank statement expected: import it.');
+  const nn = $('#bk-nanote'); if (nn && !nn.disabled) nn.onchange = () => save({ noStmtNote: nn.value.trim() }, 'Note saved.');
+  // Remove the imported statement (a wrong file): its lines and the matches made from them; matches ticked by hand stay.
+  const rms = $('#bk-rmst'); if (rms) rms.onclick = async () => {
+    const ok = await modal({ title: 'Remove this bank statement?', body: `<p style="margin:0">Remove the bank statement of <b>${esc(acctLabel(acct))}</b>? Its ${(rec.lines || []).length} lines and the matches made from them are removed. Matches ticked by hand, other checks and bank items typed here stay. You can then import the right statement, or mark it not available.</p>`,
+      buttons: [{ label: 'Cancel', value: false }, { label: 'Remove', cls: 'danger', value: true }] });
+    if (!ok) return;
+    const auto = new Set(Object.keys(rec.lineOf || {}));
+    const found = Object.fromEntries(Object.entries(rec.found || {}).filter(([k]) => !auto.has(k)));
+    save({ lines: [], heads: [], lineOf: {}, found, opening: null, ending: null, source: '', account: '', covFrom: '', covTo: '', covStart: '' }, 'Bank statement removed.');
+  };
   const ed = $('#bk-edit'); if (ed) ed.onclick = () => { UI.edit = true; rr(); };
   const de = $('#bk-doneedit'); if (de) de.onclick = () => { UI.edit = false; rr(); };
   const save = async (patch, msg) => {
@@ -412,7 +432,7 @@ function wireBanks(c) {
     save({ found, noAuto: [...noAuto] }, 'Saved.');
   };
   $$('[data-rmoth]').forEach((b) => { b.onclick = () => save({ otherChecks: (rec.otherChecks || []).filter((x) => x.id !== b.dataset.rmoth) }, 'Check removed.'); });
-  $('#bk-addchk').onclick = async () => {
+  if ($('#bk-addchk')) $('#bk-addchk').onclick = async () => {
     let out = null;
     await modal({ title: '+ Other Check', body: `<p class="hint" style="margin:0">A check of ${esc(acct.fund)} that is not a cash advance (e.g. payment to a supplier).</p>
       <div class="cd-g2"><div class="field"><label for="oc-date">Date</label><input class="input" type="date" id="oc-date"></div>
@@ -425,7 +445,7 @@ function wireBanks(c) {
         out = v; return true; } }] });
     if (out) save({ otherChecks: [...(rec.otherChecks || []), out] }, `Check No. ${out.checkNo} added.`);
   };
-  $('#bk-import').onclick = () => importStatement(c, save);
+  if ($('#bk-import')) $('#bk-import').onclick = () => importStatement(c, save);
   $$('[data-taxln]').forEach((b) => { b.onclick = () => recordFromLine({ refs, lguId: audit.lguId, settings: c.settings, accounts: c.accounts, acct, line: (rec.lines || []).find((l) => l.i === +b.dataset.taxln) }); });
   $$('[data-stillout]').forEach((b) => { b.onclick = () => save({ stillOut: { ...(rec.stillOut || {}), [b.dataset.stillout]: +b.dataset.v } }, +b.dataset.v ? 'Marked as still outstanding.' : 'Back to cleared before the period.'); });
   $$('[data-begmk]').forEach((b) => { b.onclick = () => save({ begMark: { ...(rec.begMark || {}), [b.dataset.begmk]: +b.dataset.v } }, +b.dataset.v ? 'Marked as outstanding at the last cash exam.' : 'Unmarked.'); });
@@ -628,6 +648,7 @@ export async function bankFindings(audit, refs) {
     { const cv = covOf(audit, exams0.map(flat)); const nCk = jr0.map(flat).filter((c) => c.acctId === acct.id && c.lguId === audit.lguId && c.date && (!cv.from || c.date >= cv.from) && c.date <= cv.to).length;
       if (!nCk) add(`bkck|${acct.id}`, `${name}: no checks in the Check Disbursements Journal for the period (Source Documents).`); }
     if (!rec) { add(`bk0|${acct.id}`, `${name}: no bank statement or reconciliation yet.`); continue; }
+    if (rec.noStmt) { const cv = covOf(audit, exams0.map(flat)); add(`bkna|${acct.id}`, `${name}: bank statement not available for ${fmtDate(cv.from) || '—'} – ${fmtDate(cv.to)}; deposits and checks not verified with the bank.${rec.noStmtNote ? ' ' + rec.noStmtNote : ''}`); continue; }
     const items = [];
     const toLOs = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id && e.remitToLO).map((e) => e.officerId));
     reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR' && !toLOs.has(r.officerId)).forEach((r) => depItems(r).filter(({ d }) => !d.toLO).forEach(({ d, key, old }) => items.push({ key, old, kind: 'dep', date: d.date, ref: d.ref || '', amount: +d.amount || 0 })));

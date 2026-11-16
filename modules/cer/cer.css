@@ -963,3 +963,4 @@ table.af-reg.tr-month{min-width:0}
 .rm-line{display:grid; grid-template-columns:150px minmax(220px,2fr) 150px 120px 120px 130px auto; gap:8px; align-items:end; margin-top:4px}
 .rm-line .field{margin:0}
 @media (max-width:1000px){ .rm-line{grid-template-columns:1fr 1fr} }
+.bk-na{border:1px solid #f0c27a; background:#fffaf2; border-radius:10px; padding:12px 14px; font-size:13.5px; margin-top:8px}
