@@ -153,8 +153,13 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   // Remittances to this officer (as the Liquidating Officer) typed on the collectors' side, with their OR series (cashbook only):
   // they show in this LO's remittances received, so the LO's book is not typed again.
   const nm = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
-  const colLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.deposits || []).filter((d) => d.toLO && !d.fromLO && d.from && nm(d.ref) && nm(d.ref) === nm(o.name))
-    .map((d) => ({ date: d.date, collectorId: r.officerId, reportNo: '', amount: +d.amount || 0, from: d.from, to: d.to || d.from, fromCol: true, fund: r.fund || '' })));
+  // Also the SCR remittances (barangay CTC) whose receiver is this officer by name: the series of the line, else of the SCR.
+  const rgTxt = (rs) => (rs || []).map(([a, z]) => (a === z ? `${a}` : `${a}–${z}`)).join('; ');
+  const rk = (r) => r.kind || (r.pending && String(r.id || '').startsWith('nyr|') ? String(r.id).split('|')[2] : '');
+  const colLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.deposits || []).filter((d) => !d.fromLO && d.date && nm(d.ref) && nm(d.ref) === nm(o.name) && ((d.toLO && d.from) || rk(r) === 'SCR'))
+    .map((d) => { const rs = Array.isArray(r.ranges) ? r.ranges : [], from = d.from || (rs[0] ? String(rs[0][0]) : ''), to = d.from ? d.to || d.from : rs.length ? String(rs[rs.length - 1][1]) : '';
+      return { date: d.date, collectorId: r.officerId, reportNo: rk(r) === 'SCR' ? `SCR${r.no ? ' No. ' + r.no : ''}` : r.no || '', amount: +d.amount || 0, from, to, series: d.from ? `${d.from}–${d.to || d.from}` : rgTxt(rs), fromCol: true, fund: r.fund || '',
+        ...(lx && d.date < lx ? { beg: true } : {}) }; }));
   // A collector's remittances recorded by a Liquidating Officer (from the LO's cashbook): the collector's remittances to the LO.
   const loLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.remittances || []).filter((m) => m.collectorId === o.id && !m.beg && m.date)
     .map((m) => ({ date: m.date, ref: f.officers.find((x) => x.id === r.officerId)?.name || 'Liquidating Officer', amount: +m.amount || 0, toLO: true, fromLO: true, form: m.form || '', from: m.from || '', to: m.to || '', fund: r.fund || '' })));
@@ -364,9 +369,9 @@ export async function collectionsView(ctx) {
   const remBlock = isLO ? `<div class="cd-block"><h3 class="cer-h3">Remittances received from collectors</h3>
       <div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">Date Received</th><th scope="col">From Collector</th><th scope="col">Collector's RCD No.</th><th scope="col">OR From</th><th scope="col">OR To</th><th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
         <tbody id="cd-rems">${(cur.rec?.remittances || []).filter((m) => !m.fromCol).map(remRow).join('')}</tbody></table></div>
-      ${(cur.rec?.remittances || []).some((m) => m.fromCol) ? `<h3 class="cer-h3" style="margin-top:10px">From the collectors' records <small class="dim">(remittances to this LO with their OR series)</small></h3>
-        <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th>Date</th><th>Collector</th><th>OR Series</th><th class="r">Amount (₱)</th></tr></thead>
-        <tbody>${cur.rec.remittances.filter((m) => m.fromCol).map((m) => `<tr><td>${esc(fmtDate(m.date))}</td><td>${esc(f.officers.find((x) => x.id === m.collectorId)?.name || '')}</td><td class="mono">${esc(m.from)}–${esc(m.to)}</td><td class="r">${money(m.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${(cur.rec?.remittances || []).some((m) => m.fromCol) ? `<h3 class="cer-h3" style="margin-top:10px">From the collectors' records <small class="dim">(remittances naming this officer as receiver, including the SCRs)</small></h3>
+        <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th>Date</th><th>Collector</th><th>Report</th><th>OR Series</th><th class="r">Amount (₱)</th></tr></thead>
+        <tbody>${cur.rec.remittances.filter((m) => m.fromCol).map((m) => `<tr><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(f.officers.find((x) => x.id === m.collectorId)?.name || '')}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
       <datalist id="cd-crlist">${[...new Set(crList)].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
       ${enc ? `<div class="cd-actions"><button class="btn sm" type="button" id="cd-addrem">+ Add Remittance</button><button class="btn primary" type="button" id="cd-saverem">Save Remittances</button></div>` : ''}
       <p class="af-note">Each collector's remittance, with the date it was received (and the OR range, from the LO's cashbook). When the collector's RCD is in the app, its collections are compared with the amount; by OR range, the collector's cashbook is compared in Verification. A remittance dated before the last cash exam is in the beginning balance.</p></div>` : '';
