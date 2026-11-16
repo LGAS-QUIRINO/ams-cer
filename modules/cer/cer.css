@@ -960,3 +960,6 @@ table.af-reg.tr-month{min-width:0}
 .rp-cols{margin-top:12px; border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:13px}
 .rp-colt{max-height:260px; overflow:auto; margin-top:8px}
 .rp-colt table.af-reg{min-width:0; width:100%}
+.rm-line{display:grid; grid-template-columns:150px minmax(220px,2fr) 150px 120px 120px 130px auto; gap:8px; align-items:end; margin-top:4px}
+.rm-line .field{margin:0}
+@media (max-width:1000px){ .rm-line{grid-template-columns:1fr 1fr} }

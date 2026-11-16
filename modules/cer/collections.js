@@ -92,6 +92,7 @@ const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, sameDay, ...rest } = x; return rest; };   // sameDay is worked out on loading, never saved
 const bad = (m) => { toast(m, 'bad'); return false; };
 const DEPSHOW = { v: 'all' };
+const REM = { key: '', i: -1, date: '' };   // the typed remittance being edited (by report) and the last date typed
 const KSEL = {};   // the report type shown per officer (SCD / RCD or SCR), remembered while the app is open
 const KIND_PICK = { SCD: 'SCD – Collections and Deposits', RCD: 'RCD – Collections and Deposits', SCR: 'SCR – Collections and Remittances' };   // deposits register: all of the officer, or the selected report
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
@@ -400,16 +401,36 @@ export async function collectionsView(ctx) {
   const colIn = (cur.rec?.remittances || []).filter((m) => m.fromCol);
   const colFree = cur.pending ? [] : (fig.chains[curKey]?.pend.rec?.remittances || []).filter((m) => m.fromCol);
   const colRow = (m, on) => `<tr class="${on || cur.pending ? '' : 'cd-off'}">${cur.pending ? '' : `<td><input type="checkbox" data-colk="${esc(m.key)}" ${on ? 'checked' : ''} ${enc ? '' : 'disabled'} aria-label="In this RCD"></td>`}<td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td></tr>`;
-  const remBlock = isLO ? `<div class="cd-block"><h3 class="cer-h3">Remittances received from collectors</h3>
-      ${colIn.length || colFree.length ? `<h3 class="cer-h3" style="margin-top:4px">From the collectors' SCR / RCD <small class="dim">${cur.pending ? '(not yet in an RCD of this officer: tick them in her RCD)' : '(tick those listed on the hard copy of this RCD)'}</small></h3>
+  // Typed remittances (a collector whose SCR / RCD is not in the app): one entry line, then the list (Edit / ✕); saved on Add.
+  const typed = (cur.rec?.remittances || []).filter((m) => !m.fromCol);
+  const allIn = (cur.rec?.remittances || []).filter((m) => !m.beg);
+  const inTot = r2(allIn.reduce((n, m) => n + (+m.amount || 0), 0));
+  const hardT = !cur.pending && cur.rec.hardTotal !== null && cur.rec.hardTotal !== undefined && cur.rec.hardTotal !== '' ? +cur.rec.hardTotal : null;
+  const progress = hardT === null ? '' : Math.abs(hardT - inTot) < 0.005 ? `<span class="pill p-done">Hard copy ₱${money(hardT)} · entered ₱${money(inTot)} · agrees</span>`
+    : `<span class="pill p-flag">Hard copy ₱${money(hardT)} · entered ₱${money(inTot)} · ₱${money(Math.abs(r2(hardT - inTot)))} ${hardT > inTot ? 'to go' : 'more than the hard copy'}</span>`;
+  const colLabel = (x) => `${x.name}${x.designation ? ' · ' + x.designation : ''}${x.office ? ' · ' + x.office : ''}`;
+  const ed = REM.key === selId && REM.i >= 0 ? typed[REM.i] || null : null;
+  const remBlock = isLO ? `<div class="cd-block"><div class="cd-orhead"><h3 class="cer-h3">Remittances received</h3>${progress}</div>
+      ${colIn.length || colFree.length ? `<h3 class="cer-h3" style="margin-top:4px">In the app: the collectors' SCR / RCD <small class="dim">${cur.pending ? '(tick them in her RCD)' : '(tick those listed on the hard copy of this RCD)'}</small></h3>
         <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr>${cur.pending ? '' : '<th style="width:30px"></th>'}<th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
         <tbody>${colIn.map((m) => colRow(m, true)).join('')}${colFree.map((m) => colRow(m, false)).join('')}</tbody></table></div>` : ''}
-      <h3 class="cer-h3" style="margin-top:10px">Typed here <small class="dim">(only for a collector whose SCR / RCD is not in the app yet; it then shows on the collector's side by itself)</small></h3>
-      <div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">Date Received</th><th scope="col">From Collector</th><th scope="col">Their SCR / RCD No.</th><th scope="col">OR From</th><th scope="col">OR To</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Check</th><th scope="col"></th></tr></thead>
-        <tbody id="cd-rems">${(cur.rec?.remittances || []).filter((m) => !m.fromCol).map(remRow).join('')}</tbody></table></div>
+      <h3 class="cer-h3" style="margin-top:12px">Not in the app yet: type it <small class="dim">(it makes the collector's SCR / RCD and its remittance; only the collections are left to encode there)</small></h3>
+      ${enc ? `<div class="rm-line" id="rm-form">
+        <div class="field"><label for="rm-date">Date received</label><input class="input" type="date" id="rm-date" value="${esc(ed ? ed.date : REM.date || '')}"></div>
+        <div class="field rm-col"><label for="rm-col">Collector</label><input class="input" id="rm-col" list="rm-cols" autocomplete="off" placeholder="Type part of the name" value="${esc(ed ? colLabel(collectors.find((x) => x.id === ed.collectorId) || { name: '' }) : '')}">
+          <datalist id="rm-cols">${collectors.map((x) => `<option value="${esc(colLabel(x))}">`).join('')}</datalist></div>
+        <div class="field"><label for="rm-no">Their SCR / RCD No.</label><input class="input mono" id="rm-no" list="cd-crlist" value="${esc(ed ? ed.reportNo || '' : '')}"></div>
+        <div class="field"><label for="rm-from">OR From</label><input class="input mono" id="rm-from" inputmode="numeric" value="${esc(ed ? ed.from || '' : '')}"></div>
+        <div class="field"><label for="rm-to">OR To</label><input class="input mono" id="rm-to" inputmode="numeric" value="${esc(ed ? ed.to || '' : '')}"></div>
+        <div class="field"><label for="rm-amt">Amount</label><input class="input r" id="rm-amt" inputmode="decimal" value="${ed ? esc(money(ed.amount)) : ''}"></div>
+        <div class="field"><label>&nbsp;</label><button class="btn primary" type="button" id="rm-add">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn sm" type="button" id="rm-cancel">Cancel</button>' : ''}</div>
+      </div><p class="af-note" style="margin-top:4px">Collector: type part of the name; the list has the officers of this office and its barangays. A barangay treasurer is taken as an SCR, an LGU collector as an RCD. Enter moves to the next box; Enter on Amount adds the line.</p>` : ''}
+      ${typed.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th>#</th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check</th>${enc ? '<th></th>' : ''}</tr></thead>
+        <tbody>${typed.map((m, i) => `<tr class="${ed && REM.i === i ? 'cd-on' : ''}"><td>${i + 1}</td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${m.from ? `${esc(m.from)}–${esc(m.to || m.from)}` : '—'}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td><button class="btn sm" type="button" data-rmedit="${i}">Edit</button> <button class="btn sm" type="button" data-rmdel="${i}" aria-label="Remove">✕</button></td>` : ''}</tr>`).join('')}</tbody>
+        <tfoot><tr class="cd-foot"><td colspan="5">Total remittances received${cur.pending ? '' : ' in this RCD'}</td><td class="r">${money(inTot)}</td><td colspan="${enc ? 2 : 1}"></td></tr></tfoot></table></div>` : (allIn.length ? `<p class="dim" style="margin:6px 0">Total remittances received${cur.pending ? '' : ' in this RCD'}: <b>₱ ${money(inTot)}</b></p>` : '')}
       <datalist id="cd-crlist">${[...new Set(crList)].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
-      ${enc ? `<div class="cd-actions"><button class="btn sm" type="button" id="cd-addrem">+ Add Remittance</button><button class="btn primary" type="button" id="cd-saverem">Save Remittances</button></div>` : ''}
-      <p class="af-note">Each remittance is encoded once: on the collector's SCR / RCD (it shows here by itself), or typed here (it makes the collector's SCR / RCD and its remittance; only the collections are left to encode there). The check compares the collector's ORs in the range with the amount. A remittance dated before the last cash exam is in the beginning balance.</p></div>` : '';
+      ${enc ? '<div class="cd-actions" style="justify-content:flex-start"><button class="btn sm" type="button" id="rm-imp">Import from Excel</button><a href="#" class="cd-link" id="rm-tpl">Template</a><span class="dim" style="font-size:12.5px">many lines at once: Date · Collector · SCR/RCD No. · OR From · OR To · Amount</span></div>' : ''}
+      <p class="af-note">Each remittance is encoded once: ticked when the collector's SCR / RCD is in the app, typed when it is not. The check compares the collector's ORs in the range with the amount. A remittance dated before the last cash exam is in the beginning balance.</p></div>` : '';
   // SCD tab: the entry line on top (a new report, or the selected one to edit), a notice of records not yet in a report,
   // then the table of the officer's submitted reports (click a row to select it).
   const realFigs = fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind)).flatMap((k) => fig.chains[k].figs).sort((a, b) => byDate(a.rec, b.rec) || (a.rec.dupe || 0) - (b.rec.dupe || 0));
@@ -639,49 +660,103 @@ function wireAll(c) {
     }
     emitChange('local'); toast(cb.checked ? 'Put in this RCD.' : 'Taken out of this RCD.', 'ok');
   }; });
-  const remBox = $('#cd-rems');
-  if (remBox) {
-    wireRows(remBox);
-    const blankRem = () => { const t = document.createElement('tbody'); t.innerHTML = remRowHtml(c); return t.firstElementChild; };
-    $('#cd-addrem').onclick = () => { const tr = blankRem(); remBox.appendChild(tr); wireRows(remBox); $('input', tr).focus(); };
-    $('#cd-saverem').onclick = async () => {
-      const list = [];
-      for (const tr of $$('tr', remBox)) {
-        const g = (k) => $(`[data-k="${k}"]`, tr).value.trim();
-        if (!g('date') && !g('amount') && !g('collectorId')) continue;
-        if (!g('date')) return bad('Enter the date received of each remittance.');
-        if (!g('collectorId')) return bad('Choose the collector of each remittance.');
-        const amt = num(g('amount')); if (!amt) return bad('Enter the amount of each remittance.');
-        const cr = f.reports.find((r) => !r.pending && r.officerId === g('collectorId') && String(r.no).trim().toUpperCase() === g('reportNo').toUpperCase());
-        const fr = g('from').replace(/\D/g, ''), to = g('to').replace(/\D/g, '') || fr;
-        if (fr && +to < +fr) return bad('OR To must not be before OR From.');
-        list.push({ date: g('date'), collectorId: g('collectorId'), reportNo: g('reportNo'), reportId: cr ? cr.id : '', amount: amt, ...(fr ? { from: fr, to } : {}), ...(c.exam.lastExamDate && g('date') < c.exam.lastExamDate ? { beg: true } : {}) });
-      }
-      list.sort((a, b) => a.date.localeCompare(b.date));
-      // Not typed twice: a remittance already in the collector's SCR / RCD (shown above) is not saved again.
-      const shown = Object.values(c.fig.chains).flatMap((ch) => [...ch.figs, ch.pend]).flatMap((g) => (g.rec?.remittances || []).filter((m) => m.fromCol));
-      const was = (cur.rec?.remittances || []).filter((m) => !m.fromCol);
-      for (const m of list) {
-        if (was.some((w) => w.collectorId === m.collectorId && w.date === m.date && Math.abs(w.amount - m.amount) < 0.005)) continue;
-        const dup = shown.find((x) => x.collectorId === m.collectorId && ((x.from && m.from && String(x.from) === String(m.from)) || (m.reportNo && x.colNo && m.reportNo.replace(/[^0-9A-Za-z]/g, '').toUpperCase() === String(x.colNo).replace(/[^0-9A-Za-z]/g, '').toUpperCase()) || (x.date === m.date && Math.abs(x.amount - m.amount) < 0.005)));
-        if (dup) return bad(`Already in ${f.officers.find((y) => y.id === m.collectorId)?.name || 'the collector'}'s ${dup.reportNo} (${fmtDate(dup.date)}, ₱${money(dup.amount)}). No need to type it here: it is in the list above.`);
-      }
-      // A remittance whose collector's SCR / RCD is not in the app yet makes it (No., date, OR range); only its collections are left.
-      for (const m of list) {
-        if (m.reportId || !m.reportNo) continue;
-        const col = f.officers.find((y) => y.id === m.collectorId), cl = col && refs.lgu[col.lguId]; if (!col) continue;
-        const n = +m.from, bk = n ? f.booklets.find((x) => x.officerId === col.id && !x.noSerial && x.from <= n && n <= x.to) : null;
-        const ckind = bk ? kindOfForm(cl, bk.form) : kindsOf(cl).includes('SCR') ? 'SCR' : kindsOf(cl)[0];
-        const hit = f.reports.find((r) => !r.pending && r.officerId === col.id && (r.kind || ckind) === ckind && String(r.no).trim().toUpperCase() === m.reportNo.toUpperCase());
-        if (hit) { m.reportId = hit.id; continue; }
-        const nid = newId('cerr');
-        await store.save('cer_reports', nid, { lguId: col.lguId, officerId: col.id, kind: ckind, no: m.reportNo, date: m.date, fund: cl && isBrgy(cl) ? 'General Fund' : curFund, hardTotal: null,
-          ranges: m.from ? [[+m.from, +(m.to || m.from)]] : [], deposits: [], remittances: [], begTyped: 0, madeFrom: { officerId: o.id, name: o.name, no: cur.pending ? '' : cur.rec.no || '', reportId: cur.pending ? '' : cur.id } }, by(refs), { quiet: true });
-        m.reportId = nid;
-      }
-      await pendRec({ remittances: list }); toast('Remittances saved.', 'ok');
+  // Typed remittances of this report (a collector whose SCR / RCD is not in the app): the entry line and the list.
+  const typedNow = () => (cur.rec?.remittances || []).filter((m) => !m.fromCol);
+  const colsAll = collectorsOf(f, o, audit, refs);
+  const cLabel = (x) => `${x.name}${x.designation ? ' · ' + x.designation : ''}${x.office ? ' · ' + x.office : ''}`;
+  const letters = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+  const resolveCol = (v) => { const t = String(v || '').trim(); if (!t) return null;
+    const hit = colsAll.find((x) => cLabel(x) === t) || colsAll.find((x) => letters(x.name) === letters(t.split('·')[0]));
+    if (hit) return hit; const part = colsAll.filter((x) => letters(x.name).includes(letters(t.split('·')[0]))); return part.length === 1 ? part[0] : null; };
+  const shownCol = () => Object.values(c.fig.chains).flatMap((ch) => [...ch.figs, ch.pend]).flatMap((g) => (g.rec?.remittances || []).filter((m) => m.fromCol));
+  const nk = (v) => String(v || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+  const dupOf = (m) => shownCol().find((x) => x.collectorId === m.collectorId && ((x.from && m.from && String(x.from) === String(m.from)) || (m.reportNo && x.colNo && nk(m.reportNo) === nk(x.colNo)) || (x.date === m.date && Math.abs(x.amount - m.amount) < 0.005)));
+  const lineOf = (date, col, no, fr0, to0, amt) => {
+    const fr = String(fr0 || '').replace(/\D/g, ''), to = String(to0 || '').replace(/\D/g, '') || fr;
+    const cr = no ? f.reports.find((r) => !r.pending && r.officerId === col.id && String(r.no).trim().toUpperCase() === String(no).trim().toUpperCase()) : null;
+    return { date, collectorId: col.id, reportNo: String(no || '').trim(), reportId: cr ? cr.id : '', amount: r2(amt), ...(fr ? { from: fr, to } : {}), ...(c.exam.lastExamDate && date < c.exam.lastExamDate ? { beg: true } : {}) };
+  };
+  // Saves the typed list of this report: a remittance already in the collector's records is not saved again; one whose
+  // collector's SCR / RCD is not in the app makes it (No., date, OR range); only its collections are left to encode there.
+  const saveRems = async (list, quiet) => {
+    const was = typedNow();
+    for (const m of list) {
+      if (was.some((w) => w.collectorId === m.collectorId && w.date === m.date && Math.abs(w.amount - m.amount) < 0.005 && String(w.from || '') === String(m.from || ''))) continue;
+      const dup = dupOf(m);
+      if (dup) { bad(`Already in ${f.officers.find((y) => y.id === m.collectorId)?.name || 'the collector'}'s ${dup.reportNo} (${fmtDate(dup.date)}, ₱${money(dup.amount)}). No need to type it: tick it in the list above.`); return false; }
+    }
+    for (const m of list) {
+      if (m.reportId || !m.reportNo) continue;
+      const col = f.officers.find((y) => y.id === m.collectorId), cl = col && refs.lgu[col.lguId]; if (!col) continue;
+      const n = +m.from, bk = n ? f.booklets.find((x) => x.officerId === col.id && !x.noSerial && x.from <= n && n <= x.to) : null;
+      const ckind = bk ? kindOfForm(cl, bk.form) : kindsOf(cl).includes('SCR') ? 'SCR' : kindsOf(cl)[0];
+      const hit = f.reports.find((r) => !r.pending && r.officerId === col.id && (r.kind || ckind) === ckind && String(r.no).trim().toUpperCase() === m.reportNo.toUpperCase());
+      if (hit) { m.reportId = hit.id; continue; }
+      const nid = newId('cerr');
+      await store.save('cer_reports', nid, { lguId: col.lguId, officerId: col.id, kind: ckind, no: m.reportNo, date: m.date, fund: cl && isBrgy(cl) ? 'General Fund' : curFund, hardTotal: null,
+        ranges: m.from ? [[+m.from, +(m.to || m.from)]] : [], deposits: [], remittances: [], begTyped: 0, madeFrom: { officerId: o.id, name: o.name, no: cur.pending ? '' : cur.rec.no || '', reportId: cur.pending ? '' : cur.id } }, by(refs), { quiet: true });
+      m.reportId = nid;
+    }
+    await pendRec({ remittances: [...list].sort((a, b) => String(a.date).localeCompare(String(b.date))) });
+    if (!quiet) toast('Remittance saved.', 'ok');
+    return true;
+  };
+  if ($('#rm-form')) {
+    const els = ['#rm-date', '#rm-col', '#rm-no', '#rm-from', '#rm-to', '#rm-amt'].map((k) => $(k));
+    const add = async () => {
+      const date = $('#rm-date').value, col = resolveCol($('#rm-col').value), amt = num($('#rm-amt').value);
+      if (!date) { $('#rm-date').focus(); return bad('Enter the date received.'); }
+      if (!col) { $('#rm-col').focus(); return bad('Choose the collector from the list (type part of the name).'); }
+      if (!(amt > 0)) { $('#rm-amt').focus(); return bad('Enter the amount.'); }
+      const fr = $('#rm-from').value.replace(/\D/g, ''), to = $('#rm-to').value.replace(/\D/g, '') || fr;
+      if (fr && +to < +fr) { $('#rm-to').focus(); return bad('OR To must not be before OR From.'); }
+      const m = lineOf(date, col, $('#rm-no').value, fr, to, amt), list = typedNow().slice(), editing = REM.key === selId && REM.i >= 0;
+      if (editing) list[REM.i] = m; else list.push(m);
+      if (await saveRems(list)) { REM.key = selId; REM.i = -1; REM.date = date; setTimeout(() => { const el = $('#rm-col'); if (el) el.focus(); }, 350); }
     };
+    els.forEach((el, i) => { el.onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); if (i === els.length - 1) add(); else els[i + 1].focus(); }; });
+    $('#rm-amt').onblur = () => { const v = num($('#rm-amt').value); if (v !== null) $('#rm-amt').value = money(v); };
+    $('#rm-add').onclick = add;
+    if ($('#rm-cancel')) $('#rm-cancel').onclick = () => { REM.i = -1; emitChange('local'); };
   }
+  $$('[data-rmedit]').forEach((b) => { b.onclick = () => { REM.key = selId; REM.i = +b.dataset.rmedit; emitChange('local'); setTimeout(() => { const el = $('#rm-amt'); if (el) el.focus(); }, 350); }; });
+  $$('[data-rmdel]').forEach((b) => { b.onclick = async () => { const gone = typedNow()[+b.dataset.rmdel], list = typedNow().filter((_, i) => i !== +b.dataset.rmdel); REM.i = -1;
+    if (!(await saveRems(list, true))) return;
+    // The collector's SCR / RCD made from this line, still without any OR: removed with it.
+    const sh = gone && gone.reportId && f.reports.find((r) => r.id === gone.reportId && r.madeFrom && r.madeFrom.officerId === o.id);
+    if (sh && !f.ors.some((x) => x.reportId === sh.id) && !(sh.deposits || []).some((d) => !d.fromLO)) await store.save('cer_reports', sh.id, strip(sh), by(refs), { deleted: true, quiet: true });
+    toast('Remittance removed.', 'ok'); }; });
+  if ($('#rm-tpl')) $('#rm-tpl').onclick = async (e) => { e.preventDefault();
+    try { const XLSX = await loadXlsx(); const ws = XLSX.utils.aoa_to_sheet([['Date', 'Collector', 'SCR/RCD No.', 'OR From', 'OR To', 'Amount'], ['01/14/2026', colsAll[0]?.name || 'JUAN DELA CRUZ', '2026-0189', 100001, 100050, 8456]]);
+      ws['!cols'] = [12, 30, 14, 12, 12, 12].map((w) => ({ wch: w })); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Remittances'); XLSX.writeFile(wb, 'Remittances Received Template.xlsx'); } catch (err) { toast(err.message || String(err), 'bad'); } };
+  if ($('#rm-imp')) $('#rm-imp').onclick = async () => {
+    let plan = null;
+    const read = async (file) => {
+      const XLSX = await loadXlsx(); const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+      const hi = rows.findIndex((r) => r.some((x) => /date/i.test(String(x))) && r.some((x) => /amount/i.test(String(x)))); if (hi < 0) return { error: 'No header row with Date and Amount was found. Use the Template.' };
+      const H = rows[hi].map((x) => String(x)), col = (re) => H.findIndex((x) => re.test(x));
+      const M = { date: col(/date/i), col: col(/collector|name/i), no: col(/scr|rcd|report|\bno\b/i), from: col(/from/i), to: col(/\bto\b/i), amt: col(/amount/i) };
+      const add = [], problems = [];
+      rows.slice(hi + 1).forEach((r, i) => { const line = hi + i + 2, g = (k) => (M[k] < 0 ? '' : r[M[k]]);
+        if (!String(g('col')).trim() && !g('amt')) return;
+        const date = excelDate(XLSX, g('date')), c0 = resolveCol(String(g('col'))), amt = typeof g('amt') === 'number' ? r2(g('amt')) : num(g('amt'));
+        if (!date) return problems.push({ line, why: 'Date is missing or not a date.' });
+        if (!c0) return problems.push({ line, why: `Collector "${g('col')}" is not an officer of this office or its barangays.` });
+        if (!(amt > 0)) return problems.push({ line, why: 'Amount is missing.' });
+        const m = lineOf(date, c0, String(g('no') || ''), g('from'), g('to'), amt), d = dupOf(m);
+        if (d) return problems.push({ line, why: `Already in ${c0.name}'s ${d.reportNo}: tick it instead.` });
+        add.push(m); });
+      return { add, problems };
+    };
+    const v = await modal({ title: 'Import Remittances Received', wide: true,
+      body: `<p class="af-note">Excel columns: <b>Date, Collector, SCR/RCD No., OR From, OR To, Amount</b> (see the Template). Remittances already in the collectors' records are skipped (tick them instead).</p><div class="field"><label for="rm-file">Excel file</label><input class="input" type="file" id="rm-file" accept=".xlsx,.xls,.csv"></div><div id="rm-res"></div>`,
+      onOpen: (bg) => { $('#rm-file', bg).onchange = async (e) => { const fl = e.target.files[0]; if (!fl) return; try { plan = await read(fl); } catch (err) { plan = { error: err.message || String(err) }; }
+        $('#rm-res', bg).innerHTML = plan.error ? `<div class="msg bad">${esc(plan.error)}</div>` : `<div class="oi-sum"><b>${plan.add.length} remittance${plan.add.length === 1 ? '' : 's'} to add</b> · ₱ ${money(r2(plan.add.reduce((n, m) => n + m.amount, 0)))}</div>${plan.problems.length ? `<div class="af-probs"><b>Not imported (${plan.problems.length})</b>${plan.problems.map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`; }; },
+      buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error || !plan.add.length) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
+    if (v !== 'go') return;
+    if (await saveRems([...typedNow(), ...plan.add], true)) toast(`${plan.add.length} remittance${plan.add.length === 1 ? '' : 's'} imported.`, 'ok');
+  };
   const depBox = $('#cd-deps');
   // Cashbook only: typing the series fills the amount with the collections in it (the officer's ORs and lines by OR range,
   // and for an LO who collects, the remittances received with their series in it). A typed amount is kept.
