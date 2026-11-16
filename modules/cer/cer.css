@@ -956,3 +956,4 @@ table.af-reg.tr-month{min-width:0}
 .sd-box .sd-ln, .sd-box .sd-crl, .sd-box .sd-acch{grid-template-columns:1fr 150px 26px}
 @media (max-width:900px){ .sd-entry2{grid-template-columns:1fr} }
 #sd-form .sd-w-amt{width:124px} #sd-form .sd-w-tax{width:96px} #sd-form .sd-w-ref{width:110px}
+.cd-edit [data-k="reportNo"]{min-width:120px}

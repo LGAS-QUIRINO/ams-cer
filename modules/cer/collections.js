@@ -150,6 +150,15 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   // The opening of a chain: typed on its first report, else the Audit Setup beginning; a typed one that differs is noted.
   const opening = (r, kind, fund) => { const s = begSetup(kind, fund); if (r && typed(r.begTyped)) return { v: num(r.begTyped), s, typed: true }; return { v: s || 0, s, setup: !!s }; };
   const encoded = {}; f.ors.forEach((x) => { const st = (encoded[x.form] = encoded[x.form] || new Set()); serialsOf(x).forEach((n) => st.add(n)); });
+  // Records saved earlier with lines shown from the other side (fromLO / fromCol): those lines are made again on loading.
+  const clean = (r) => (r ? { ...r, deposits: (r.deposits || []).filter((d) => !d.fromLO), remittances: (r.remittances || []).filter((m) => !m.fromCol) } : r);
+  const noKey = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^(SCR|RCD|SCD)(NO)?/, '');
+  const sameAmt = (a, b) => Math.abs((+a || 0) - (+b || 0)) < 0.005;
+  // The same remittance on both sides: same collector, and the same OR range, report No., or date and amount.
+  const sameRem = (t, m) => t.collectorId === m.collectorId && ((t.from && m.from && String(t.from) === String(m.from)) || (t.reportId && t.reportId === m.colReportId)
+    || (t.reportNo && m.colNo && noKey(t.reportNo) === noKey(m.colNo)) || (t.date === m.date && sameAmt(t.amount, m.amount)));
+  const typedRems = f.reports.filter((r) => r.officerId === o.id).flatMap((r) => (r.remittances || []).filter((m) => !m.fromCol && m.collectorId));
+  const myDeps = f.reports.filter((r) => r.officerId === o.id).flatMap((r) => (r.deposits || []).filter((d) => !d.fromLO));
   // Remittances to this officer (as the Liquidating Officer) typed on the collectors' side, with their OR series (cashbook only):
   // they show in this LO's remittances received, so the LO's book is not typed again.
   const nm = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
@@ -158,11 +167,21 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const rk = (r) => r.kind || (r.pending && String(r.id || '').startsWith('nyr|') ? String(r.id).split('|')[2] : '');
   const colLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.deposits || []).filter((d) => !d.fromLO && d.date && nm(d.ref) && nm(d.ref) === nm(o.name) && ((d.toLO && d.from) || rk(r) === 'SCR'))
     .map((d) => { const rs = Array.isArray(r.ranges) ? r.ranges : [], from = d.from || (rs[0] ? String(rs[0][0]) : ''), to = d.from ? d.to || d.from : rs.length ? String(rs[rs.length - 1][1]) : '';
-      return { date: d.date, collectorId: r.officerId, reportNo: rk(r) === 'SCR' ? `SCR${r.no ? ' No. ' + r.no : ''}` : r.no || '', amount: +d.amount || 0, from, to, series: d.from ? `${d.from}–${d.to || d.from}` : rgTxt(rs), fromCol: true, fund: r.fund || '',
-        ...(lx && d.date < lx ? { beg: true } : {}) }; }));
+      return { key: `${r.id}|${d.date}|${r2(+d.amount || 0)}`, date: d.date, collectorId: r.officerId, colReportId: r.id, colNo: r.no || '', reportNo: rk(r) === 'SCR' ? `SCR${r.no ? ' No. ' + r.no : ''}` : `RCD${r.no ? ' No. ' + r.no : ''}`, amount: +d.amount || 0, from, to, series: d.from ? `${d.from}–${d.to || d.from}` : rgTxt(rs), fromCol: true, fund: r.fund || '',
+        ...(lx && d.date < lx ? { beg: true } : {}) }; }))
+    // Typed by this LO too (same collector and the same OR range, report No. or date and amount): counted once, as typed.
+    .filter((m) => !typedRems.some((t) => sameRem(t, m)));
   // A collector's remittances recorded by a Liquidating Officer (from the LO's cashbook): the collector's remittances to the LO.
-  const loLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.remittances || []).filter((m) => m.collectorId === o.id && !m.beg && m.date)
-    .map((m) => ({ date: m.date, ref: f.officers.find((x) => x.id === r.officerId)?.name || 'Liquidating Officer', amount: +m.amount || 0, toLO: true, fromLO: true, form: m.form || '', from: m.from || '', to: m.to || '', fund: r.fund || '' })));
+  const loLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.remittances || []).filter((m) => m.collectorId === o.id && !m.fromCol && !m.beg && m.date)
+    .map((m) => ({ date: m.date, ref: f.officers.find((x) => x.id === r.officerId)?.name || 'Liquidating Officer', amount: +m.amount || 0, toLO: true, fromLO: true, form: m.form || '', from: m.from || '', to: m.to || '', fund: r.fund || '',
+      reportId: m.reportId || '', reportNo: m.reportNo || '', loReportNo: r.pending ? '' : r.no || '', loReportId: r.pending ? '' : r.id })))
+    // Typed by the collector too (same OR range, or date and amount): counted once, as the collector typed it.
+    .filter((m) => !myDeps.some((d) => (d.from && m.from && String(d.from) === String(m.from)) || (d.date === m.date && sameAmt(d.amount, m.amount))));
+  // The report type of a line typed by the LO: its report's; else the form of the booklet holding its OR From; else SCR for a
+  // barangay (CTC remitted), the first type for an LGU.
+  const loKind = (m) => { const rr = m.reportId && reals.find((r) => r.id === m.reportId); if (rr) return rr.kind || kinds[0];
+    const n = +m.from, b = n ? f.booklets.find((x) => x.officerId === o.id && !x.noSerial && x.from <= n && n <= x.to) : null;
+    if (b) return kindOfForm(lgu, b.form); if (m.form) return kindOfForm(lgu, m.form); return kinds.includes('SCR') ? 'SCR' : kinds[0]; };
   const out = {};
   const markOpening = (fg, op) => {
     if (op.typed && op.s !== null && Math.abs(op.v - op.s) > 0.004) fg.issues.push(`Undeposited per last report typed ₱${money(op.v)} on this report; beginning per Audit Setup ₱${money(op.s)}. Check which one is right.`);
@@ -206,12 +225,13 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
     Object.entries(byF).forEach(([k, rs]) => fig.issues.push(`${NIB}: ${FORM_SHORT[k] || k} ${rangesText(mergeRanges(rs))}. Add the booklet in Accountable Forms (Receive / Starting Inventory) or check the number.`));
     rem.forEach((m) => {
       const cr = m.reportId ? f.reports.find((r) => r.id === m.reportId) : null;
+      if (cr && !quickColl(f, cr)) { fig.issues.push(`Remittance of ${esc(f.officers.find((x) => x.id === m.collectorId)?.name || 'a collector')} (${esc(repName(cr))}, ₱${money(m.amount)}): its collections are not yet encoded.`); return; }
       if (cr) { const cf = quickColl(f, cr); if (Math.abs(cf - (+m.amount || 0)) > 0.004) fig.issues.push(`Remittance of ${esc(f.officers.find((x) => x.id === m.collectorId)?.name || 'a collector')} (${esc(repName(cr))}) is ₱${money(m.amount)}; that report's collections are ₱${money(cf)}.`); }
     });
     // Each deposit / remittance with its own OR series: the ORs encoded in it (by form), those dated before the last cash exam,
     // and the numbers of the officer's booklets not encoded; the amount is checked against them.
     fig.serOf = new Map();
-    (rec?.deposits || []).filter((d) => d.from && !d.fromLO).forEach((d) => {
+    (rec?.deposits || []).filter((d) => d.from).forEach((d) => {
       const a = +d.from, z = +(d.to || d.from); if (!(a > 0) || z < a || z - a > 5000) return;
       const ins = ors.filter((x) => x.status !== 'cancelled' && +x.serial >= a && maxSer(x) <= z);
       const tot = r2(ins.reduce((n, x) => n + rawAmt(x), 0)), ctc = r2(ins.filter((x) => isCtc(x.form)).reduce((n, x) => n + rawAmt(x), 0)), beg = r2(ins.filter((x) => x.beg).reduce((n, x) => n + rawAmt(x), 0));
@@ -219,9 +239,9 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
       const miss = []; for (let n = a; n <= z; n++) if (mineBk.some((b) => b.from <= n && n <= b.to && !(encoded[b.form] && encoded[b.form].has(n)))) miss.push([n, n]);
       const info = { a, z, tot, ctc, af: r2(tot - ctc), beg, miss: mergeRanges(miss), ok: Math.abs(tot - (+d.amount || 0)) <= 0.004 };
       fig.serOf.set(d, info);
-      if (!info.ok && (tot > 0.004 || miss.length)) fig.issues.push(`Series ${a}–${z}: ₱${money(d.amount)} ${d.toLO ? 'remitted' : 'deposited'} on ${fmtDate(d.date)}; ORs encoded in it ₱${money(tot)}${beg ? ` (₱${money(beg)} of them dated before the last cash exam)` : ''}${miss.length ? `; not encoded: ${rangesText(info.miss)}` : ''}.`);
+      if (!info.ok && (tot > 0.004 || miss.length) && !(rec.madeFrom && !list.length)) fig.issues.push(`Series ${a}–${z}: ₱${money(d.amount)} ${d.toLO ? 'remitted' : 'deposited'} on ${fmtDate(d.date)}; ORs encoded in it ₱${money(tot)}${beg ? ` (₱${money(beg)} of them dated before the last cash exam)` : ''}${miss.length ? `; not encoded: ${rangesText(info.miss)}` : ''}.`);
     });
-    if (fig.end < -0.004) fig.issues.push(`Deposits are more than the undeposited balance and the collections.${(rec?.deposits || []).some((d) => !d.from && !d.fromLO) ? " A deposit may have been made before its ORs were issued: type the deposit's OR series so it goes with its ORs." : ''}`);
+    if (fig.end < -0.004 && !(rec?.madeFrom && !list.length)) fig.issues.push(`Deposits are more than the undeposited balance and the collections.${(rec?.deposits || []).some((d) => !d.from && !d.fromLO) ? " A deposit may have been made before its ORs were issued: type the deposit's OR series so it goes with its ORs." : ''}`);
     out[id] = fig;
     return fig;
   };
@@ -243,11 +263,20 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
       if (left > 0.004) { const fid = list[0] ? list[0].id : pid; add[fid] = r2((add[fid] || 0) + left); }
     }
     const start = op.setup ? 0 : op.v, serTxt = begSer(kind);
-    const figs = list.map((r, i) => { const fg = build(r.id, r, ors.filter((x) => x.reportId === r.id), i === 0 ? start : beg, add[r.id] || 0); if (fg.begAdd) fg.begSer = serTxt; if (i === 0) markOpening(fg, op); beg = fg.end; return fg; });
-    const pr0 = prec ? { ...prec, pending: true } : { pending: true, kind, fund, deposits: [], remittances: [] };
-    const myLo = loLines.filter((m) => (m.fund || allFunds[0]) === fund && (m.form ? kindOfForm(lgu, m.form) : kinds[0]) === kind && !(pr0.deposits || []).some((d) => (d.from && m.from && String(d.from) === String(m.from)) || (d.date === m.date && Math.abs((+d.amount || 0) - m.amount) < 0.005)));
+    // Lines from the other side placed in this chain's reports. LO: each collector's remittance in the LO's report that has it
+    // ticked (colIn), else the first dated on or after it unless unticked there (colOut); else not yet in a report. Collector:
+    // each line typed by the LO in its own report (reportId), else not yet in a report.
+    const myColAll = kind === kinds[0] ? colLines.filter((m) => (m.fund || allFunds[0]) === fund) : [];
+    const colTgt = (m) => { const inc = list.find((r) => (r.colIn || []).includes(m.key)); if (inc) return inc.id; const d1 = list.find((r) => String(r.date || '') >= m.date); return d1 && !(d1.colOut || []).includes(m.key) ? d1.id : pid; };
+    const myLoAll = loLines.filter((m) => loKind(m) === kind && ((reals.find((r) => r.id === m.reportId)?.fund) || m.fund || allFunds[0]) === fund);
+    const loTgt = (m) => (list.some((r) => r.id === m.reportId) ? m.reportId : pid);
+    const withSide = (r) => { const c0 = clean(r); const ds = myLoAll.filter((m) => loTgt(m) === r.id), rs = myColAll.filter((m) => colTgt(m) === r.id);
+      return ds.length || rs.length ? { ...c0, deposits: [...c0.deposits, ...ds].sort((a, b) => String(a.date).localeCompare(String(b.date))), remittances: [...c0.remittances, ...rs].sort((a, b) => String(a.date).localeCompare(String(b.date))) } : c0; };
+    const figs = list.map((r, i) => { const fg = build(r.id, withSide(r), ors.filter((x) => x.reportId === r.id), i === 0 ? start : beg, add[r.id] || 0); if (fg.begAdd) fg.begSer = serTxt; if (i === 0) markOpening(fg, op); beg = fg.end; return fg; });
+    const pr0 = prec ? { ...clean(prec), pending: true } : { pending: true, kind, fund, deposits: [], remittances: [] };
+    const myLo = myLoAll.filter((m) => loTgt(m) === pid);
     if (myLo.length) pr0.deposits = [...(pr0.deposits || []), ...myLo].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    const myCol = colLines.filter((m) => (m.fund || allFunds[0]) === fund && kind === kinds[0] && !(pr0.remittances || []).some((x) => x.collectorId === m.collectorId && ((x.from && String(x.from) === String(m.from)) || (x.date === m.date && Math.abs((+x.amount || 0) - m.amount) < 0.005))));
+    const myCol = myColAll.filter((m) => colTgt(m) === pid);
     if (myCol.length) pr0.remittances = [...(pr0.remittances || []), ...myCol].sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const pend = build(pid, pr0, pendOrs, figs.length ? beg : start, add[pid] || 0); if (pend.begAdd) pend.begSer = serTxt;
     pend.pending = true; pend.fund = fund; pend.kind = kind;
@@ -358,23 +387,29 @@ export async function collectionsView(ctx) {
 
   /* ----- 1 · SCD / RCD ----- */
   const ro = (lbl, val, cls = '') => `<div class="field"><span class="cd-lbl">${lbl}</span><div class="input cd-ro ${cls}">${val || '<span class="dim">—</span>'}</div></div>`;
-  const collectors = f.officers.filter((x) => x.id !== o.id && x.lguId === audit.lguId).sort((a, b) => a.name.localeCompare(b.name));
+  const collectors = collectorsOf(f, o, audit, refs);
   const remRow = (m = {}) => `<tr class="cd-rem"><td><input class="input" type="date" data-k="date" value="${esc(m.date || '')}" aria-label="Date received" ${enc ? '' : 'disabled'}></td>
-      <td><select class="input" data-k="collectorId" aria-label="From collector" ${enc ? '' : 'disabled'}><option value="">— Collector —</option>${collectors.map((c) => `<option value="${esc(c.id)}" ${c.id === m.collectorId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></td>
+      <td><select class="input" data-k="collectorId" aria-label="From collector" ${enc ? '' : 'disabled'}><option value="">— Collector —</option>${colOpts(collectors, m.collectorId)}</select></td>
       <td><input class="input mono" data-k="reportNo" list="cd-crlist" value="${esc(m.reportNo || '')}" aria-label="Collector's RCD No." ${enc ? '' : 'disabled'}></td>
       <td><input class="input mono" data-k="from" inputmode="numeric" value="${esc(m.from || '')}" aria-label="OR From" ${enc ? '' : 'disabled'}></td><td><input class="input mono" data-k="to" inputmode="numeric" value="${esc(m.to || '')}" aria-label="OR To" ${enc ? '' : 'disabled'}></td>
       <td><input class="input r" data-k="amount" inputmode="decimal" value="${m.amount !== undefined && m.amount !== '' ? esc(money(m.amount)) : ''}" aria-label="Amount" ${enc ? '' : 'disabled'}>${m.beg ? '<br><span class="pill p-beg">Before the period</span>' : ''}</td>
+      <td>${m.collectorId ? remCheck(f, m) : ''}</td>
       <td>${enc ? '<button class="btn sm cd-x" type="button" aria-label="Remove remittance">✕</button>' : ''}</td></tr>`;
   const crList = f.reports.filter((r) => !r.pending && collectors.some((c) => c.id === r.officerId)).map((r) => r.no);
+  // The collectors' remittances (from their SCR / RCD): those in this report, ticked; those not yet in any of the LO's reports, to tick.
+  const colIn = (cur.rec?.remittances || []).filter((m) => m.fromCol);
+  const colFree = cur.pending ? [] : (fig.chains[curKey]?.pend.rec?.remittances || []).filter((m) => m.fromCol);
+  const colRow = (m, on) => `<tr class="${on || cur.pending ? '' : 'cd-off'}">${cur.pending ? '' : `<td><input type="checkbox" data-colk="${esc(m.key)}" ${on ? 'checked' : ''} ${enc ? '' : 'disabled'} aria-label="In this RCD"></td>`}<td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td></tr>`;
   const remBlock = isLO ? `<div class="cd-block"><h3 class="cer-h3">Remittances received from collectors</h3>
-      <div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">Date Received</th><th scope="col">From Collector</th><th scope="col">Collector's RCD No.</th><th scope="col">OR From</th><th scope="col">OR To</th><th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
+      ${colIn.length || colFree.length ? `<h3 class="cer-h3" style="margin-top:4px">From the collectors' SCR / RCD <small class="dim">${cur.pending ? '(not yet in an RCD of this officer)' : '(ticked by date; untick or tick to match the hard copy of this RCD)'}</small></h3>
+        <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr>${cur.pending ? '' : '<th style="width:30px"></th>'}<th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
+        <tbody>${colIn.map((m) => colRow(m, true)).join('')}${colFree.map((m) => colRow(m, false)).join('')}</tbody></table></div>` : ''}
+      <h3 class="cer-h3" style="margin-top:10px">Typed here <small class="dim">(only for a collector whose SCR / RCD is not in the app yet; it then shows on the collector's side by itself)</small></h3>
+      <div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">Date Received</th><th scope="col">From Collector</th><th scope="col">Their SCR / RCD No.</th><th scope="col">OR From</th><th scope="col">OR To</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Check</th><th scope="col"></th></tr></thead>
         <tbody id="cd-rems">${(cur.rec?.remittances || []).filter((m) => !m.fromCol).map(remRow).join('')}</tbody></table></div>
-      ${(cur.rec?.remittances || []).some((m) => m.fromCol) ? `<h3 class="cer-h3" style="margin-top:10px">From the collectors' records <small class="dim">(remittances naming this officer as receiver, including the SCRs)</small></h3>
-        <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th>Date</th><th>Collector</th><th>Report</th><th>OR Series</th><th class="r">Amount (₱)</th></tr></thead>
-        <tbody>${cur.rec.remittances.filter((m) => m.fromCol).map((m) => `<tr><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(f.officers.find((x) => x.id === m.collectorId)?.name || '')}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
       <datalist id="cd-crlist">${[...new Set(crList)].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
       ${enc ? `<div class="cd-actions"><button class="btn sm" type="button" id="cd-addrem">+ Add Remittance</button><button class="btn primary" type="button" id="cd-saverem">Save Remittances</button></div>` : ''}
-      <p class="af-note">Each collector's remittance, with the date it was received (and the OR range, from the LO's cashbook). When the collector's RCD is in the app, its collections are compared with the amount; by OR range, the collector's cashbook is compared in Verification. A remittance dated before the last cash exam is in the beginning balance.</p></div>` : '';
+      <p class="af-note">Each remittance is encoded once: on the collector's SCR / RCD (it shows here by itself), or typed here (it makes the collector's SCR / RCD and its remittance; only the collections are left to encode there). The check compares the collector's ORs in the range with the amount. A remittance dated before the last cash exam is in the beginning balance.</p></div>` : '';
   // SCD tab: the entry line on top (a new report, or the selected one to edit), a notice of records not yet in a report,
   // then the table of the officer's submitted reports (click a row to select it).
   const realFigs = fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind)).flatMap((k) => fig.chains[k].figs).sort((a, b) => byDate(a.rec, b.rec) || (a.rec.dupe || 0) - (b.rec.dupe || 0));
@@ -386,7 +421,7 @@ export async function collectionsView(ctx) {
   // A report with a series not matching its ORs, or ORs outside the received booklets: flagged in the list (details under its summary).
   const chkPill = (g) => { const t = g.issues.filter((x) => x.startsWith('Series ') || x.startsWith(NIB)); return t.length ? ` <span class="pill p-flag" title="${esc(t.join('\n'))}">⚠ Check</span>` : ''; };
   const sumTable = (pick) => realFigs.length ? `<div class="af-tbl"><table class="af-reg cd-sumtbl"><thead><tr><th scope="col">${KS0}</th><th scope="col">Fund</th><th scope="col">Date</th><th scope="col">Period</th><th scope="col">OR Range</th><th scope="col" class="r">ORs</th><th scope="col" class="r">Collections</th><th scope="col" class="r">${isRem ? 'Remitted' : 'Deposited'}</th><th scope="col" class="r">${isRem ? 'Unremitted' : 'Undeposited'}</th>${pick && enc ? '<th scope="col"></th>' : ''}</tr></thead>
-      <tbody>${realFigs.map((g) => `<tr ${pick ? `data-pick="${esc(g.id)}" tabindex="0"` : ''} class="${g.id === selId ? 'cd-on' : ''}"><td><b>${esc(repName({ ...g.rec, sameDay: false, dupe: 0 }, g.kind))}</b>${chkPill(g)}</td><td>${esc(g.rec.fund)}</td><td>${esc(fmtDate(g.rec.date))}</td>
+      <tbody>${realFigs.map((g) => `<tr ${pick ? `data-pick="${esc(g.id)}" tabindex="0"` : ''} class="${g.id === selId ? 'cd-on' : ''}"><td><b>${esc(repName({ ...g.rec, sameDay: false, dupe: 0 }, g.kind))}</b>${chkPill(g)}${g.rec.madeFrom ? ` <span class="pill p-part" title="Made from the Liquidating Officer's records">From ${esc(g.rec.madeFrom.name || 'the LO')}'s RCD${g.rec.madeFrom.no ? ' ' + esc(g.rec.madeFrom.no) : ''}</span>` : ''}${g.rec.madeFrom && !g.nOrs ? ` <span class="pill p-flag">Remitted ₱${money(g.dep)} · collections not yet encoded</span>` : ''}</td><td>${esc(g.rec.fund)}</td><td>${esc(fmtDate(g.rec.date))}</td>
         <td>${g.from ? esc(`${fmtDate(g.from)}–${fmtDate(g.to)}`) : '<span class="dim">—</span>'}</td><td class="cd-rng">${hasRange(g) ? `<span class="cd-rngt" title="${esc(rangesTyped(g.rec.ranges).replace(/-/g, ' – '))}">${esc(rangesTyped(g.rec.ranges).replace(/-/g, ' – '))}</span> <small class="dim">· ${g.rangeIn} of ${g.rangeN}</small>` : `<span class="cd-rngt">${esc(g.range.replace(/Accountable Form 51 – (Barangay|LGU) /g, 'AF 51 ')) || '—'}</span> <small class="dim">· no range</small>`}</td><td class="r">${g.nOrs}${g.nCancelled ? ` <span class="dim">(${g.nCancelled} cancelled)</span>` : ''}</td>
         <td class="r">${money(g.coll)}</td><td class="r">${money(g.dep)}</td><td class="r">${money(g.end)}</td>
 ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.id)}">Edit</button></td>` : ''}</tr>`).join('')}</tbody>
@@ -506,9 +541,9 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       : `<div class="empty"><b>No ${remish ? 'remittance' : 'deposit'} encoded yet.</b></div>`}</div>`;
   const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : toLO ? 'Date Remitted to LO' : 'Deposit Date'}</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th>${remish ? '' : '<th scope="col">No.</th>'}${cbook ? '<th scope="col">OR From</th><th scope="col">OR To</th>' : ''}<th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
       <tbody id="cd-deps" data-next="${lastTo ? lastTo + 1 : isFinite(firstOr) ? firstOr : ''}">${(cur.rec?.deposits || []).filter((d) => !d.fromLO).map(depRow).join('')}</tbody></table></div>
-    ${(cur.rec?.deposits || []).some((d) => d.fromLO) ? `<div class="cd-block"><h3 class="cer-h3">Received by the Liquidating Officer <small class="dim">(from the LO's cashbook)</small></h3>
+    ${(cur.rec?.deposits || []).some((d) => d.fromLO) ? `<div class="cd-block"><h3 class="cer-h3">Remitted to the Liquidating Officer <small class="dim">(recorded in the LO's RCD; not typed again here)</small></h3>
       <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th>Date</th><th>Liquidating Officer</th><th>OR Range</th><th class="r">Amount (₱)</th></tr></thead>
-      <tbody>${cur.rec.deposits.filter((d) => d.fromLO).map((d) => `<tr><td>${esc(fmtDate(d.date))}</td><td>${esc(d.ref)}</td><td class="mono">${d.from ? `${esc(d.from)}–${esc(d.to || d.from)}` : ''}</td><td class="r">${money(d.amount)}</td></tr>`).join('')}</tbody></table></div>
+      <tbody>${cur.rec.deposits.filter((d) => d.fromLO).map((d) => `<tr><td>${esc(fmtDate(d.date))}</td><td>${esc(d.ref)}${d.loReportNo ? ` <span class="pill">her RCD ${esc(d.loReportNo)}</span>` : ''}</td><td class="mono">${d.from ? `${esc(d.from)}–${esc(d.to || d.from)}` : ''}</td><td class="r">${money(d.amount)}</td></tr>`).join('')}</tbody></table></div>
       <p class="af-note">Entered in the Liquidating Officer's Collections (remittances received). They count as this officer's remittances; not typed again here.</p></div>` : ''}
     <datalist id="cd-reflist">${(remish ? loNames(refs, f, lgu) : depRefs(f, audit.lguId)).map((v) => `<option value="${esc(v)}">`).join('')}</datalist>
     ${enc ? `<div class="cd-actions"><button class="btn sm" type="button" id="cd-adddep">+ Add ${DEP}</button><button class="btn primary" type="button" id="cd-savedep">Save ${DEPS}</button></div>` : ''}
@@ -585,11 +620,25 @@ function wireAll(c) {
     const id = cur.pending ? cur.id : selId;
     const base = cur.rec && cur.rec.lguId ? strip(cur.rec) : { lguId: audit.lguId, officerId: o.id, kind: K, fund: curFund, pending: true, deposits: [], remittances: [] };
     delete base.pending; if (cur.pending) base.pending = true;
+    // Never store the lines shown from the other side (they are made again on loading).
+    base.deposits = (base.deposits || []).filter((d) => !d.fromLO); base.remittances = (base.remittances || []).filter((m) => !m.fromCol);
     await store.save('cer_reports', id, { ...base, ...patch }, by(refs));
   };
   /* table editors (remittances, deposits) */
   const tbodyOf = (tr) => ({ querySelectorAll: () => [tr] });
   const wireRows = (box) => $$('.cd-x', box).forEach((b) => { b.onclick = () => b.closest('tr').remove(); });
+  // Ticking a collector's remittance in (or out of) this RCD of the LO: kept on the LO's reports (colIn / colOut).
+  $$('[data-colk]').forEach((cb) => { cb.onchange = async () => {
+    const k = cb.dataset.colk, ch = c.fig.chains[c.curKey]; if (!ch) return;
+    for (const g of ch.figs) {
+      const r = f.reports.find((y) => y.id === g.id); if (!r) continue;
+      let inn = (r.colIn || []).filter((x) => x !== k), outt = (r.colOut || []).filter((x) => x !== k);
+      if (g.id === selId) { if (cb.checked) inn = [...inn, k]; else outt = [...outt, k]; }
+      if (inn.length === (r.colIn || []).length && outt.length === (r.colOut || []).length && g.id !== selId) continue;
+      await store.save('cer_reports', r.id, { ...strip(r), colIn: inn, colOut: outt }, by(refs), { quiet: true });
+    }
+    emitChange('local'); toast(cb.checked ? 'Put in this RCD.' : 'Taken out of this RCD.', 'ok');
+  }; });
   const remBox = $('#cd-rems');
   if (remBox) {
     wireRows(remBox);
@@ -609,6 +658,27 @@ function wireAll(c) {
         list.push({ date: g('date'), collectorId: g('collectorId'), reportNo: g('reportNo'), reportId: cr ? cr.id : '', amount: amt, ...(fr ? { from: fr, to } : {}), ...(c.exam.lastExamDate && g('date') < c.exam.lastExamDate ? { beg: true } : {}) });
       }
       list.sort((a, b) => a.date.localeCompare(b.date));
+      // Not typed twice: a remittance already in the collector's SCR / RCD (shown above) is not saved again.
+      const shown = Object.values(c.fig.chains).flatMap((ch) => [...ch.figs, ch.pend]).flatMap((g) => (g.rec?.remittances || []).filter((m) => m.fromCol));
+      const was = (cur.rec?.remittances || []).filter((m) => !m.fromCol);
+      for (const m of list) {
+        if (was.some((w) => w.collectorId === m.collectorId && w.date === m.date && Math.abs(w.amount - m.amount) < 0.005)) continue;
+        const dup = shown.find((x) => x.collectorId === m.collectorId && ((x.from && m.from && String(x.from) === String(m.from)) || (m.reportNo && x.colNo && m.reportNo.replace(/[^0-9A-Za-z]/g, '').toUpperCase() === String(x.colNo).replace(/[^0-9A-Za-z]/g, '').toUpperCase()) || (x.date === m.date && Math.abs(x.amount - m.amount) < 0.005)));
+        if (dup) return bad(`Already in ${f.officers.find((y) => y.id === m.collectorId)?.name || 'the collector'}'s ${dup.reportNo} (${fmtDate(dup.date)}, ₱${money(dup.amount)}). No need to type it here: it is in the list above.`);
+      }
+      // A remittance whose collector's SCR / RCD is not in the app yet makes it (No., date, OR range); only its collections are left.
+      for (const m of list) {
+        if (m.reportId || !m.reportNo) continue;
+        const col = f.officers.find((y) => y.id === m.collectorId), cl = col && refs.lgu[col.lguId]; if (!col) continue;
+        const n = +m.from, bk = n ? f.booklets.find((x) => x.officerId === col.id && !x.noSerial && x.from <= n && n <= x.to) : null;
+        const ckind = bk ? kindOfForm(cl, bk.form) : kindsOf(cl).includes('SCR') ? 'SCR' : kindsOf(cl)[0];
+        const hit = f.reports.find((r) => !r.pending && r.officerId === col.id && (r.kind || ckind) === ckind && String(r.no).trim().toUpperCase() === m.reportNo.toUpperCase());
+        if (hit) { m.reportId = hit.id; continue; }
+        const nid = newId('cerr');
+        await store.save('cer_reports', nid, { lguId: col.lguId, officerId: col.id, kind: ckind, no: m.reportNo, date: m.date, fund: cl && isBrgy(cl) ? 'General Fund' : curFund, hardTotal: null,
+          ranges: m.from ? [[+m.from, +(m.to || m.from)]] : [], deposits: [], remittances: [], begTyped: 0, madeFrom: { officerId: o.id, name: o.name, no: cur.pending ? '' : cur.rec.no || '', reportId: cur.pending ? '' : cur.id } }, by(refs), { quiet: true });
+        m.reportId = nid;
+      }
       await pendRec({ remittances: list }); toast('Remittances saved.', 'ok');
     };
   }
@@ -646,6 +716,14 @@ function wireAll(c) {
         list.push({ date: g('date'), ref: g('ref'), ...(g('no') ? { no: g('no') } : {}), amount: amt, ...(c.toLO ? { toLO: true } : {}), ...(sf ? { from: sf, to: stt } : {}) });
       }
       list.sort((a, b) => a.date.localeCompare(b.date));
+      // Not typed twice: a remittance the Liquidating Officer already recorded (shown from the LO's RCD) is not saved again.
+      const fromLo = Object.values(c.fig.chains).flatMap((ch) => [...ch.figs, ch.pend]).flatMap((g) => (g.rec?.deposits || []).filter((d) => d.fromLO));
+      const was = (cur.rec?.deposits || []).filter((d) => !d.fromLO);
+      for (const d of list) {
+        if (was.some((w) => w.date === d.date && Math.abs(w.amount - d.amount) < 0.005)) continue;
+        const dup = fromLo.find((x) => (x.from && d.from && String(x.from) === String(d.from)) || (x.date === d.date && Math.abs(x.amount - d.amount) < 0.005));
+        if (dup) return bad(`Already recorded in ${dup.ref}'s RCD${dup.loReportNo ? ' No. ' + dup.loReportNo : ''} (${fmtDate(dup.date)}, ₱${money(dup.amount)}). No need to type it here.`);
+      }
       await pendRec({ deposits: list }); toast(K === 'SCR' || c.toLO ? 'Remittances saved.' : 'Deposits saved.', 'ok');
     };
   }
@@ -813,13 +891,32 @@ function partRowHtml(i) {
     <button class="btn sm cd-x" type="button" aria-label="Remove particular">✕</button></div>`;
 }
 function remRowHtml(c) {
-  const collectors = c.f.officers.filter((x) => x.id !== c.o.id && x.lguId === c.audit.lguId).sort((a, b) => a.name.localeCompare(b.name));
+  const collectors = collectorsOf(c.f, c.o, c.audit, c.refs);
   return `<tr class="cd-rem"><td><input class="input" type="date" data-k="date" aria-label="Date received"></td>
-    <td><select class="input" data-k="collectorId" aria-label="From collector"><option value="">— Collector —</option>${collectors.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</select></td>
+    <td><select class="input" data-k="collectorId" aria-label="From collector"><option value="">— Collector —</option>${colOpts(collectors, '')}</select></td>
     <td><input class="input mono" data-k="reportNo" list="cd-crlist" aria-label="Collector's RCD No."></td>
     <td><input class="input mono" data-k="from" inputmode="numeric" aria-label="OR From"></td><td><input class="input mono" data-k="to" inputmode="numeric" aria-label="OR To"></td>
-    <td><input class="input r" data-k="amount" inputmode="decimal" aria-label="Amount"></td>
+    <td><input class="input r" data-k="amount" inputmode="decimal" aria-label="Amount"></td><td></td>
     <td><button class="btn sm cd-x" type="button" aria-label="Remove remittance">✕</button></td></tr>`;
+}
+// The collectors an LO receives from: the officers of the office and of its barangays (with the barangay named).
+function collectorsOf(f, o, audit, refs) {
+  return f.officers.filter((x) => x.id !== o.id && (x.lguId === audit.lguId || refs.lgu[x.lguId]?.data.parentId === audit.lguId))
+    .map((x) => ({ ...x, office: x.lguId === audit.lguId ? '' : (refs.lgu[x.lguId]?.data.name || '') }))
+    .sort((a, b) => (a.office ? 1 : 0) - (b.office ? 1 : 0) || a.office.localeCompare(b.office) || a.name.localeCompare(b.name));
+}
+const colOpts = (cs, sel) => { const own = cs.filter((x) => !x.office), br = cs.filter((x) => x.office);
+  const op = (x) => `<option value="${esc(x.id)}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}${x.designation ? ' · ' + esc(x.designation) : ''}${x.office ? ' · ' + esc(x.office) : ''}</option>`;
+  return `${own.length ? `<optgroup label="This office">${own.map(op).join('')}</optgroup>` : ''}${br.length ? `<optgroup label="Barangays">${br.map(op).join('')}</optgroup>` : ''}`; };
+const colName = (f, refs, id) => { const x = f.officers.find((y) => y.id === id); if (!x) return ''; const l = refs.lgu[x.lguId]; return `${x.name}${l && l.data.kind === 'barangay' ? ' · ' + l.data.name : ''}`; };
+// A remittance against the collector's ORs in its range: agree, not found, more, or not yet encoded.
+function remCheck(f, m) {
+  if (!m.from) return '<span class="dim">no range</span>';
+  const a = +m.from, z = +(m.to || m.from);
+  const xs = f.ors.filter((x) => x.officerId === m.collectorId && x.status !== 'cancelled' && +x.serial >= a && maxSer(x) <= z);
+  if (!xs.length) return '<span class="pill p-flag">Collections not yet encoded</span>';
+  const t = r2(xs.reduce((n, x) => n + rawAmt(x), 0)), d = r2((+m.amount || 0) - t);
+  return Math.abs(d) < 0.005 ? '<span class="pill p-done">ORs agree</span>' : `<span class="pill p-flag" title="ORs encoded in ${a}–${z}: ₱${money(t)}">₱${money(Math.abs(d))} ${d > 0 ? 'not found in the ORs' : 'more in the ORs'}</span>`;
 }
 function depRowHtml(rem, toLO = false, series = false) {
   return `<tr class="cd-dep"><td><input class="input" type="date" data-k="date" aria-label="${toLO ? 'Date remitted to LO' : rem ? 'Date received by MTO' : 'Deposit date'}"></td>
@@ -917,7 +1014,7 @@ const byDate = (a, b) => String(a.date).localeCompare(String(b.date));
 const rangeHome = (fig, x) => { for (const ch of Object.values(fig.chains)) { const g = ch.figs.find((y) => hasRange(y) && inRanges(y.rec.ranges, +x.serial)); if (g) return { ch, id: g.id }; } return null; };
 const pendOrs = (fig) => Object.values(fig.chains).flatMap((ch) => ch.pend.ors);
 const misplaced = (fig) => pendOrs(fig).some((x) => rangeHome(fig, x)) || Object.values(fig.chains).some((ch) => ch.figs.length && (ch.pend.ors.some((x) => placeIn(ch, x.date, x.serial)) || strays(ch).length
-  || (ch.pend.rec?.deposits || []).some((d) => depHome(ch, d)) || (ch.pend.rec?.remittances || []).some((m) => placeIn(ch, m.date))));
+  || (ch.pend.rec?.deposits || []).some((d) => !d.fromLO && depHome(ch, d)) || (ch.pend.rec?.remittances || []).some((m) => !m.fromCol && placeIn(ch, m.date))));
 // Moves the ORs, deposits and remittances not yet in a report into the report that covers their date.
 async function sweepChains(f, fig, refs) {
   // First by OR Range, across funds and report types (e.g. ORs imported while another fund was selected).
@@ -928,7 +1025,9 @@ async function sweepChains(f, fig, refs) {
     const p = ch.pend;
     for (const x of strays(ch)) await store.save('cer_ors', x.id, { ...strip(x), reportId: placeIn(ch, x.date, x.serial) }, by(refs), { quiet: true });
     for (const x of p.ors.filter((y) => !moved.has(y.id))) { const to = placeIn(ch, x.date, x.serial); if (to) await store.save('cer_ors', x.id, { ...strip(x), reportId: to, fund: ch.fund }, by(refs), { quiet: true }); }
-    const prec = p.rec && p.rec.lguId ? p.rec : null;
+    // The stored record only (not the lines shown from the other side).
+    const prec0 = f.reports.find((r) => r.id === p.id) || null;
+    const prec = prec0 && prec0.lguId ? { ...prec0, deposits: (prec0.deposits || []).filter((d) => !d.fromLO), remittances: (prec0.remittances || []).filter((m) => !m.fromCol) } : null;
     if (!prec) continue;
     const moves = {};
     (prec.deposits || []).forEach((d) => { const t = depHome(ch, d); if (t) (moves[t] = moves[t] || { d: [], r: [] }).d.push(d); });
@@ -936,7 +1035,7 @@ async function sweepChains(f, fig, refs) {
     if (!Object.keys(moves).length) continue;
     for (const [t, v] of Object.entries(moves)) {
       const r = f.reports.find((y) => y.id === t);
-      await store.save('cer_reports', t, { ...strip(r), deposits: [...(r.deposits || []), ...v.d].sort(byDate), remittances: [...(r.remittances || []), ...v.r].sort(byDate) }, by(refs), { quiet: true });
+      await store.save('cer_reports', t, { ...strip(r), deposits: [...(r.deposits || []).filter((d) => !d.fromLO), ...v.d].sort(byDate), remittances: [...(r.remittances || []).filter((m) => !m.fromCol), ...v.r].sort(byDate) }, by(refs), { quiet: true });
     }
     await store.save('cer_reports', p.id, { ...strip(prec), pending: true, deposits: (prec.deposits || []).filter((d) => !depHome(ch, d)), remittances: (prec.remittances || []).filter((m) => !placeIn(ch, m.date)) }, by(refs), { quiet: true });
   }
@@ -946,7 +1045,7 @@ async function createReport(c, K, out) {
   const { refs, f, audit, o, fig } = c;
   const ch = fig.chains[`${K}|${out.fund}`];
   const p = ch.pend, prec = p.rec && p.rec.lguId ? p.rec : null;
-  const deps = (prec?.deposits || []), rems = (prec?.remittances || []);
+  const deps = (prec?.deposits || []).filter((d) => !d.fromLO), rems = (prec?.remittances || []).filter((m) => !m.fromCol);   // stored lines only
   const id = newId('cerr');
   const first = !ch.figs.length;
   const goes = (d) => depWith(ch, d, (x) => inRanges(out.ranges, x.serial), out.date);
@@ -1059,7 +1158,7 @@ async function reportModal(c, K, g) {
   const read = (bg) => {
     const no = $('#rp-no', bg).value.trim(), date = $('#rp-date', bg).value, fund = $('#rp-fund', bg).value, hard = $('#rp-hard', bg).value.trim();
     if (!date) return bad(`Enter the ${K} date.`) || null;
-    if (no && f.reports.some((r) => !r.pending && r.id !== (g ? g.id : '') && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase())) return bad(`${K} No. ${no} is already encoded for this officer.`) || null;
+    { const hit = f.reports.find((r) => !r.pending && r.id !== (g ? g.id : '') && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return bad(hit.madeFrom ? `${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.` : `${K} No. ${no} is already encoded for this officer.`); }
     const rr = readRanges($('#rp-range', bg).value);
     if (rr.error) return bad(rr.error) || null;
     if (!rr.ranges.length) return bad(`Type the OR Range of the ${K} (e.g. 3764059-3764100; 3765951-3765971).`) || null;
@@ -1136,7 +1235,7 @@ async function newReportModal(c, K) {
     buttons: [{ label: 'Cancel', value: null }, { label: `Save ${K}`, cls: 'primary', value: 'ok', check: (bg) => {
       const no = $('#nr-no', bg).value.trim(), date = $('#nr-date', bg).value, fund = $('#nr-fund', bg).value, hard = $('#nr-hard', bg).value.trim();
       if (!date) return bad(`Enter the ${K} date.`);
-      if (no && f.reports.some((r) => !r.pending && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase())) return bad(`${K} No. ${no} is already encoded for this officer.`);
+      { const hit = f.reports.find((r) => !r.pending && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return bad(hit.madeFrom ? `${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.` : `${K} No. ${no} is already encoded for this officer.`); }
       out = { no, date, fund, hardTotal: hard ? num(hard) : null, received: $('#nr-recv', bg).value, dupe: no ? 0 : dupeOf(f, o.id, K, date, fund) }; return true;
     } }] });
   if (!out) return;
@@ -1147,7 +1246,7 @@ async function newReportModal(c, K) {
   }
   const p = chainOf(out.fund).pend;
   const prec = p.rec && p.rec.lguId ? p.rec : null;
-  const deps = (prec?.deposits || []), rems = (prec?.remittances || []);
+  const deps = (prec?.deposits || []).filter((d) => !d.fromLO), rems = (prec?.remittances || []).filter((m) => !m.fromCol);   // stored lines only
   const id = newId('cerr');
   const first = !chainOf(out.fund).figs.length;
   const goes = (d) => depWith(chainOf(out.fund), d, (x) => x.date <= out.date, out.date);
