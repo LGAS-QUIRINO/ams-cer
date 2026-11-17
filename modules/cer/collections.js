@@ -92,7 +92,7 @@ const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, sameDay, ...rest } = x; return rest; };   // sameDay is worked out on loading, never saved
 const bad = (m) => { toast(m, 'bad'); return false; };
 const DEPSHOW = { v: 'all' };
-const REM = { key: '', i: -1, date: '' };   // the typed remittance being edited (by report) and the last date typed
+const REM = { key: '', i: -1, date: '', mode: 'type' };   // the typed remittance being edited (by report) and the last date typed
 const KSEL = {};   // the report type shown per officer (SCD / RCD or SCR), remembered while the app is open
 const KIND_PICK = { SCD: 'SCD – Collections and Deposits', RCD: 'RCD – Collections and Deposits', SCR: 'SCR – Collections and Remittances' };   // deposits register: all of the officer, or the selected report
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
@@ -396,11 +396,9 @@ export async function collectionsView(ctx) {
       <td><input class="input r" data-k="amount" inputmode="decimal" value="${m.amount !== undefined && m.amount !== '' ? esc(money(m.amount)) : ''}" aria-label="Amount" ${enc ? '' : 'disabled'}>${m.beg ? '<br><span class="pill p-beg">Before the period</span>' : ''}</td>
       <td>${m.collectorId ? remCheck(f, m) : ''}</td>
       <td>${enc ? '<button class="btn sm cd-x" type="button" aria-label="Remove remittance">✕</button>' : ''}</td></tr>`;
-  const crList = f.reports.filter((r) => !r.pending && collectors.some((c) => c.id === r.officerId)).map((r) => r.no);
   // The collectors' remittances (from their SCR / RCD): those in this report, ticked; those not yet in any of the LO's reports, to tick.
   const colIn = (cur.rec?.remittances || []).filter((m) => m.fromCol);
   const colFree = cur.pending ? [] : (fig.chains[curKey]?.pend.rec?.remittances || []).filter((m) => m.fromCol);
-  const colRow = (m, on) => `<tr class="${on || cur.pending ? '' : 'cd-off'}">${cur.pending ? '' : `<td><input type="checkbox" data-colk="${esc(m.key)}" ${on ? 'checked' : ''} ${enc ? '' : 'disabled'} aria-label="In this RCD"></td>`}<td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td></tr>`;
   // Typed remittances (a collector whose SCR / RCD is not in the app): one entry line, then the list (Edit / ✕); saved on Add.
   const typed = (cur.rec?.remittances || []).filter((m) => !m.fromCol);
   const allIn = (cur.rec?.remittances || []).filter((m) => !m.beg);
@@ -412,28 +410,43 @@ export async function collectionsView(ctx) {
   // Edit opens the whole report (all its series) in the entry line.
   const edGrp = REM.key === selId && REM.i >= 0 ? remGroups(typed).find((g) => g.some((x) => x.i === REM.i)) || null : null;
   const ed = edGrp ? edGrp[0].m : null;
-  const remBlock = isLO ? `<div class="cd-block"><div class="cd-orhead"><h3 class="cer-h3">Remittances from the collectors <small class="dim">(the collections of ${cur.pending ? 'this Liquidating Officer' : `this ${K}`})</small></h3>${progress}</div>
-      ${colIn.length || colFree.length ? `<h3 class="cer-h3" style="margin-top:4px">In the app: the collectors' SCR / RCD <small class="dim">${cur.pending ? '(tick them in her RCD)' : '(tick those listed on the hard copy of this RCD)'}</small></h3>
-        <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr>${cur.pending ? '' : '<th style="width:30px"></th>'}<th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
-        <tbody>${colIn.map((m) => colRow(m, true)).join('')}${colFree.map((m) => colRow(m, false)).join('')}</tbody></table></div>` : ''}
-      <h3 class="cer-h3" style="margin-top:12px">Not in the app yet: type it <small class="dim">(it makes the collector's SCR / RCD and its remittance; only the collections are left to encode there)</small></h3>
-      ${enc ? `<div class="rm-line" id="rm-form">
+  // The LO's Collections tab: choose Type (a collector's report not in the app) or Tick (one already in the app), then
+  // one list of this RCD: typed reports with their series and ticked ones (In the app), in report-number order.
+  const mode = cur.pending ? 'type' : REM.mode;
+  const tickTbl = !colFree.length ? '<p class="dim" style="margin:6px 0">No collector\'s SCR / RCD in the app is waiting to be put in an RCD.</p>'
+    : `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th style="width:30px"></th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
+      <tbody>${colFree.map((m) => `<tr><td><input type="checkbox" data-colk="${esc(m.key)}" ${enc ? '' : 'disabled'} aria-label="Put in this RCD"></td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td></tr>`).join('')}</tbody></table></div>
+      <p class="dim" style="margin:4px 0 0;font-size:12.5px">Tick those listed on the hard copy of this RCD: they move to the list below.</p>`;
+  const typeLine = !enc ? '' : `<div class="rm-line" id="rm-form">
         <div class="field"><label for="rm-date">Date received</label><input class="input" type="date" id="rm-date" value="${esc(ed ? ed.date : REM.date || '')}"></div>
         <div class="field rm-col"><label for="rm-col">Collector</label><input class="input" id="rm-col" list="rm-cols" autocomplete="off" placeholder="Type part of the name" value="${esc(ed ? colLabel(collectors.find((x) => x.id === ed.collectorId) || { name: '' }) : '')}">
           <datalist id="rm-cols">${collectors.map((x) => `<option value="${esc(colLabel(x))}">`).join('')}</datalist></div>
-        <div class="field"><label for="rm-no">Their SCR / RCD No.</label><input class="input mono" id="rm-no" list="cd-crlist" value="${esc(ed ? ed.reportNo || '' : '')}"></div>
+        <div class="field"><label for="rm-no">Their SCR / RCD No.</label><input class="input mono" id="rm-no" autocomplete="off" value="${esc(ed ? ed.reportNo || '' : '')}"></div>
         <div class="rm-sers"><div class="rm-shead"><label>Form</label><label>OR From</label><label>OR To</label><label class="r" title="Cash tickets: number of pieces">Pcs</label><label class="r">Amount</label><span></span></div>
           <div id="rm-srows">${(edGrp ? edGrp.map((x) => x.m) : [null]).map(serRow).join('')}</div>
           <div class="rm-sfoot"><a href="#" class="cd-link" id="rm-addser">+ Series</a><span class="dim">same report</span><span id="rm-tot"></span></div></div>
         <div class="field rm-addbox"><button class="btn primary" type="button" id="rm-add">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn sm" type="button" id="rm-cancel">Cancel</button>' : ''}</div>
-      </div><p class="af-note" style="margin-top:4px">Collector: type part of the name; the list has the officers of this office and its barangays. A name not on the list: Add asks for the office and adds the collector. A barangay treasurer is taken as an SCR, an LGU collector as an RCD. Several OR series in one report: + Series. Enter moves to the next box (on the last Amount, it opens another series); Enter on an empty series, or Add, saves the report.</p>` : ''}
-      ${typed.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg rm-tbl"><thead><tr><th>#</th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check</th>${enc ? '<th></th>' : ''}</tr></thead>
-        <tbody>${remGroups(typed).map((grp, gi) => grp.map(({ m, i }, k) => `<tr class="${edGrp && edGrp.some((x) => x.i === i) ? 'cd-on' : ''} ${k ? 'rm-ser' : 'rm-first'}"><td>${k ? '' : gi + 1}</td><td>${!k || m.date !== grp[0].m.date ? esc(fmtDate(m.date)) : ''}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${k ? '' : esc(colName(f, refs, m.collectorId))}</td><td>${k ? '' : esc(m.reportNo || '')}</td><td class="mono">${esc(serText(m))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td class="rm-act">${k ? '' : `<button class="btn sm" type="button" data-rmedit="${i}">Edit</button> `}<button class="btn sm" type="button" data-rmdel="${i}" aria-label="Remove${grp.length > 1 ? ' this series' : ''}" title="${grp.length > 1 ? 'Remove this series' : 'Remove'}">✕</button></td>` : ''}</tr>`).join('')
-          + (grp.length > 1 ? `<tr class="rm-sub"><td></td><td></td><td></td><td></td><td><b>${grp.length} series</b></td><td class="r"><b>${money(r2(grp.reduce((n, x) => n + (+x.m.amount || 0), 0)))}</b></td><td></td>${enc ? '<td></td>' : ''}</tr>` : '')).join('')}</tbody>
-        <tfoot><tr class="cd-foot"><td colspan="5">Total remittances received${cur.pending ? '' : ' in this RCD'}</td><td class="r">${money(inTot)}</td><td colspan="${enc ? 2 : 1}"></td></tr></tfoot></table></div>` : (allIn.length ? `<p class="dim" style="margin:6px 0">Total remittances received${cur.pending ? '' : ' in this RCD'}: <b>₱ ${money(inTot)}</b></p>` : '')}
-      <datalist id="cd-crlist">${[...new Set(crList)].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
-      ${enc ? '<div class="cd-actions" style="justify-content:flex-start"><button class="btn sm" type="button" id="rm-imp">Import from Excel</button><a href="#" class="cd-link" id="rm-tpl">Template</a><span class="dim" style="font-size:12.5px">many lines at once: Date · Collector · SCR/RCD No. · OR From · OR To · Amount</span></div>' : ''}
-      <p class="af-note">Each remittance is encoded once: ticked when the collector's SCR / RCD is in the app, typed when it is not. The check compares the collector's ORs in the range with the amount. A remittance dated before the last cash exam is in the beginning balance.</p></div>` : '';
+      </div><div id="rm-nomsg" class="rm-nomsg"></div>
+      <div class="cd-actions" style="justify-content:flex-start;margin-top:6px"><button class="btn sm" type="button" id="rm-imp">Import from Excel</button><a href="#" class="cd-link" id="rm-tpl">Template</a></div>`;
+  // One list: typed groups and ticked reports, by report number.
+  const nat = (m) => String(m.reportNo || '').replace(/^[^0-9]*/, '').replace(/\d+/g, (d) => d.padStart(12, '0')).toUpperCase();   // "SCR No. 2026-0189" as 2026-0189
+  const items = [...remGroups(typed).map((grp) => ({ grp })), ...colIn.map((m) => ({ tick: m }))]
+    .sort((a, b) => { const x = a.grp ? a.grp[0].m : a.tick, y = b.grp ? b.grp[0].m : b.tick; return (x.reportNo ? 0 : 1) - (y.reportNo ? 0 : 1) || nat(x).localeCompare(nat(y)) || String(x.date).localeCompare(String(y.date)); });
+  const listRows = items.map((it, gi) => {
+    if (it.tick) { const m = it.tick;
+      return `<tr class="rm-first"><td>${gi + 1}</td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')} <span class="pill p-part">In the app</span></td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td class="rm-act"><button class="btn sm" type="button" data-colrm="${esc(m.key)}" title="Take it out of this RCD (the collector's report stays)">Remove</button></td>` : ''}</tr>`; }
+    const grp = it.grp;
+    return grp.map(({ m, i }, k) => `<tr class="${edGrp && edGrp.some((x) => x.i === i) ? 'cd-on' : ''} ${k ? 'rm-ser' : 'rm-first'}"><td>${k ? '' : gi + 1}</td><td>${!k || m.date !== grp[0].m.date ? esc(fmtDate(m.date)) : ''}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${k ? '' : esc(colName(f, refs, m.collectorId))}</td><td>${k ? '' : esc(m.reportNo || '')}</td><td class="mono">${esc(serText(m))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td class="rm-act">${k ? '' : `<button class="btn sm" type="button" data-rmedit="${i}">Edit</button> `}<button class="btn sm" type="button" data-rmdel="${i}" aria-label="Remove${grp.length > 1 ? ' this series' : ''}" title="${grp.length > 1 ? 'Remove this series' : 'Remove'}">✕</button></td>` : ''}</tr>`).join('')
+      + (grp.length > 1 ? `<tr class="rm-sub"><td></td><td></td><td></td><td></td><td><b>${grp.length} series</b></td><td class="r"><b>${money(r2(grp.reduce((n, x) => n + (+x.m.amount || 0), 0)))}</b></td><td></td>${enc ? '<td></td>' : ''}</tr>` : '');
+  }).join('');
+  const remBlock = isLO ? `<div class="cd-block"><div class="cd-orhead"><h3 class="cer-h3">Remittances from the collectors <small class="dim">(the collections of ${cur.pending ? 'this Liquidating Officer' : `this ${K}`})</small></h3>${progress}</div>
+      ${enc || colFree.length ? `<div class="seg rm-mode" role="group" aria-label="How to enter"><a href="#" data-rmmode="type" class="${mode === 'type' ? 'on' : ''}">Type a remittance <small>(not in the app)</small></a><a href="#" data-rmmode="tick" class="${mode === 'tick' ? 'on' : ''}">Tick from the app <small>· ${colFree.length} waiting</small></a></div>` : ''}
+      <div class="rm-pane">${mode === 'tick' ? (cur.pending ? '<p class="dim">Add or choose the RCD first (tab 1), then tick its remittances here.</p>' : tickTbl) : typeLine}</div>
+      ${items.length ? `<h3 class="cer-h3" style="margin-top:14px">${cur.pending ? 'Remittances not yet in an RCD' : `In this ${K}`} <small class="dim">(${items.length} report${items.length === 1 ? '' : 's'})</small></h3>
+        <div class="af-tbl cd-tblbox"><table class="af-reg rm-tbl"><thead><tr><th>#</th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check</th>${enc ? '<th></th>' : ''}</tr></thead>
+        <tbody>${listRows}</tbody>
+        <tfoot><tr class="cd-foot"><td colspan="5">Total remittances received${cur.pending ? '' : ' in this RCD'}</td><td class="r">${money(inTot)}</td><td colspan="${enc ? 2 : 1}"></td></tr></tfoot></table></div>` : ''}
+      <p class="af-note">Each remittance is encoded once: typed when the collector's SCR / RCD is not in the app, ticked when it is. The check compares the collector's ORs in the range with the amount. A remittance dated before the last cash exam is in the beginning balance.</p></div>` : '';
   // SCD tab: the entry line on top (a new report, or the selected one to edit), a notice of records not yet in a report,
   // then the table of the officer's submitted reports (click a row to select it).
   const realFigs = fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind)).flatMap((k) => fig.chains[k].figs).sort((a, b) => byDate(a.rec, b.rec) || (a.rec.dupe || 0) - (b.rec.dupe || 0));
@@ -659,17 +672,20 @@ function wireAll(c) {
   const tbodyOf = (tr) => ({ querySelectorAll: () => [tr] });
   const wireRows = (box) => $$('.cd-x', box).forEach((b) => { b.onclick = () => b.closest('tr').remove(); });
   // Ticking a collector's remittance in (or out of) this RCD of the LO: kept on the LO's reports (colIn / colOut).
-  $$('[data-colk]').forEach((cb) => { cb.onchange = async () => {
-    const k = cb.dataset.colk, ch = c.fig.chains[c.curKey]; if (!ch) return;
+  const putCol = async (k, on) => {
+    const ch = c.fig.chains[c.curKey]; if (!ch) return;
     for (const g of ch.figs) {
       const r = f.reports.find((y) => y.id === g.id); if (!r) continue;
       let inn = (r.colIn || []).filter((x) => x !== k);
-      if (g.id === selId && cb.checked) inn = [...inn, k];
+      if (g.id === selId && on) inn = [...inn, k];
       if (inn.length === (r.colIn || []).length && g.id !== selId) continue;
       await store.save('cer_reports', r.id, { ...strip(r), colIn: inn }, by(refs), { quiet: true });
     }
-    emitChange('local'); toast(cb.checked ? 'Put in this RCD.' : 'Taken out of this RCD.', 'ok');
-  }; });
+    emitChange('local'); toast(on ? 'Put in this RCD.' : 'Taken out of this RCD (the collector\'s report stays).', 'ok');
+  };
+  $$('[data-colk]').forEach((cb) => { cb.onchange = () => putCol(cb.dataset.colk, cb.checked); });
+  $$('[data-colrm]').forEach((b) => { b.onclick = () => putCol(b.dataset.colrm, false); });
+  $$('[data-rmmode]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); REM.mode = a.dataset.rmmode; emitChange('local'); }; });
   // Typed remittances of this report (a collector whose SCR / RCD is not in the app): the entry line and the list.
   const typedNow = () => (cur.rec?.remittances || []).filter((m) => !m.fromCol);
   const colsAll = collectorsOf(f, o, audit, refs);
@@ -797,6 +813,19 @@ function wireAll(c) {
       ['.rm-sf', '.rm-st', '.rm-sa'].forEach((k) => { $(k, r).oninput = total; });
     };
     rows().forEach(wireRow); total();
+    // The collector's report No.: already in another RCD of this LO, or already in the app on the collector's side → stopped;
+    // already in this RCD → another series of it.
+    const noCheck = (col) => { const no = nk($('#rm-no').value); if (!col || !no) return null;
+      const mine = new Set(edGrp ? edGrp.map((x) => x.i) : []);
+      const other = f.reports.find((r) => r.officerId === o.id && !r.pending && r.id !== selId && (r.remittances || []).some((m) => !m.fromCol && m.collectorId === col.id && nk(m.reportNo) === no));
+      if (other) return { block: true, text: `${$('#rm-no').value.trim()} of ${col.name} is already in ${repName(other, K)} (${fmtDate(other.date)}). Check the number.` };
+      const own = f.reports.find((r) => r.officerId === col.id && !r.pending && nk(r.no) === no && !(r.madeFrom && r.madeFrom.officerId === o.id));
+      if (own) return { block: true, text: `${col.name}'s ${repName(own, own.kind)} is already in the app: tick it instead (Tick from the app).` };
+      const here = typedNow().filter((m, i) => !mine.has(i) && m.collectorId === col.id && nk(m.reportNo) === no);
+      if (here.length) return { block: false, text: `${$('#rm-no').value.trim()} is already in this ${K} (${here.length} series). It will be added as another series.` };
+      return null; };
+    const showNo = () => { const r = noCheck(resolveCol($('#rm-col').value)), el = $('#rm-nomsg'); el.className = `rm-nomsg ${r ? (r.block ? 'bad' : 'info') : ''}`; el.textContent = r ? r.text : ''; return r; };
+    ['#rm-no', '#rm-col'].forEach((k) => { $(k).addEventListener('change', showNo); $(k).addEventListener('blur', showNo); });
     $('#rm-addser').onclick = (e) => { e.preventDefault(); newRow(); };
     const add = async () => {
       const date = $('#rm-date').value; let col = resolveCol($('#rm-col').value);
@@ -822,6 +851,7 @@ function wireAll(c) {
         if (many.length > 1) { $('#rm-col').focus(); return bad(`${many.length} collectors fit "${$('#rm-col').value.trim()}". Choose one from the list.`); }
         col = await newColModal($('#rm-col').value); if (!col) return;
       }
+      { const r = noCheck(col); if (r && r.block) { showNo(); $('#rm-no').focus(); return bad(r.text); } }
       const ms = lines.map((x) => lineOf(date, col, $('#rm-no').value, x.fr, x.to, x.amt, x.form, x.pcs));
       const gone = new Set(edGrp ? edGrp.map((x) => x.i) : []);
       const list = [...typedNow().filter((_, i) => !gone.has(i)), ...ms];
@@ -1143,7 +1173,7 @@ function remGroups(list) {
   const key = (m) => (m.reportNo ? `${m.collectorId}|${String(m.reportNo).replace(/[^0-9A-Za-z]/g, '').toUpperCase()}` : `#${Math.random()}`);
   const out = new Map(); list.forEach((m, i) => { const k = key(m); if (!out.has(k)) out.set(k, []); out.get(k).push({ m, i }); });
   // In the order of the report numbers (417, 418, 419 …), as on the hard copy; lines without a No. last, by date.
-  const nat = (m) => String(m.reportNo || '').replace(/\d+/g, (d) => d.padStart(12, '0')).toUpperCase();
+  const nat = (m) => String(m.reportNo || '').replace(/^[^0-9]*/, '').replace(/\d+/g, (d) => d.padStart(12, '0')).toUpperCase();   // "SCR No. 2026-0189" as 2026-0189
   return [...out.values()].sort((a, b) => (a[0].m.reportNo ? 0 : 1) - (b[0].m.reportNo ? 0 : 1) || nat(a[0].m).localeCompare(nat(b[0].m)) || String(a[0].m.date).localeCompare(String(b[0].m.date)));
 }
 // An LO's RCD: the collectors' SCR / RCD it covers (distinct reports), their numbers as runs (417–442).
@@ -1388,8 +1418,6 @@ async function reportModal(c, K, g) {
   const isNew = !g, rec = g ? g.rec : {};
   // A pure Liquidating Officer (not also collecting): no OR Range; the collectors' SCR / RCD remitted to her are ticked instead.
   const pureLO = isLO && !(exam.functions || []).includes('collecting');
-  const colChoices = (fund) => { const ch = chainOf(fund); if (!ch) return [];
-    return [...(g ? (g.rec.remittances || []).filter((m) => m.fromCol).map((m) => ({ m, on: true })) : []), ...(ch.pend.rec?.remittances || []).filter((m) => m.fromCol).map((m) => ({ m, on: false }))]; };
   const fund0 = isNew ? curFund : rec.fund;
   const chainOf = (fund) => fig.chains[`${K}|${fund}`];
   const firstOf = (fund) => (isNew ? !(chainOf(fund)?.figs.length) : chainOf(rec.fund)?.figs[0]?.id === g.id);
@@ -1403,9 +1431,10 @@ async function reportModal(c, K, g) {
   const preview = (bg) => {
     const box = $('#rp-prev', bg), date = $('#rp-date', bg).value, fund = $('#rp-fund', bg).value, ch = chainOf(fund);
     $('#rp-begbox', bg).hidden = !firstOf(fund);
-    if (pureLO) { const keys = new Set($$('[data-rpk]:checked', bg).map((x) => x.dataset.rpk)); const t = r2(colChoices(fund).filter(({ m }) => keys.has(m.key)).reduce((n, { m }) => n + m.amount, 0)), hard = num($('#rp-hard', bg).value);
-      const all = r2(t + typedT);
-      box.innerHTML = `${typedIn.length ? `Typed in the Collections tab <b>${typedIn.length}</b> · ₱ ${money(typedT)} + ticked <b>${keys.size}</b> · ₱ ${money(t)} = <b>₱ ${money(all)}</b>` : `Ticked <b>${keys.size}</b> · ₱ ${money(t)}`}${hard ? ` · hard copy ₱ ${money(hard)}: ${Math.abs(hard - all) < 0.005 ? '<b class="ok-t">agrees</b>' : `<b class="warn-t">difference ₱ ${money(Math.abs(r2(hard - all)))}</b>`}` : ''}.`; return; }
+    if (pureLO) { const tk = isNew ? [] : (rec.remittances || []).filter((m) => m.fromCol && !m.beg), t = r2(tk.reduce((n, m) => n + (+m.amount || 0), 0)), hard = num($('#rp-hard', bg).value);
+      const all = r2(t + typedT), n = typedIn.length + tk.length;
+      box.innerHTML = isNew ? `Then, in tab 2 · Collections, type the remittances of the hard copy or tick those already in the app.${hard ? ` Hard copy ₱ ${money(hard)}.` : ''}`
+        : `Remittances in this ${K}: <b>${n}</b> (typed ${typedIn.length}, ticked ${tk.length}) · <b>₱ ${money(all)}</b>${hard ? ` · hard copy ₱ ${money(hard)}: ${Math.abs(hard - all) < 0.005 ? '<b class="ok-t">agrees</b>' : `<b class="warn-t">difference ₱ ${money(Math.abs(r2(hard - all)))}</b>`}` : ''}.`; return; }
     const rr = readRanges($('#rp-range', bg).value);
     if (rr.error) { box.innerHTML = `<b class="warn-t">${esc(rr.error)}</b>`; return; }
     if (!rr.ranges.length) { box.textContent = `Type the OR Range of the ${K} to see which ORs go into it.`; return; }
@@ -1429,7 +1458,6 @@ async function reportModal(c, K, g) {
     }
     const v = { no, date, fund, ranges: rr.ranges, hardTotal: hard ? num(hard) : null, received: $('#rp-recv', bg).value, dupe: no ? 0 : dupeOf(f, o.id, K, date, fund, g ? g.id : undefined) };
     if (firstOf(fund)) { const t = num($('#rp-beg', bg).value); v.begTyped = t === null ? '' : t; }
-    if (pureLO) v.colIn = $$('[data-rpk]:checked', bg).map((x) => x.dataset.rpk);
     return v;
   };
   await modal({ title: isNew ? `New ${K} · ${KIND_NAME[K]}` : `Edit ${repName(rec, K)}`, wide: true,
@@ -1442,11 +1470,8 @@ async function reportModal(c, K, g) {
         <div class="field"><label for="rp-recv">Date Received</label><input class="input" type="date" id="rp-recv" value="${esc(rec.received || '')}"></div>
         <div class="field" id="rp-begbox"><label for="rp-beg">${UND} per last ${K} (first in the app)</label><input class="input r" id="rp-beg" inputmode="decimal" placeholder="0.00" value="${esc(beg0)}"></div>
       </div>
-      ${pureLO ? `<div class="rp-cols"><b>Remittances in this ${K}</b> <span class="dim">· tick the collectors' SCR / RCD listed on the hard copy</span>
-        ${colChoices(fund0).length ? `<div class="af-tbl rp-colt"><table class="af-reg"><thead><tr><th style="width:30px"></th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount</th></tr></thead><tbody>
-          ${colChoices(fund0).map(({ m, on }) => `<tr><td><input type="checkbox" data-rpk="${esc(m.key)}" ${on ? 'checked' : ''} aria-label="In this ${K}"></td><td>${esc(fmtDate(m.date))}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td></tr>`).join('')}</tbody></table></div>`
-          : `<p class="dim" style="margin:6px 0">No collector's SCR / RCD in the app is waiting to be ticked.${typedIn.length ? ` The ${typedIn.length} remittance${typedIn.length === 1 ? '' : 's'} typed in the Collections tab (₱ ${money(typedT)}) ${typedIn.length === 1 ? 'is' : 'are'} already in this ${K}.` : ` Remittances whose collector's report is not in the app are typed in the Collections tab.`}</p>`}</div>` : ''}
-      <p class="af-note">${pureLO ? `${K} Date: the date written on the ${K}. Remittances typed by hand are entered in the Collections tab of the ${K}.` : `${K} Date: the date written on the ${K}; if none, the date of the last OR it covers. ORs go into the ${K} by their number in the OR Range.`}</p>
+
+      <p class="af-note">${pureLO ? `${K} Date: the date written on the ${K}. Its remittances are typed or ticked in tab 2 · Collections.` : `${K} Date: the date written on the ${K}; if none, the date of the last OR it covers. ORs go into the ${K} by their number in the OR Range.`}</p>
       <p class="af-note" id="rp-prev"></p>`,
     onOpen: (bg) => { $$('#rp-date, #rp-fund, #rp-range, #rp-hard, [data-rpk]', bg).forEach((el) => { el.addEventListener('input', () => preview(bg)); el.addEventListener('change', () => preview(bg)); }); preview(bg); },
     buttons: [...(isNew ? [] : [{ label: 'Delete', cls: 'danger', value: 'del' }]), { label: 'Cancel', value: null },

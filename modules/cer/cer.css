@@ -990,3 +990,9 @@ table.af-reg.tr-month{min-width:0}
 .rm-tbl tr.rm-sub td{border-top:1px dashed #e3e8f2; background:#f8faff; padding-top:6px; padding-bottom:6px}
 .rm-tbl td.rm-act{white-space:nowrap}
 .ok-t{color:var(--ok, #2e7d32)}
+/* LO Collections tab: Type / Tick switch; the report No. check under the entry line. */
+.seg.rm-mode{margin:6px 0 10px; display:flex; width:max-content; max-width:100%}
+.seg.rm-mode small{font-weight:400; opacity:.8; margin-left:4px}
+.rm-nomsg{font-size:12.5px; margin-top:6px; min-height:0}
+.rm-nomsg.bad{color:var(--bad, #b3261e); font-weight:600}
+.rm-nomsg.info{color:#1f5fd1}
