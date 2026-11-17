@@ -966,3 +966,9 @@ table.af-reg.tr-month{min-width:0}
 .bk-na{border:1px solid #f0c27a; background:#fffaf2; border-radius:10px; padding:12px 14px; font-size:13.5px; margin-top:8px}
 .af-fromstock{margin:8px 0 0; background:#eef3ff; color:var(--navy, #0b2a6b)}
 .pill.p-bad{background:var(--bad-bg, #fdecea); color:var(--bad, #b3261e); border:1px solid #f1b0aa; margin-top:4px; white-space:normal}
+/* Report list (SCD / SCR / RCD of this officer): compact rows; the short columns hug their content, the name and range take the rest. */
+.cd-sumtbl th, .cd-sumtbl td{padding:7px 10px; vertical-align:middle}
+.cd-sumtbl tfoot td{padding:8px 10px}
+.cd-sumtbl th:first-child, .cd-sumtbl td:first-child{padding-left:16px}
+.cd-sumtbl thead th:nth-child(n+2):not(:nth-child(5)), .cd-sumtbl tbody td:nth-child(n+2):not(:nth-child(5)){width:1%; white-space:nowrap}
+.cd-sumtbl td .btn.sm{padding:3px 10px; min-height:0; line-height:1.4}
