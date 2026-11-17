@@ -38,8 +38,11 @@ const DESIG_LGU = ['Municipal Treasurer', 'Provincial Treasurer', 'Collecting Of
 /* ---------- who may do what ---------- */
 export const hasRole = (refs, ...r) => !!refs.me && (refs.me.data.roles || []).some((x) => r.includes(x));
 const seesAll = (refs) => hasRole(refs, 'admin', 'sa', 'osa');
-// Audit Setup is the auditors' work (Team Member, ATL, SA, Admin). Team Staff (JO) and OSA Staff view it only.
+// Auditors: Team Member, ATL, SA, Admin. Team Staff (JO) also encode Audit Setup, except removing an officer from an
+// examination and changing an examination already marked Ready for Reports (an auditor reopens it first). OSA Staff view only.
 export const isAuditor = (refs) => hasRole(refs, 'member', 'atl', 'sa', 'admin');
+export const isEncoder = (refs) => isAuditor(refs) || hasRole(refs, 'staff');
+let READY = new Set();   // audits with an officer exam marked Ready for Reports (Audit Setup locked for Team Staff)
 export const by = (refs) => refs.me?.data.email || '';
 const munOf = (refs, lgu) => (lgu.data.kind === 'barangay' ? lgu.data.parentId : lgu.data.kind === 'municipality' ? lgu.id : '');
 // Visible to this person and within the working scope (AMS Dashboard, "Working on").
@@ -52,7 +55,7 @@ export function mayView(refs, lgu) {
   const mun = munOf(refs, lgu);
   return !(d.munIds || []).length || !mun || d.munIds.includes(mun);
 }
-const mayEdit = (refs, lgu) => isAuditor(refs) && mayView(refs, lgu);
+const mayEdit = (refs, lgu, auditId) => mayView(refs, lgu) && (isAuditor(refs) || (isEncoder(refs) && !READY.has(auditId)));
 
 /* ---------- small helpers ---------- */
 const isBrgy = (lgu) => !!lgu && lgu.data.kind === 'barangay';
@@ -234,6 +237,7 @@ export async function render(ctx) {
   }
   LASTPART = 'setup';
   const cer = await loadCer();
+  READY = new Set((await store.list('cer_verify')).filter((r) => !r.deleted && r.data.ready).map((r) => cer.exams.find((e) => e.id === (r.data.examId || r.id))?.auditId).filter(Boolean));
   const view = 'setup';
   const open = q.get('a') || (q.get('new') ? 'new' : '');
   // Beginning Inventory of Accountable Forms reads the same booklet records as Accountable Forms.
@@ -242,7 +246,7 @@ export async function render(ctx) {
   app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: view, crumb: open ? 'Audit Setup' : 'Audit Setup · Cash Examinations', me, roleText, body });
   tidyTop();
   $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
-  { const hb = $('#cer-hol'); if (hb) hb.onclick = () => holidaysModal(refs, isAuditor(refs)); }
+  { const hb = $('#cer-hol'); if (hb) hb.onclick = () => holidaysModal(refs, isEncoder(refs)); }
   { const nc = $('#cer-newcyc'); if (nc) nc.onclick = () => newCycle(refs); }
   if (open) wireSetup(refs, cer, q, ctx.rerender);
   else if (parts[0] && parts[0] !== 'setup') history.replaceState(null, '', '#/cer/setup');
@@ -337,9 +341,9 @@ function listHtml(refs, cer) {
     .sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)) || agencyName(refs, refs.lgu[a.lguId]).localeCompare(agencyName(refs, refs.lgu[b.lguId])));
   const groups = CYC.list.map((c) => ({ c, rows: rows.filter((a) => (CYC.of[a.id] || a.cycleId) === c.id) })).filter((g) => g.rows.length || g.c.id === CYC.current);
   const cols = 'grid-template-columns:120px minmax(170px,1.1fr) minmax(220px,1.6fr) minmax(170px,1fr)';
-  const canNew = isAuditor(refs);
+  const canNew = isEncoder(refs), canCyc = isAuditor(refs);
   return `<div class="hello"><div><h1>Audit Setup</h1><p>One cash examination per auditee and count date. Each accountable officer has a separate exam record.</p></div>
-      <div class="btn-row"><button class="btn" type="button" id="cer-hol">Holidays</button>${canNew ? '<button class="btn" type="button" id="cer-newcyc">Start New Cycle</button><a class="btn primary" href="#/cer/setup?new=1">+ New Cash Examination</a>' : ''}</div></div>
+      <div class="btn-row"><button class="btn" type="button" id="cer-hol">Holidays</button>${canCyc ? '<button class="btn" type="button" id="cer-newcyc">Start New Cycle</button>' : ''}${canNew ? '<a class="btn primary" href="#/cer/setup?new=1">+ New Cash Examination</a>' : ''}</div></div>
     <div class="panel">
       <div class="panel-head"><h2>Cash Examinations</h2><span class="pill">${rows.length}</span></div>
       ${rows.length || groups.length ? groups.map((g) => `<details class="cyc-grp" ${g.c.id === CYC.current || groups.length === 1 ? 'open' : ''}><summary><b>${esc(g.c.name)}</b>${g.c.id === CYC.current ? ' <span class="pill p-done">Current cycle</span>' : ''} <span class="dim">· ${g.rows.length} cash examination${g.rows.length === 1 ? '' : 's'} · ${((n) => `${n} officer${n === 1 ? '' : 's'}`)(new Set(g.rows.flatMap((a) => cer.exams.filter((e) => e.auditId === a.id).map((e) => e.officerId))).size)}</span></summary>
@@ -396,14 +400,16 @@ function setupHtml(refs, cer, q) {
   if (q.get('a') && q.get('a') !== 'new' && !audit) return `<div class="msg bad">This cash examination was not found. It may have been removed.</div><a class="btn" href="#/cer/setup">← All Cash Examinations</a>`;
   const lgu = refs.lgu[st.lguId];
   if (audit && !mayView(refs, lgu)) return `<div class="msg bad">This cash examination belongs to another team.</div><a class="btn" href="#/cer/setup">← All Cash Examinations</a>`;
-  const edit = audit ? mayEdit(refs, lgu) : isAuditor(refs);
+  const edit = audit ? mayEdit(refs, lgu, audit.id) : isEncoder(refs);
+  const locked = !!audit && !isAuditor(refs) && isEncoder(refs) && READY.has(audit.id);
   const dis = edit ? '' : 'disabled';
   const tabs = base.exams.map((e) => ({ id: e.id, o: cer.officers.find((x) => x.id === e.officerId) }));
   const newTab = !base.exam;   // a new officer exam is being set up
   const h = heads(refs, cer, st), opens = openState(key, h);
   return `<div class="hello"><div><h1>Audit Setup</h1><p>One cash examination per auditee and count date. Each accountable officer has a separate exam record.</p></div>
       <div class="btn-row"><a class="btn" href="#/cer/setup">← All Cash Examinations</a><button class="btn" type="button" id="cer-hol">Holidays</button>${edit ? '<button class="btn primary" type="button" id="cer-save">Save Setup</button>' : ''}</div></div>
-    ${edit ? '' : '<div class="msg cer-ro">View only. The auditors (Team Member, ATL, SA) set up the cash examination.</div>'}
+    ${locked ? '<div class="msg" style="margin-bottom:12px">This cash examination is marked <b>Ready for Reports</b>. Audit Setup is locked for Team Staff; an auditor reopens it in Verification to change it.</div>' : ''}
+    ${edit || locked ? '' : '<div class="msg cer-ro">View only. The auditors and Team Staff (JO) of the team set up the cash examination.</div>'}
 
     <section class="panel acc-panel" aria-label="Cash Examination">
       ${acc('exam', '1. Cash Examination', h.exam, `
@@ -429,7 +435,7 @@ function setupHtml(refs, cer, q) {
           ${tabs.map((t) => `<a role="tab" aria-selected="${t.id === st.examId}" class="${t.id === st.examId ? 'on' : ''}" href="#/cer/setup?a=${esc(audit.id)}&o=${esc(t.id)}">${esc(t.o ? t.o.name : 'Officer')}${t.o && t.o.designation ? ' · ' + esc(t.o.designation) : ''}</a>`).join('')}
           ${newTab ? `<a role="tab" aria-selected="true" class="on" href="${esc(key)}">${tabs.length ? 'New officer' : 'Officer'}</a>` : ''}</div>` : ''}
         <div id="cer-off">${officerHtml(refs, cer, st, edit)}</div>
-        ${edit && st.examId ? `<div class="cer-foot"><button class="btn sm" type="button" id="cer-remove">Remove this officer from the examination</button></div>` : ''}
+        ${edit && st.examId && isAuditor(refs) ? `<div class="cer-foot"><button class="btn sm" type="button" id="cer-remove">Remove this officer from the examination</button></div>` : ''}
       </div>
     </section>`;
 }
@@ -597,7 +603,7 @@ function wireSetup(refs, cer, q, rerender) {
     };
     $$('[data-begchk]').forEach((b) => { b.onclick = () => begChecksModal(refs, cer, st, b.dataset.begchk, b.dataset.edit === '1'); });
     $$('[data-restfund]').forEach((sel) => { sel.onchange = () => { st.caRestFund = sel.value; touch(); }; });
-    { const bb = $('#cer-banks'); if (bb) bb.onclick = async () => { const B = await import('./banks.js'); const list = (FX && FX.settings && FX.settings['banks|' + st.lguId]?.list) || []; const funds = (FX && FX.settings && FX.settings['funds|' + st.lguId]?.list) || B.DEFAULT_FUNDS; B.accountsModal(refs, st.lguId, list, funds, isAuditor(refs) || hasRole(refs, 'staff')); }; }
+    { const bb = $('#cer-banks'); if (bb) bb.onclick = async () => { const B = await import('./banks.js'); const list = (FX && FX.settings && FX.settings['banks|' + st.lguId]?.list) || []; const funds = (FX && FX.settings && FX.settings['funds|' + st.lguId]?.list) || B.DEFAULT_FUNDS; B.accountsModal(refs, st.lguId, list, funds, isEncoder(refs) || hasRole(refs, 'staff')); }; }
     $$('tr[data-begbk]').forEach((tr) => { const go = () => FM.openBooklet(refs, FX, tr.dataset.begbk); tr.onclick = go; tr.onkeydown = (e) => { if (e.key === 'Enter') go(); }; });
   };
   wireAcc(); wireBeg();
