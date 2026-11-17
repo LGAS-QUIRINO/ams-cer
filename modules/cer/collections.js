@@ -1397,11 +1397,15 @@ async function reportModal(c, K, g) {
   const pend0 = chainOf(fund0)?.pend;
   const beg0 = isNew ? (pend0?.rec?.begTyped ? money(pend0.rec.begTyped) : '') : (rec.begTyped ? money(rec.begTyped) : '');
   let act = null, out = null;
+  // The remittances typed in this report (Collections tab): counted with the ticked ones against the hard copy.
+  const typedIn = isNew ? [] : (rec.remittances || []).filter((m) => !m.fromCol && !m.beg);
+  const typedT = r2(typedIn.reduce((n, m) => n + (+m.amount || 0), 0));
   const preview = (bg) => {
     const box = $('#rp-prev', bg), date = $('#rp-date', bg).value, fund = $('#rp-fund', bg).value, ch = chainOf(fund);
     $('#rp-begbox', bg).hidden = !firstOf(fund);
     if (pureLO) { const keys = new Set($$('[data-rpk]:checked', bg).map((x) => x.dataset.rpk)); const t = r2(colChoices(fund).filter(({ m }) => keys.has(m.key)).reduce((n, { m }) => n + m.amount, 0)), hard = num($('#rp-hard', bg).value);
-      box.innerHTML = `Ticked <b>${keys.size}</b> · ₱ ${money(t)}${hard ? ` · hard copy ₱ ${money(hard)}: ${Math.abs(hard - t) < 0.005 ? '<b>agrees</b>' : `<b class="warn-t">difference ₱ ${money(Math.abs(r2(hard - t)))}</b>`}` : ''}.`; return; }
+      const all = r2(t + typedT);
+      box.innerHTML = `${typedIn.length ? `Typed in the Collections tab <b>${typedIn.length}</b> · ₱ ${money(typedT)} + ticked <b>${keys.size}</b> · ₱ ${money(t)} = <b>₱ ${money(all)}</b>` : `Ticked <b>${keys.size}</b> · ₱ ${money(t)}`}${hard ? ` · hard copy ₱ ${money(hard)}: ${Math.abs(hard - all) < 0.005 ? '<b class="ok-t">agrees</b>' : `<b class="warn-t">difference ₱ ${money(Math.abs(r2(hard - all)))}</b>`}` : ''}.`; return; }
     const rr = readRanges($('#rp-range', bg).value);
     if (rr.error) { box.innerHTML = `<b class="warn-t">${esc(rr.error)}</b>`; return; }
     if (!rr.ranges.length) { box.textContent = `Type the OR Range of the ${K} to see which ORs go into it.`; return; }
@@ -1441,7 +1445,7 @@ async function reportModal(c, K, g) {
       ${pureLO ? `<div class="rp-cols"><b>Remittances in this ${K}</b> <span class="dim">· tick the collectors' SCR / RCD listed on the hard copy</span>
         ${colChoices(fund0).length ? `<div class="af-tbl rp-colt"><table class="af-reg"><thead><tr><th style="width:30px"></th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount</th></tr></thead><tbody>
           ${colChoices(fund0).map(({ m, on }) => `<tr><td><input type="checkbox" data-rpk="${esc(m.key)}" ${on ? 'checked' : ''} aria-label="In this ${K}"></td><td>${esc(fmtDate(m.date))}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td></tr>`).join('')}</tbody></table></div>`
-          : '<p class="dim" style="margin:6px 0">No collector\'s SCR / RCD naming this officer is waiting. Type a remittance in the RCD (Typed here) when the collector\'s report is not in the app.</p>'}</div>` : ''}
+          : `<p class="dim" style="margin:6px 0">No collector's SCR / RCD in the app is waiting to be ticked.${typedIn.length ? ` The ${typedIn.length} remittance${typedIn.length === 1 ? '' : 's'} typed in the Collections tab (₱ ${money(typedT)}) ${typedIn.length === 1 ? 'is' : 'are'} already in this ${K}.` : ` Remittances whose collector's report is not in the app are typed in the Collections tab.`}</p>`}</div>` : ''}
       <p class="af-note">${pureLO ? `${K} Date: the date written on the ${K}. Remittances typed by hand are entered in the Collections tab of the ${K}.` : `${K} Date: the date written on the ${K}; if none, the date of the last OR it covers. ORs go into the ${K} by their number in the OR Range.`}</p>
       <p class="af-note" id="rp-prev"></p>`,
     onOpen: (bg) => { $$('#rp-date, #rp-fund, #rp-range, #rp-hard, [data-rpk]', bg).forEach((el) => { el.addEventListener('input', () => preview(bg)); el.addEventListener('change', () => preview(bg)); }); preview(bg); },

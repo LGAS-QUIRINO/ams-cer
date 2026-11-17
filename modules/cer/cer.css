@@ -989,3 +989,4 @@ table.af-reg.tr-month{min-width:0}
 .rm-tbl tr.rm-ser td{border-top:1px dashed #e3e8f2}
 .rm-tbl tr.rm-sub td{border-top:1px dashed #e3e8f2; background:#f8faff; padding-top:6px; padding-bottom:6px}
 .rm-tbl td.rm-act{white-space:nowrap}
+.ok-t{color:var(--ok, #2e7d32)}
