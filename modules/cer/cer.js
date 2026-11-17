@@ -248,6 +248,7 @@ export async function render(ctx) {
   $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
   { const hb = $('#cer-hol'); if (hb) hb.onclick = () => holidaysModal(refs, isEncoder(refs)); }
   { const nc = $('#cer-newcyc'); if (nc) nc.onclick = () => newCycle(refs); }
+  $$('[data-cycren]').forEach((b) => { b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); renameCycle(refs, b.dataset.cycren); }; });
   if (open) wireSetup(refs, cer, q, ctx.rerender);
   else if (parts[0] && parts[0] !== 'setup') history.replaceState(null, '', '#/cer/setup');
 }
@@ -272,7 +273,7 @@ function tidyTop() {
 }
 
 /* ================= Cycles: each round of cash counts in one group ================= */
-// cer_settings 'cycles' { list: [{ id, name (optional, typed), created }], current }; cer_audits.cycleId.
+// cer_settings 'cycles' { list: [{ id, name (optional, typed), created }], current, names: { <auto cycle id>: name } }; cer_audits.cycleId.
 // A cash examination without a cycle is grouped with those of nearby count dates (less than 45 days apart).
 const CYC = { list: [], current: '', of: {} };
 const MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -295,7 +296,8 @@ function cyclesOf(audits, saved) {
   audits.filter((a) => /^auto-/.test(a.cycleId || '') && !autos.some((c) => c.id === a.cycleId)).forEach((a) => { if (!autos.some((c) => c.id === a.cycleId)) autos.push({ id: a.cycleId, auto: true }); });
   const all = [...own, ...autos].map((c) => {
     const ds = audits.filter((a) => a.cycleId === c.id).map((a) => a.countDate).filter(Boolean).sort();
-    return { ...c, from: ds[0] || '', to: ds[ds.length - 1] || '', n: ds.length, name: c.name || monthRange(ds[0], ds[ds.length - 1]) || 'New cycle (no cash count yet)' };
+    const typed = c.name || saved?.names?.[c.id] || '';   // a name typed (Rename), else by its count dates
+    return { ...c, typed, from: ds[0] || '', to: ds[ds.length - 1] || '', n: ds.length, name: typed || monthRange(ds[0], ds[ds.length - 1]) || 'New cycle (no cash count yet)' };
   }).sort((a, b) => String(b.to || b.created || '9999').localeCompare(String(a.to || a.created || '9999')));
   CYC.list = all;
   CYC.current = all.some((c) => c.id === saved?.current) ? saved.current : all[0]?.id || '';
@@ -334,6 +336,22 @@ async function newCycle(refs) {
   toast('New cycle started: the next cash examinations go into it.', 'ok');
 }
 
+// Renames a cycle (auditors): the name only; its cash examinations stay. Blank: named by its count dates again.
+async function renameCycle(refs, id) {
+  const c = CYC.list.find((x) => x.id === id); if (!c) return;
+  let name = null;
+  const v = await modal({ title: 'Rename Cycle', body: `<div class="field"><label for="cy-ren">Name</label><input class="input" id="cy-ren" value="${esc(c.typed || '')}" placeholder="${esc(monthRange(c.from, c.to) || 'e.g. May 2027')}"></div>
+      <p class="af-note">Only the name changes; its ${c.n} cash examination${c.n === 1 ? '' : 's'} stay in it. Leave it blank to name it by its count dates.</p>`,
+    onOpen: (bg) => { const el = $('#cy-ren', bg); el.focus(); el.select(); el.onkeydown = (e) => { if (e.key === 'Enter') $('.mf .btn.primary', bg).click(); }; },
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Save', cls: 'primary', value: 'go', check: (bg) => { name = String($('#cy-ren', bg).value || '').trim(); return true; } }] });
+  if (v !== 'go' || name === null) return;
+  const rec = await store.get('cer_settings', 'cycles'); const data = rec && !rec.deleted ? rec.data : { list: [] };
+  const list = data.list || [], names = { ...(data.names || {}) };
+  if (list.some((x) => x.id === id)) { const i = list.findIndex((x) => x.id === id); list[i] = { ...list[i], name }; } else { if (name) names[id] = name; else delete names[id]; }
+  await store.save('cer_settings', 'cycles', { ...data, list, names }, by(refs));
+  toast(name ? `Cycle renamed: ${name}.` : 'Cycle named by its count dates again.', 'ok');
+}
+
 /* ================= Cash Examinations list ================= */
 function listHtml(refs, cer) {
   DRAFT = null;
@@ -346,7 +364,7 @@ function listHtml(refs, cer) {
       <div class="btn-row"><button class="btn" type="button" id="cer-hol">Holidays</button>${canCyc ? '<button class="btn" type="button" id="cer-newcyc">Start New Cycle</button>' : ''}${canNew ? '<a class="btn primary" href="#/cer/setup?new=1">+ New Cash Examination</a>' : ''}</div></div>
     <div class="panel">
       <div class="panel-head"><h2>Cash Examinations</h2><span class="pill">${rows.length}</span></div>
-      ${rows.length || groups.length ? groups.map((g) => `<details class="cyc-grp" ${g.c.id === CYC.current || groups.length === 1 ? 'open' : ''}><summary><b>${esc(g.c.name)}</b>${g.c.id === CYC.current ? ' <span class="pill p-done">Current cycle</span>' : ''} <span class="dim">· ${g.rows.length} cash examination${g.rows.length === 1 ? '' : 's'} · ${((n) => `${n} officer${n === 1 ? '' : 's'}`)(new Set(g.rows.flatMap((a) => cer.exams.filter((e) => e.auditId === a.id).map((e) => e.officerId))).size)}</span></summary>
+      ${rows.length || groups.length ? groups.map((g) => `<details class="cyc-grp" ${g.c.id === CYC.current || groups.length === 1 ? 'open' : ''}><summary><b>${esc(g.c.name)}</b>${g.c.id === CYC.current ? ' <span class="pill p-done">Current cycle</span>' : ''}${canCyc ? ` <button type="button" class="bk-lnk" data-cycren="${esc(g.c.id)}" title="Rename this cycle">Rename</button>` : ''} <span class="dim">· ${g.rows.length} cash examination${g.rows.length === 1 ? '' : 's'} · ${((n) => `${n} officer${n === 1 ? '' : 's'}`)(new Set(g.rows.flatMap((a) => cer.exams.filter((e) => e.auditId === a.id).map((e) => e.officerId))).size)}</span></summary>
         ${g.rows.length ? `<div class="t-head" style="${cols}"><span>Cash Count</span><span>Auditee</span><span>Accountable Officers</span><span>Prepared by</span></div>` : '<p class="af-note" style="margin:8px 0">No cash examination in this cycle yet: add one with <b>+ New Cash Examination</b>.</p>'}
         ${g.rows.map((a) => {
           const lgu = refs.lgu[a.lguId];
