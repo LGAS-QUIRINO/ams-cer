@@ -1137,11 +1137,14 @@ const serRow = (m) => { const fk = remForm(m && m.form), cash = fk === 'cash';
 const serText = (m) => { const fk = remForm(m.form), rg = m.from ? `${m.from}–${m.to || m.from}` : '';
   if (fk === 'cash') return `Cash tickets${rg ? ' · ' + rg : ''}${m.pcs ? ` · ${m.pcs} pcs` : ''}`;
   return `${remFormName(fk)} · ${rg || '—'}`; };
-// Typed remittances grouped by the collector's report (same collector and No.): one row per report, its OR series under it.
+// Typed remittances grouped by the collector's report (same collector and No.): one row per report, its OR series under it,
+// the reports in the order of their numbers.
 function remGroups(list) {
   const key = (m) => (m.reportNo ? `${m.collectorId}|${String(m.reportNo).replace(/[^0-9A-Za-z]/g, '').toUpperCase()}` : `#${Math.random()}`);
   const out = new Map(); list.forEach((m, i) => { const k = key(m); if (!out.has(k)) out.set(k, []); out.get(k).push({ m, i }); });
-  return [...out.values()];
+  // In the order of the report numbers (417, 418, 419 …), as on the hard copy; lines without a No. last, by date.
+  const nat = (m) => String(m.reportNo || '').replace(/\d+/g, (d) => d.padStart(12, '0')).toUpperCase();
+  return [...out.values()].sort((a, b) => (a[0].m.reportNo ? 0 : 1) - (b[0].m.reportNo ? 0 : 1) || nat(a[0].m).localeCompare(nat(b[0].m)) || String(a[0].m.date).localeCompare(String(b[0].m.date)));
 }
 // An LO's RCD: the collectors' SCR / RCD it covers (distinct reports), their numbers as runs (417–442).
 function coveredOf(f, refs, rec) { const seen = new Map();
