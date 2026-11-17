@@ -109,12 +109,11 @@ function balanceRows(st) {
 export function bondChecks(st) {
   const b = st.bond || {}, out = [];
   const amt = num(b.amount), max = num(b.maxCash);
-  if (b.none) return [{ kind: 'warn', text: '<strong>The officer has no fidelity bond.</strong>' + (max !== null ? ` Maximum cash accountability ₱${money(max)}.` : '') }];
+  if (b.none) return [{ kind: 'warn', text: '<strong>The officer has no fidelity bond.</strong>' + (max !== null ? ` Approved amount of accountability ₱${money(max)}.` : '') }];
   if (!b.amount && !b.riskNo && !b.from && !b.to) out.push({ kind: 'warn', text: '<strong>No fidelity bond entered.</strong> Enter the bond details, or note that the officer has no bond.' });
   if (b.to && st.countDate && b.to < st.countDate) out.push({ kind: 'bad', text: `<strong>Expired fidelity bond.</strong> Bond ended ${fmtDate(b.to)}, before the cash count on ${fmtDate(st.countDate)}.` });
   if (b.from && st.countDate && b.from > st.countDate) out.push({ kind: 'warn', text: `<strong>Bond not yet effective.</strong> It starts ${fmtDate(b.from)}, after the cash count on ${fmtDate(st.countDate)}.` });
   if (b.from && b.to && b.from > b.to) out.push({ kind: 'warn', text: '<strong>Check the bond dates.</strong> Effective From is later than Effective To.' });
-  if (amt !== null && max !== null && amt < max) out.push({ kind: 'warn', text: `<strong>Bond lower than the maximum cash accountability.</strong> Bond ₱${money(amt)}, maximum cash accountability ₱${money(max)}.` });
   return out;
 }
 
@@ -546,7 +545,7 @@ function officerHtml(refs, cer, st, edit) {
 
     ${acc('bond', 'Bond and Limits', h.bond, `
       <div class="cer-g5">
-        <div class="field"><label for="b-max">Max. Cash Accountability (₱)</label><input class="input amt" id="b-max" data-bond="maxCash" inputmode="decimal" value="${esc(st.bond.maxCash)}" ${dis}></div>
+        <div class="field"><label for="b-max">Approved Amount of Accountability (₱)</label><input class="input amt" id="b-max" data-bond="maxCash" inputmode="decimal" value="${esc(st.bond.maxCash)}" ${dis}></div>
         <div class="field"><label for="b-amt">Amount of Bond (₱)</label><input class="input amt b-det" id="b-amt" data-bond="amount" inputmode="decimal" value="${esc(st.bond.amount)}" ${dis || (st.bond.none ? 'disabled' : '')}></div>
         <div class="field"><label for="b-risk">Risk No.</label><input class="input b-det" id="b-risk" data-bond="riskNo" value="${esc(st.bond.riskNo)}" ${dis || (st.bond.none ? 'disabled' : '')}></div>
         <div class="field"><label for="b-from">Bond Effective From</label><input class="input b-det" type="date" id="b-from" data-bond="from" value="${esc(st.bond.from)}" ${dis || (st.bond.none ? 'disabled' : '')}></div>

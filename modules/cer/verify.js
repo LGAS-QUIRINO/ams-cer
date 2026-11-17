@@ -223,7 +223,7 @@ export async function verifyView(ctx) {
   }));
   bondChecks({ bond: exam.bond || {}, countDate: to }).forEach((w, i) => add(`bond|${i}`, 'Fidelity Bond', w.text.replace(/<[^>]+>/g, ''), '#/cer/setup?a=' + audit.id, 'bond', [w.text]));
   const maxCash = num(exam.bond?.maxCash);
-  if (maxCash && T('balance') > maxCash + 0.004) add('maxcash', 'Fidelity Bond', `Accountability at the count, ₱${money(T('balance'))}, is more than the maximum cash accountability of ₱${money(maxCash)}.`, '#/cer/setup?a=' + audit.id, 'bond', [`<strong>Accountability over the maximum.</strong> Accountability at the count ₱${money(T('balance'))}, maximum cash accountability ₱${money(maxCash)}: over by ₱${money(r2(T('balance') - maxCash))}.`], r2(T('balance') - maxCash));
+  if (maxCash && T('balance') > maxCash + 0.004) add('maxcash', 'Fidelity Bond', `Accountability at the count, ₱${money(T('balance'))}, is more than the approved amount of accountability of ₱${money(maxCash)}.`, '#/cer/setup?a=' + audit.id, 'bond', [`<strong>Accountability over the approved amount.</strong> Accountability at the count ₱${money(T('balance'))}, approved amount of accountability ₱${money(maxCash)}: over by ₱${money(r2(T('balance') - maxCash))}.`], r2(T('balance') - maxCash));
   // Beginning checks of a cash advance balance more than the lump sum typed in Audit Setup.
   ['ca', 'sdo', 'pcf'].forEach((k) => { const b = exam.balances?.[k]; if (!b) return; const lump = +b.lump || 0; const s = r2(advs.filter((a) => a.beg && a.begExamId === exam.id && (a.begKey || 'ca') === k).reduce((n, a) => n + (+a.amount || 0), 0));
     if (lump && s > lump + 0.004) add(`beglump|${k}`, 'Audit Setup', `Beginning checks of the cash advance total ₱${money(s)}, more than the ₱${money(lump)} typed as the balance at the last cash exam.`, '#/cer/setup?a=' + audit.id); });
@@ -344,8 +344,8 @@ export async function verifyView(ctx) {
   const bd = exam.bond || {};
   const bondState = bd.none ? { t: 'None', bad: true, s: 'The officer has no fidelity bond' } : !bd.amount && !bd.riskNo && !bd.from && !bd.to ? { t: 'Not entered', bad: true, s: 'Enter it in Audit Setup' }
     : bd.to && bd.to < to ? { t: 'Expired', bad: true } : bd.from && bd.from > to ? { t: 'Not yet effective', bad: true } : { t: 'Valid', bad: false };
-  const bondSub = bondState.s || [bd.amount ? `₱${money(num(bd.amount))}` : '', bd.to ? `valid until ${fmtDate(bd.to)}` : '', num(bd.maxCash) ? `max cash ₱${money(num(bd.maxCash))}` : ''].filter(Boolean).join(' · ');
-  const bondFacts = `<div class="af-tbl"><table class="af-reg vf-facts"><thead><tr><th>Bond / Risk No.</th><th class="r">Bond amount</th><th>Valid</th><th class="r">Max cash accountability</th><th class="r">Accountability at the count</th></tr></thead>
+  const bondSub = bondState.s || [bd.amount ? `₱${money(num(bd.amount))}` : '', bd.to ? `valid until ${fmtDate(bd.to)}` : '', num(bd.maxCash) ? `approved accountability ₱${money(num(bd.maxCash))}` : ''].filter(Boolean).join(' · ');
+  const bondFacts = `<div class="af-tbl"><table class="af-reg vf-facts"><thead><tr><th>Bond / Risk No.</th><th class="r">Bond amount</th><th>Valid</th><th class="r">Approved accountability accountability</th><th class="r">Accountability at the count</th></tr></thead>
       <tbody><tr><td>${bd.none ? 'No fidelity bond' : esc(bd.riskNo || '—')}</td><td class="r">${num(bd.amount) ? money(num(bd.amount)) : '—'}</td><td>${bd.from || bd.to ? `${esc(fmtDate(bd.from) || '…')} – ${esc(fmtDate(bd.to) || '…')}` : '—'}</td><td class="r">${num(bd.maxCash) ? money(num(bd.maxCash)) : '—'}</td><td class="r">${fmtAmt(T('balance'))}</td></tr></tbody></table></div>`;
 
   const groupHtml = (gid, xs) => {
