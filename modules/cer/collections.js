@@ -424,7 +424,7 @@ export async function collectionsView(ctx) {
         <div class="field"><label for="rm-to">OR To</label><input class="input mono" id="rm-to" inputmode="numeric" value="${esc(ed ? ed.to || '' : '')}"></div>
         <div class="field"><label for="rm-amt">Amount</label><input class="input r" id="rm-amt" inputmode="decimal" value="${ed ? esc(money(ed.amount)) : ''}"></div>
         <div class="field"><label>&nbsp;</label><button class="btn primary" type="button" id="rm-add">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn sm" type="button" id="rm-cancel">Cancel</button>' : ''}</div>
-      </div><p class="af-note" style="margin-top:4px">Collector: type part of the name; the list has the officers of this office and its barangays. A barangay treasurer is taken as an SCR, an LGU collector as an RCD. Enter moves to the next box; Enter on Amount adds the line.</p>` : ''}
+      </div><p class="af-note" style="margin-top:4px">Collector: type part of the name; the list has the officers of this office and its barangays. A name not on the list: Add asks for the office and adds the collector. A barangay treasurer is taken as an SCR, an LGU collector as an RCD. Enter moves to the next box; Enter on Amount adds the line.</p>` : ''}
       ${typed.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th>#</th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check</th>${enc ? '<th></th>' : ''}</tr></thead>
         <tbody>${typed.map((m, i) => `<tr class="${ed && REM.i === i ? 'cd-on' : ''}"><td>${i + 1}</td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${m.from ? `${esc(m.from)}–${esc(m.to || m.from)}` : '—'}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td><button class="btn sm" type="button" data-rmedit="${i}">Edit</button> <button class="btn sm" type="button" data-rmdel="${i}" aria-label="Remove">✕</button></td>` : ''}</tr>`).join('')}</tbody>
         <tfoot><tr class="cd-foot"><td colspan="5">Total remittances received${cur.pending ? '' : ' in this RCD'}</td><td class="r">${money(inTot)}</td><td colspan="${enc ? 2 : 1}"></td></tr></tfoot></table></div>` : (allIn.length ? `<p class="dim" style="margin:6px 0">Total remittances received${cur.pending ? '' : ' in this RCD'}: <b>₱ ${money(inTot)}</b></p>` : '')}
@@ -670,6 +670,44 @@ function wireAll(c) {
   const resolveCol = (v) => { const t = String(v || '').trim(); if (!t) return null;
     const hit = colsAll.find((x) => cLabel(x) === t) || colsAll.find((x) => letters(x.name) === letters(t.split('·')[0]));
     if (hit) return hit; const part = colsAll.filter((x) => letters(x.name).includes(letters(t.split('·')[0]))); return part.length === 1 ? part[0] : null; };
+  // A collector not yet in the app: added here (name, office, designation) and kept as an officer of that office, so Audit
+  // Setup lists him or her later with the SCR / RCD made from the remittances already there.
+  const offices = [audit.lguId, ...Object.keys(refs.lgu).filter((k) => refs.lgu[k]?.data.parentId === audit.lguId)].filter((k) => refs.lgu[k])
+    .map((k) => ({ id: k, name: refs.lgu[k].data.name || k, brgy: isBrgy(refs.lgu[k]) }))
+    .sort((a, b) => (a.brgy ? 1 : 0) - (b.brgy ? 1 : 0) || a.name.localeCompare(b.name));
+  const offOpts = (sel) => `<option value="">Choose the office…</option>${offices.map((x) => `<option value="${esc(x.id)}" ${x.id === sel ? 'selected' : ''}>${x.brgy ? esc(x.name) : `This office · ${esc(x.name)}`}</option>`).join('')}`;
+  const officeOf = (v) => { const t = letters(v); if (!t) return ''; const hit = offices.find((x) => letters(x.name) === t) || offices.filter((x) => letters(x.name).includes(t) || t.includes(letters(x.name).replace(/^(barangay|brgy)/, '')));
+    return Array.isArray(hit) ? (hit.length === 1 ? hit[0].id : '') : hit.id; };
+  const cleanName = (v) => String(v || '').split('·')[0].trim().replace(/\s+/g, ' ').toUpperCase();
+  // Same surname and the same first letter: probably the same person.
+  const similarTo = (nm) => { const w = cleanName(nm).split(' ').filter(Boolean), last = letters(w[w.length - 1]), first = letters(w[0]).charAt(0);
+    return last ? colsAll.filter((x) => { const v = cleanName(x.name).split(' '); return letters(v[v.length - 1]) === last && (!first || letters(v[0]).charAt(0) === first); }) : []; };
+  const desigFor = (lid) => (isBrgy(refs.lgu[lid]) ? 'Barangay Treasurer' : '');
+  const saveNewCols = async (list) => { for (const x of list) { await store.save('cer_officers', x.id, { lguId: x.lguId, name: x.name, designation: x.designation || '' }, by(refs), { quiet: true }); f.officers.push(x); colsAll.push({ ...x, office: x.lguId === audit.lguId ? '' : refs.lgu[x.lguId]?.data.name || '' }); } };
+  const newColModal = async (typedName) => {
+    let out = null; const sim = similarTo(typedName);
+    await modal({ title: 'New Collector', wide: false,
+      body: `<p class="af-note" style="margin-top:0"><b>${esc(cleanName(typedName))}</b> is not in the app yet. Add as a collector? The officer is kept for this office; in Audit Setup, choose the name later and the SCR / RCD made here are already there.</p>
+        ${sim.length ? `<div class="msg warn">Did you mean ${sim.map((x) => `<button class="btn sm" type="button" data-simcol="${esc(x.id)}">${esc(cLabel(x))}</button>`).join(' ')}? Pick it to avoid two records of the same person.</div>` : ''}
+        <div class="field"><label for="nc-name">Full name</label><input class="input upper" id="nc-name" value="${esc(cleanName(typedName))}" autocomplete="off"></div>
+        <div class="field"><label for="nc-off">Office</label><select class="input" id="nc-off">${offOpts('')}</select><span class="hint">A barangay treasurer's report is taken as an SCR, an LGU collector's as an RCD.</span></div>
+        <div class="field"><label for="nc-des">Designation <small class="dim">(optional)</small></label><input class="input" id="nc-des" autocomplete="off"></div>`,
+      onOpen: (bg) => {
+        $('#nc-off', bg).onchange = () => { const d = $('#nc-des', bg); if (!d.value.trim() || d.dataset.auto) { d.value = desigFor($('#nc-off', bg).value); d.dataset.auto = '1'; } };
+        $('#nc-des', bg).oninput = (e) => { delete e.target.dataset.auto; };
+        $$('[data-simcol]', bg).forEach((b) => { b.onclick = () => { out = { pick: colsAll.find((x) => x.id === b.dataset.simcol) }; bg.querySelector('.mf .btn:not(.primary)')?.click(); }; });
+      },
+      buttons: [{ label: 'Cancel', value: null }, { label: 'Add Collector', cls: 'primary', value: 'ok', check: (bg) => {
+        const name = cleanName($('#nc-name', bg).value), lid = $('#nc-off', bg).value;
+        if (!name) { toast('Enter the collector\'s name.', 'bad'); return false; }
+        if (!lid) { toast('Choose the office.', 'bad'); return false; }
+        if (colsAll.some((x) => letters(x.name) === letters(name))) { toast(`${name} is already in the list. Choose it there.`, 'bad'); return false; }
+        out = { add: { id: newId('cero'), name, lguId: lid, designation: $('#nc-des', bg).value.trim() } }; return true; } }] });
+    if (!out) return null;
+    if (out.pick) return out.pick;
+    await saveNewCols([out.add]); toast(`${out.add.name} added as a collector.`, 'ok');
+    return colsAll.find((x) => x.id === out.add.id);
+  };
   const shownCol = () => Object.values(c.fig.chains).flatMap((ch) => [...ch.figs, ch.pend]).flatMap((g) => (g.rec?.remittances || []).filter((m) => m.fromCol));
   const nk = (v) => String(v || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase();
   const dupOf = (m) => shownCol().find((x) => x.collectorId === m.collectorId && ((x.from && m.from && String(x.from) === String(m.from)) || (m.reportNo && x.colNo && nk(m.reportNo) === nk(x.colNo)) || (x.date === m.date && Math.abs(x.amount - m.amount) < 0.005)));
@@ -706,10 +744,16 @@ function wireAll(c) {
   if ($('#rm-form')) {
     const els = ['#rm-date', '#rm-col', '#rm-no', '#rm-from', '#rm-to', '#rm-amt'].map((k) => $(k));
     const add = async () => {
-      const date = $('#rm-date').value, col = resolveCol($('#rm-col').value), amt = num($('#rm-amt').value);
+      const date = $('#rm-date').value, amt = num($('#rm-amt').value); let col = resolveCol($('#rm-col').value);
       if (!date) { $('#rm-date').focus(); return bad('Enter the date received.'); }
-      if (!col) { $('#rm-col').focus(); return bad('Choose the collector from the list (type part of the name).'); }
       if (!(amt > 0)) { $('#rm-amt').focus(); return bad('Enter the amount.'); }
+      if (!col && !$('#rm-col').value.trim()) { $('#rm-col').focus(); return bad('Type the collector\'s name.'); }
+      if (!col) {
+        // Several names fit what was typed: choose one from the list; none fits: a new collector.
+        const part = letters(cleanName($('#rm-col').value)), many = colsAll.filter((x) => letters(x.name).includes(part));
+        if (many.length > 1) { $('#rm-col').focus(); return bad(`${many.length} collectors fit "${$('#rm-col').value.trim()}". Choose one from the list.`); }
+        col = await newColModal($('#rm-col').value); if (!col) return;
+      }
       const fr = $('#rm-from').value.replace(/\D/g, ''), to = $('#rm-to').value.replace(/\D/g, '') || fr;
       if (fr && +to < +fr) { $('#rm-to').focus(); return bad('OR To must not be before OR From.'); }
       const m = lineOf(date, col, $('#rm-no').value, fr, to, amt), list = typedNow().slice(), editing = REM.key === selId && REM.i >= 0;
@@ -729,8 +773,8 @@ function wireAll(c) {
     if (sh && !f.ors.some((x) => x.reportId === sh.id) && !(sh.deposits || []).some((d) => !d.fromLO)) await store.save('cer_reports', sh.id, strip(sh), by(refs), { deleted: true, quiet: true });
     toast('Remittance removed.', 'ok'); }; });
   if ($('#rm-tpl')) $('#rm-tpl').onclick = async (e) => { e.preventDefault();
-    try { const XLSX = await loadXlsx(); const ws = XLSX.utils.aoa_to_sheet([['Date', 'Collector', 'SCR/RCD No.', 'OR From', 'OR To', 'Amount'], ['01/14/2026', colsAll[0]?.name || 'JUAN DELA CRUZ', '2026-0189', 100001, 100050, 8456]]);
-      ws['!cols'] = [12, 30, 14, 12, 12, 12].map((w) => ({ wch: w })); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Remittances'); XLSX.writeFile(wb, 'Remittances Received Template.xlsx'); } catch (err) { toast(err.message || String(err), 'bad'); } };
+    try { const XLSX = await loadXlsx(); const ws = XLSX.utils.aoa_to_sheet([['Date', 'Collector', 'Office (new collector only)', 'SCR/RCD No.', 'OR From', 'OR To', 'Amount'], ['01/14/2026', colsAll[0]?.name || 'JUAN DELA CRUZ', '', '2026-0189', 100001, 100050, 8456]]);
+      ws['!cols'] = [12, 30, 24, 14, 12, 12, 12].map((w) => ({ wch: w })); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Remittances'); XLSX.writeFile(wb, 'Remittances Received Template.xlsx'); } catch (err) { toast(err.message || String(err), 'bad'); } };
   if ($('#rm-imp')) $('#rm-imp').onclick = async () => {
     let plan = null;
     const read = async (file) => {
@@ -738,25 +782,39 @@ function wireAll(c) {
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
       const hi = rows.findIndex((r) => r.some((x) => /date/i.test(String(x))) && r.some((x) => /amount/i.test(String(x)))); if (hi < 0) return { error: 'No header row with Date and Amount was found. Use the Template.' };
       const H = rows[hi].map((x) => String(x)), col = (re) => H.findIndex((x) => re.test(x));
-      const M = { date: col(/date/i), col: col(/collector|name/i), no: col(/scr|rcd|report|\bno\b/i), from: col(/from/i), to: col(/\bto\b/i), amt: col(/amount/i) };
-      const add = [], problems = [];
+      const M = { date: col(/date/i), col: col(/collector|name/i), off: col(/office|barangay/i), no: col(/scr|rcd|report|\bno\b/i), from: col(/from/i), to: col(/\bto\b/i), amt: col(/amount/i) };
+      const add = [], problems = [], fresh = new Map();
       rows.slice(hi + 1).forEach((r, i) => { const line = hi + i + 2, g = (k) => (M[k] < 0 ? '' : r[M[k]]);
         if (!String(g('col')).trim() && !g('amt')) return;
-        const date = excelDate(XLSX, g('date')), c0 = resolveCol(String(g('col'))), amt = typeof g('amt') === 'number' ? r2(g('amt')) : num(g('amt'));
+        const date = excelDate(XLSX, g('date')), amt = typeof g('amt') === 'number' ? r2(g('amt')) : num(g('amt'));
+        let c0 = resolveCol(String(g('col')));
         if (!date) return problems.push({ line, why: 'Date is missing or not a date.' });
-        if (!c0) return problems.push({ line, why: `Collector "${g('col')}" is not an officer of this office or its barangays.` });
+        if (!c0) {
+          // Not in the app yet: a new collector (one per name), its office from the Office column or chosen below.
+          const nm = cleanName(g('col')); if (!nm) return problems.push({ line, why: 'Collector is missing.' });
+          const k = letters(nm); if (!fresh.has(k)) { const lid = officeOf(g('off')); fresh.set(k, { id: newId('cero'), name: nm, lguId: lid, designation: desigFor(lid), sim: similarTo(nm), rows: 0 }); }
+          c0 = fresh.get(k); c0.rows++;
+        }
         if (!(amt > 0)) return problems.push({ line, why: 'Amount is missing.' });
         const m = lineOf(date, c0, String(g('no') || ''), g('from'), g('to'), amt), d = dupOf(m);
         if (d) return problems.push({ line, why: `Already in ${c0.name}'s ${d.reportNo}: tick it instead.` });
         add.push(m); });
-      return { add, problems };
+      return { add, problems, fresh: [...fresh.values()] };
     };
     const v = await modal({ title: 'Import Remittances Received', wide: true,
-      body: `<p class="af-note">Excel columns: <b>Date, Collector, SCR/RCD No., OR From, OR To, Amount</b> (see the Template). Remittances already in the collectors' records are skipped (tick them instead).</p><div class="field"><label for="rm-file">Excel file</label><input class="input" type="file" id="rm-file" accept=".xlsx,.xls,.csv"></div><div id="rm-res"></div>`,
+      body: `<p class="af-note">Excel columns: <b>Date, Collector, SCR/RCD No., OR From, OR To, Amount</b>, and Office for a collector not yet in the app (see the Template). Remittances already in the collectors' records are skipped (tick them instead).</p><div class="field"><label for="rm-file">Excel file</label><input class="input" type="file" id="rm-file" accept=".xlsx,.xls,.csv"></div><div id="rm-res"></div>`,
       onOpen: (bg) => { $('#rm-file', bg).onchange = async (e) => { const fl = e.target.files[0]; if (!fl) return; try { plan = await read(fl); } catch (err) { plan = { error: err.message || String(err) }; }
-        $('#rm-res', bg).innerHTML = plan.error ? `<div class="msg bad">${esc(plan.error)}</div>` : `<div class="oi-sum"><b>${plan.add.length} remittance${plan.add.length === 1 ? '' : 's'} to add</b> · ₱ ${money(r2(plan.add.reduce((n, m) => n + m.amount, 0)))}</div>${plan.problems.length ? `<div class="af-probs"><b>Not imported (${plan.problems.length})</b>${plan.problems.map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`; }; },
-      buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error || !plan.add.length) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
+        const nc = plan.fresh || [];
+        $('#rm-res', bg).innerHTML = plan.error ? `<div class="msg bad">${esc(plan.error)}</div>` : `<div class="oi-sum"><b>${plan.add.length} remittance${plan.add.length === 1 ? '' : 's'} to add</b> · ₱ ${money(r2(plan.add.reduce((n, m) => n + m.amount, 0)))}</div>
+          ${nc.length ? `<h3 class="cer-h3" style="margin-top:10px">New collectors: ${nc.length} <small class="dim">(not in the app yet; added with the import, choose each one's office)</small></h3>
+            <div class="af-tbl"><table class="af-reg rm-newcols"><thead><tr><th>Name</th><th>Lines</th><th>Office</th><th>Designation</th></tr></thead><tbody>${nc.map((x, i) => `<tr><td><b>${esc(x.name)}</b>${x.sim.length ? `<div class="warn-t" style="font-size:12px">Similar: ${x.sim.map((y) => esc(cLabel(y))).join('; ')}. If the same person, fix the name in the Excel file.</div>` : ''}</td><td class="r">${x.rows}</td><td><select class="input" data-ncoff="${i}">${offOpts(x.lguId)}</select></td><td><input class="input" data-ncdes="${i}" value="${esc(x.designation)}"></td></tr>`).join('')}</tbody></table></div>` : ''}
+          ${plan.problems.length ? `<div class="af-probs"><b>Not imported (${plan.problems.length})</b>${plan.problems.map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
+        $$('[data-ncoff]', bg).forEach((el) => { el.onchange = () => { const x = nc[+el.dataset.ncoff], d = $(`[data-ncdes="${el.dataset.ncoff}"]`, bg); if (d.value === x.designation) d.value = desigFor(el.value); x.lguId = el.value; x.designation = d.value; }; });
+        $$('[data-ncdes]', bg).forEach((el) => { el.oninput = () => { nc[+el.dataset.ncdes].designation = el.value.trim(); }; }); }; },
+      buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error || !plan.add.length) { toast('Nothing to import.', 'bad'); return false; }
+        const miss = (plan.fresh || []).filter((x) => !x.lguId); if (miss.length) { toast(`Choose the office of ${miss.map((x) => x.name).join(', ')}.`, 'bad'); return false; } return true; } }] });
     if (v !== 'go') return;
+    if ((plan.fresh || []).length) await saveNewCols(plan.fresh.map(({ id, name, lguId, designation }) => ({ id, name, lguId, designation })));
     if (await saveRems([...typedNow(), ...plan.add], true)) toast(`${plan.add.length} remittance${plan.add.length === 1 ? '' : 's'} imported.`, 'ok');
   };
   const depBox = $('#cd-deps');
