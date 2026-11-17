@@ -16,7 +16,7 @@ import { store, newId } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
 import { loadForms, unusedFormsOf, notPresentedOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges } from './forms.js';
-import { figuresOf, fundsOf, kindOfForm, tagSameDay, ctcSplit, ctcBalance, ctcBegShare } from './collections.js';
+import { figuresOf, fundsOf, kindOfForm, tagSameDay, ctcSplit, ctcBalance, ctcBegShare, isCtc, ctcAlloc, depPart } from './collections.js';
 import { accountsOf, caFund, restFund, fundOrder, carriedOpen } from './funds.js';
 
 const canCount = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
@@ -51,10 +51,18 @@ export function booksOf(refs, f, o, exam, audit, advs, liqs) {
       const chains = Object.values(fig.chains).filter((c) => c.kind === kind);
       const used = forms.some((x) => kindOfForm(lgu, x) === kind) || chains.some((c) => c.figs.length || c.pend.nOrs || c.pend.dep || c.pend.beg);
       if (!used && fig.kinds.length > 1) return;
-      const bal = r2(chains.reduce((n, c) => n + c.pend.end, 0));
+      // As of the cash count: the records dated after it (encoded later) are taken out (their ORs and remittances received
+      // out, their deposits / remittances made added back), so the balance is the cash the officer should hold at the count.
+      const to = audit.countDate, face = (x) => r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0));
+      const after = (part) => r2(chains.reduce((n, c) => { const s = part ? ctcAlloc(c, ctcBegShare(exam.balances)) : null;
+        return n + [...c.figs, c.pend].reduce((m, g) => m
+          + (g.ors || []).filter((x) => x.status !== 'cancelled' && x.date > to && (!part || (part === 'ctc') === isCtc(x.form))).reduce((t, x) => t + face(x), 0)
+          + (part === 'ctc' ? 0 : (g.rec?.remittances || []).filter((x) => !x.beg && x.date > to).reduce((t, x) => t + (+x.amount || 0), 0))
+          - (g.rec?.deposits || []).filter((d) => d.date > to).reduce((t, d) => t + (part ? depPart(part, d, s) : +d.amount || 0), 0), 0); }, 0));
+      const bal = r2(chains.reduce((n, c) => n + c.pend.end, 0) - after(''));
       const label = kind === 'SCD' ? 'AF 51 (SCD)' : kind === 'SCR' ? 'CTC (SCR)' : fns.includes('liquidating') && !fns.includes('collecting') ? 'Collections (Liquidating)' : 'Collections (RCD)';
       if (kind === 'RCD' && ctcSplit(lgu, exam, f, o)) {   // LGU: AF 51 and CTC in one RCD, each its own column
-        const c = ctcBalance(fig, ctcBegShare(exam.balances));
+        const c = r2(ctcBalance(fig, ctcBegShare(exam.balances)) - after('ctc'));
         out.push({ key: 'col-RCD', kind, part: 'or', label: 'AF 51 (RCD)', books: r2(bal - c), note: 'Undeposited AF 51 collections, from Collections & Deposits' });
         out.push({ key: 'col-CTC', kind, part: 'ctc', label: 'CTC (RCD)', books: c, note: 'Undeposited CTC collections, from Collections & Deposits (deposits split by each RCD\'s CTC share)' });
         return;
