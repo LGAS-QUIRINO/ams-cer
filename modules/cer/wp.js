@@ -267,6 +267,7 @@ async function save(wb, file) {
   const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   const a = document.createElement('a'); a.href = url; a.download = file; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
+const ARROW_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPAAAADICAYAAADWfGxSAAAEpUlEQVR4Xu3bC25bOQxAUaeY/W85hZtx0Tj+vI8okdI5CzCEABdkDPpygS+f/hD1/Kr3ZAKJuBgBc0/EhQiYR0RchIB5RsQFCJhXRJycgHnnGrGQkxIwW4k4IQGzh4iTETB7iTgRAXOEiJMQMEeJOAEBc4aIBxMwZ4l4IAHTgogHETCtiHgAAdOSiDsTMK05vexIwEQxjTsQMJFEHEzARBNxIAHTg4iDCJheRBxAwPQk4sYETG8ibkjAjCDiRgTMKCJuQMCMJOKTBMxoTi9PEDBZmMYHCJhMRLyTgMlGxDsImIxEvJGAyUrEGwiYzET8hoDJTsQvCJgKRPyEgKlCxA8ImEpEfEfAVOP08h8CpirT+HIRMKUtH7EJTHVLRyxgZrBsxAJmFktGLGBmslzEAmY2S0UsYGa0TMQCZlZLRCxgZjZ9xAJmdlNHLGBWMO39tIBZyXTTWMCsZqqIBcyKpolYwKxqiogFzMrKRyxgVlc6YgHDpW7EAoYvJSfxR9WHQ5BrE2WYwPBdqUksYPipzOmlgOG59NNYwPBa6ogFDO+ljVjAsE3KiAUM26WLWMCwT6qIBQz7pYlYwHBMiogFDMcNj1jAcM7QiAUM5w07vRQwtNN9GgsY2uoasYChvW4RCxhidIlYwBAnPGIBQ6zQiAUM8cIiFjD0ERKxgKGf5hELGPpqGrGAob9mp5cChnFOT2MBw1inIhYwjHc4YgFDDociFjDksTtiAUMuuyIWMOSzOWIBQ06bIhYw5PU2YgFDbi8jFjDk9/T0UsBQx49pLGCo5VvEAoZ6/kYsYKjpT8QChro+BQx1fQgYavqwQkNNf+IVMNTzN96r/+q9H5b0LVwTGOp4GK8VGvJ7Gq+AIbeX8QoY8nobr4Ahp03xChjy2RyvgCGXXfEKGPLYHa+AIYdD8V65xIJxDod749dIMMbpeK3QMEaTeAUM/TWLV8DQV9N4BQz9NI9XwNBHSLwChnhh8QoYYoXGK2CIEx7vlUssaKtLuDcusaCdrvFaoaGd7vEKGNoYEq+A4bxh8QoYzhkar4DhuOHxChiOSRGvgGG/NPEKGPZJFe+VSyx4L124Ny6x4LW08VqhoXC8AobnUk9eKzQUj9cEhp9KTN6bUo8l1Gfop9dQrgffQsOXcvFaoaFwvAKGopP3xiUWqyq5Mt/zPzArmiJeKzQrmiZeAbOaqeIVMCuZLl4Bs4op4xUwK5g2XgEzu6njFTAzmz5eATOrJeK9conFTJYJ98YlFrNYLl4rNLNYMl4BM4Nl4xUw1S0dr4CpbPl4BUxV4v2fb6GpRrz/EDCViPeOgKlCvA+4xCI74b5gApOZeN8QMFmJdwMBk5F4NxIw2Yh3BwGTiXh3EjBZiPcAAZOBeA8SMKOJ9wQBM5J4T3KJxQjCbcQEpjfxNiRgehJvYwKmF/EGEDA9iDeIgIkm3kACJpJ4gwmYKOLtQMBEEG8nAqY18XbkEotWhDuACUwL4h1EwJwl3oEEzBniHUzAHCXeBATMEeJNQsDsJd5EBMwe4k1GwGwl3oQEzBbiTcolFq8INzkTmGfEW4CAeUS8RQiYe+KFgj4Lvnl5vwGML3GSP+ZwKAAAAABJRU5ErkJggg==';   // a black block arrow (GF 74-A)
 export const fileBase = (c) => `${String(c.A.lgu.data.name || c.agency).replace(/^\s*[BMP]LGU\s*[-–]\s*/i, '').toUpperCase()} - ${c.audit.countDate}`;
 
 export async function downloadReport(c, ver) {
@@ -277,6 +278,10 @@ export async function downloadReport(c, ver) {
   const des = o.designation || '';
   // GF 74-A front
   let ws = wb.getWorksheet('GF-74A Front');
+  // The arrows of the form (beside TO, and beside NOTED AND COMPLIED WITH): pictures, as drawn shapes are not kept.
+  { const arrow = wb.addImage({ base64: ARROW_PNG, extension: 'png' });
+    ws.addImage(arrow, { tl: { col: 2.05, row: 10.3 }, ext: { width: 26, height: 23 }, editAs: 'oneCell' });
+    ws.addImage(arrow, { tl: { col: 7.3, row: 18.6 }, ext: { width: 40, height: 34 }, editAs: 'oneCell' }); }
   // The template's row 44 lacks the merges of rows 41–47 on the left (stray borders): rebuilt like row 43.
   [['A', 'E'], ['F', 'I'], ['J', 'Q'], ['R', 'Y'], ['Z', 'AE'], ['AF', 'AM']].forEach(([c1, c2]) => {
     const a = colNo(c1), z = colNo(c2);
