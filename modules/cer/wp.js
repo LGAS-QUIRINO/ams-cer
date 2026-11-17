@@ -250,6 +250,25 @@ function wideBox(ws, r, c1, c2, text) {
   cl.alignment = { ...(cl.alignment || {}), horizontal: 'center', vertical: 'middle' };
   cl.border = bd;
 }
+// Extra lines in a template table: n rows put before row `before`, styled and merged like row `src`; everything below moves down.
+function growRows(ws, before, n, src) {
+  if (n <= 0) return;
+  const ms = Object.values(ws._merges || {}).map((m) => ({ ...(m.model || m) }));
+  const below = ms.filter((m) => m.top >= before);
+  below.forEach((m) => ws.unMergeCells(m.top, m.left, m.bottom, m.right));
+  const sr = ws.getRow(src), h = sr.height, st = [];
+  for (let k = 1; k <= ws.columnCount; k++) st[k] = JSON.stringify(sr.getCell(k).style || {});
+  const hs = []; for (let r = before; r <= ws.rowCount; r++) hs.push(ws.getRow(r).height);
+  ws.spliceRows(before, 0, ...Array.from({ length: n }, () => []));
+  hs.forEach((x, i) => { ws.getRow(before + n + i).height = x; });
+  below.forEach((m) => ws.mergeCells(m.top + n, m.left, m.bottom + n, m.right));
+  for (let i = 0; i < n; i++) {
+    const r = ws.getRow(before + i); r.height = h;
+    for (let k = 1; k <= ws.columnCount; k++) { const cl = r.getCell(k); cl.value = null; cl.style = JSON.parse(st[k]); }
+    ms.filter((m) => m.top === src && m.bottom === src).forEach((m) => ws.mergeCells(before + i, m.left, before + i, m.right));
+  }
+  if (ws.pageSetup.printArea) ws.pageSetup.printArea = String(ws.pageSetup.printArea).replace(/(\d+)$/, (x) => +x + n);
+}
 const hideRows = (ws, from, to) => { for (let r = from; r <= to; r++) ws.getRow(r).hidden = true; };
 async function save(wb, file) {
   // Excel refuses a file whose first tab (from the original workbook) is past the last sheet, or whose filters point to a removed sheet.
@@ -291,38 +310,47 @@ export async function downloadReport(c, ver) {
     for (let k = a; k <= z; k++) { const src = ws.getCell(43, k); const cl = ws.getCell(44, k); cl.value = null; cl.style = JSON.parse(JSON.stringify(src.style || {})); }
     try { ws.mergeCells(44, a, 44, z); } catch (e) { /* already merged */ }
   });
+  // Lines of the tables: cash items always itemized (the form has 7 lines, more are added); accountable forms itemized
+  // up to 10 lines, more than that → See Annex B (SAAF).
+  const items = (cnt.items || []).map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return { p: itemText(it.particulars), pr: +it.presented || 0, a, d: r2((+it.presented || 0) - a) }; });
+  // Short names: the Name of Form columns of GF 74-A are narrow.
+  const SHORT = { af51: 'AF 51', af51b: 'AF 51', ctci: 'CTC – Ind.', ctcc: 'CTC – Corp.', chk: 'Checks' };
+  const forms = unusedFormsOf(c.f, o.id, exam).map((x) => ({ ...x, name: SHORT[x.form] || x.name }));
+  const mv = forms.filter((x) => x.face && x.qty), nomv = forms.filter((x) => !x.face);
+  const nps = notPresentedOf(c.f, exam, A.to);
+  const MAXF = 10, npLine = nps.length && nomv.length ? 1 : 0;
+  const mvFit = mv.length <= MAXF, nomvFit = nomv.length + npLine <= MAXF;
+  const k1 = Math.max(0, items.length - 7);
+  const k2 = Math.max(0, (mvFit ? mv.length : 0) - 7, (nomvFit ? nomv.length + npLine : 0) - 7);
+  growRows(ws, 35, k1, 33); growRows(ws, 48 + k1, k2, 47 + k1);
+  const R = (t) => t + (t >= 35 ? k1 : 0) + (t >= 48 ? k2 : 0);
+  const qty = new Set(['G28', 'G29', 'G30', 'G31', 'G32', 'G33', `AN${R(48)}`, `AQ${R(57)}`]);
+  for (let i = 0; i < 7 + k2; i++) { qty.add(`F${41 + k1 + i}`); qty.add(`AN${41 + k1 + i}`); }
+  QTY['GF-74A Front'] = { test: (x) => qty.has(x) };
   set(ws, 'O4', o.name); set(ws, 'AO4', des); set(ws, 'F5', agency); set(ws, 'AO5', station);
   set(ws, 'A7', b.maxCash ? +b.maxCash : null); set(ws, 'T7', b.amount ? +b.amount : null); set(ws, 'AH7', b.riskNo || ''); set(ws, 'AS7', b.from || b.to ? `${fmtDate(b.from)} to ${fmtDate(b.to)}` : '');
   set(ws, 'A9', prep.name); set(ws, 'AA9', prep.pos);
   set(ws, 'E12', o.name); set(ws, 'AB12', des); set(ws, 'AS12', fmtDate(audit.countDate)); set(ws, 'B15', des); set(ws, 'AB15', agency); set(ws, 'K20', o.name); set(ws, 'AB20', fmtDate(audit.countDate));
   let cash = 0;
   BILLS.forEach((v, i) => { const n = parseInt(cnt.bills?.[v], 10) || 0; cash += v * n; set(ws, `G${28 + i}`, n || null); set(ws, `K${28 + i}`, n ? v * n : null); });
-  set(ws, 'K34', +cnt.coins || null); cash = r2(cash + (+cnt.coins || 0)); set(ws, 'L35', cash);
-  const items = (cnt.items || []).map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return { p: itemText(it.particulars), pr: +it.presented || 0, a, d: r2((+it.presented || 0) - a) }; });
-  const fit = (list, n, join) => (list.length <= n ? list : [...list.slice(0, n - 1), join(list.slice(n - 1))]);
-  fit(items, 7, (xs) => ({ p: `${xs.length} other items`, pr: r2(xs.reduce((s, x) => s + x.pr, 0)), a: r2(xs.reduce((s, x) => s + x.a, 0)), d: r2(xs.reduce((s, x) => s + x.d, 0)) }))
-    .forEach((x, i) => { set(ws, `S${28 + i}`, x.p); set(ws, `AG${28 + i}`, x.pr); set(ws, `AN${28 + i}`, x.a); set(ws, `AU${28 + i}`, x.d); });
+  set(ws, 'K34', +cnt.coins || null); cash = r2(cash + (+cnt.coins || 0)); set(ws, `L${R(35)}`, cash);
+  items.forEach((x, i) => { set(ws, `S${28 + i}`, x.p); set(ws, `AG${28 + i}`, x.pr); set(ws, `AN${28 + i}`, x.a); set(ws, `AU${28 + i}`, x.d); });
   // As on screen: no cash item → one box across the table reading None.
   if (!items.length) wideBox(ws, 28, 'S', 'BA', 'None');
   const tA = r2(items.reduce((s, x) => s + x.a, 0)), tD = r2(items.reduce((s, x) => s + x.d, 0));
-  set(ws, 'AG35', r2(tA + tD)); set(ws, 'AN35', tA); set(ws, 'AU35', tD); set(ws, 'AU36', r2(cash + tA));
-  // Short names: the Name of Form columns of GF 74-A are narrow.
-  const SHORT = { af51: 'AF 51', af51b: 'AF 51', ctci: 'CTC – Ind.', ctcc: 'CTC – Corp.', chk: 'Checks' };
-  const forms = unusedFormsOf(c.f, o.id, exam).map((x) => ({ ...x, name: SHORT[x.form] || x.name }));
-  const mv = forms.filter((x) => x.face && x.qty), nomv = forms.filter((x) => !x.face);
-  fit(mv, 7, (xs) => ({ name: 'Others', qty: xs.reduce((s, x) => s + x.qty, 0), text: '', face: null, amount: xs.reduce((s, x) => s + x.amount, 0) }))
-    .forEach((x, i) => { set(ws, `A${41 + i}`, x.name); set(ws, `F${41 + i}`, x.qty); set(ws, `J${41 + i}`, x.ns ? 'No serial' : x.text); set(ws, `R${41 + i}`, x.face); set(ws, `Z${41 + i}`, x.amount); });
-  fit(nomv, 7, (xs) => ({ name: 'Others', qty: xs.reduce((s, x) => s + x.qty, 0), text: xs.map((x) => x.text).join('; ') }))
-    .forEach((x, i) => { set(ws, `AF${41 + i}`, x.name); set(ws, `AN${41 + i}`, x.qty); set(ws, `AR${41 + i}`, x.text.replace(/ – /g, '- ')); });
-  // Nothing counted: see the SAAF; booklets not presented: noted on the next free line.
-  const nps = notPresentedOf(c.f, exam, A.to);
-  if (!nomv.length) wideBox(ws, 41, 'AF', 'BA', 'See Annex B (SAAF)');
-  else if (nps.length && nomv.length < 7) wideBox(ws, 41 + nomv.length, 'AF', 'BA', 'Not presented: see Annex B (SAAF)');
-  if (!mv.length) wideBox(ws, 41, 'A', 'AE', nps.some((x) => faceOf({ form: x.form })) ? 'See Annex B (SAAF)' : 'None');
+  set(ws, `AG${R(35)}`, r2(tA + tD)); set(ws, `AN${R(35)}`, tA); set(ws, `AU${R(35)}`, tD); set(ws, `AU${R(36)}`, r2(cash + tA));
+  const F0 = R(41);
+  if (mvFit) mv.forEach((x, i) => { set(ws, `A${F0 + i}`, x.name); set(ws, `F${F0 + i}`, x.qty); set(ws, `J${F0 + i}`, x.ns ? 'No serial' : x.text); set(ws, `R${F0 + i}`, x.face); set(ws, `Z${F0 + i}`, x.amount); });
+  if (nomvFit) nomv.forEach((x, i) => { set(ws, `AF${F0 + i}`, x.name); set(ws, `AN${F0 + i}`, x.qty); set(ws, `AR${F0 + i}`, x.text.replace(/ – /g, '- ')); });
+  // Nothing counted, or too many to list: see the SAAF; booklets not presented: noted on the next free line.
+  if (!nomv.length || !nomvFit) wideBox(ws, F0, 'AF', 'BA', 'See Annex B (SAAF)');
+  else if (npLine) wideBox(ws, F0 + nomv.length, 'AF', 'BA', 'Not presented: see Annex B (SAAF)');
+  if (!mv.length) wideBox(ws, F0, 'A', 'AE', nps.some((x) => faceOf({ form: x.form })) ? 'See Annex B (SAAF)' : 'None');
+  else if (!mvFit) wideBox(ws, F0, 'A', 'AE', 'See Annex B (SAAF)');
   const mvAmt = mv.reduce((s, x) => s + x.amount, 0), pcs = nomv.reduce((s, x) => s + x.qty, 0);
-  set(ws, 'AA48', mvAmt); set(ws, 'AN48', pcs);
-  set(ws, 'D53', fmtDate(audit.countDate)); set(ws, 'AQ55', r2(cash + tA)); set(ws, 'AQ56', mvAmt); set(ws, 'AQ57', pcs); set(ws, 'J59', tD);
-  set(ws, 'A64', o.name); set(ws, 'X64', des); set(ws, 'AM64', agency);
+  set(ws, `AA${R(48)}`, mvAmt); set(ws, `AN${R(48)}`, pcs);
+  set(ws, `D${R(53)}`, fmtDate(audit.countDate)); set(ws, `AQ${R(55)}`, r2(cash + tA)); set(ws, `AQ${R(56)}`, mvAmt); set(ws, `AQ${R(57)}`, pcs); set(ws, `J${R(59)}`, tD);
+  set(ws, `A${R(64)}`, o.name); set(ws, `X${R(64)}`, des); set(ws, `AM${R(64)}`, agency);
   // GF 74-A back: columns AF51 / CTC / Cash Advance (LGU: Collections)
   ws = wb.getWorksheet('GF-74A Back');
   const colOf = (k) => (k === 'ca' ? 'AE' : isCtcKey(k) ? 'T' : 'M');
