@@ -965,3 +965,4 @@ table.af-reg.tr-month{min-width:0}
 @media (max-width:1000px){ .rm-line{grid-template-columns:1fr 1fr} }
 .bk-na{border:1px solid #f0c27a; background:#fffaf2; border-radius:10px; padding:12px 14px; font-size:13.5px; margin-top:8px}
 .af-fromstock{margin:8px 0 0; background:#eef3ff; color:var(--navy, #0b2a6b)}
+.pill.p-bad{background:var(--bad-bg, #fdecea); color:var(--bad, #b3261e); border:1px solid #f1b0aa; margin-top:4px; white-space:normal}

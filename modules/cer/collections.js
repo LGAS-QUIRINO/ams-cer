@@ -410,7 +410,7 @@ export async function collectionsView(ctx) {
     : `<span class="pill p-flag">Hard copy ₱${money(hardT)} · entered ₱${money(inTot)} · ₱${money(Math.abs(r2(hardT - inTot)))} ${hardT > inTot ? 'to go' : 'more than the hard copy'}</span>`;
   const colLabel = (x) => `${x.name}${x.designation ? ' · ' + x.designation : ''}${x.office ? ' · ' + x.office : ''}`;
   const ed = REM.key === selId && REM.i >= 0 ? typed[REM.i] || null : null;
-  const remBlock = isLO ? `<div class="cd-block"><div class="cd-orhead"><h3 class="cer-h3">Remittances received</h3>${progress}</div>
+  const remBlock = isLO ? `<div class="cd-block"><div class="cd-orhead"><h3 class="cer-h3">Remittances from the collectors <small class="dim">(the collections of ${cur.pending ? 'this Liquidating Officer' : `this ${K}`})</small></h3>${progress}</div>
       ${colIn.length || colFree.length ? `<h3 class="cer-h3" style="margin-top:4px">In the app: the collectors' SCR / RCD <small class="dim">${cur.pending ? '(tick them in her RCD)' : '(tick those listed on the hard copy of this RCD)'}</small></h3>
         <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr>${cur.pending ? '' : '<th style="width:30px"></th>'}<th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
         <tbody>${colIn.map((m) => colRow(m, true)).join('')}${colFree.map((m) => colRow(m, false)).join('')}</tbody></table></div>` : ''}
@@ -451,8 +451,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const tip = `Each ${K} is entered once, from the hard copy. ORs, deposits${isLO ? ' and remittances' : ''} dated on or before an ${K}'s date go into it; those dated after the last ${K} wait for the next one. The ${isRem ? 'unremitted' : 'undeposited'} balance carries from one ${K} to the next of the same fund.${usedKinds.includes('SCR') ? ' The SCD is for AF 51 deposited in the bank; the SCR is for CTC remitted to the MTO.' : ''}`;
   const repBody = `<div class="cd-scdhead"><h3 class="cer-h3">${KS0} of this officer</h3><span class="crumb-i" title="${esc(tip)}">ⓘ</span>
       <span class="cd-scdbtns">${enc ? usedKinds.map((k) => `<button class="btn primary sm" type="button" data-newrep="${k}">+ ${k}</button>`).join('') : ''}<button class="btn sm" type="button" id="cd-funds">Funds (${funds.length})</button><button class="btn sm" type="button" id="cd-sumxls2">Export to Excel</button></span></div>
-    ${sumTable(true)}
-    ${remBlock}`;
+    ${sumTable(true)}`;
 
   /* ----- 2 · Collections ----- */
   const myBooklets = (form) => f.booklets.filter((b) => b.form === form && b.officerId === o.id && b.status !== 'lost' && !b.noSerial).sort((a, b) => a.from - b.from);
@@ -594,9 +593,12 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
 
   const nPend = pends.reduce((n, ch) => n + ch.pend.nOrs, 0);
   const subRep = cur.pending ? (nPend ? `${nPend} OR${nPend > 1 ? 's' : ''} not yet in an ${K}` : `${realFigs.length} ${K}${realFigs.length === 1 ? '' : 's'} · none selected`) : (cur.rec.no ? `${esc(repName(cur.rec, K))} · ${esc(fmtDate(cur.rec.date))}` : esc(repName(cur.rec, K)));
+  // An LO's collections are the remittances from the collectors (and her own ORs, if she collects too).
+  const nRem = (cur.rec?.remittances || []).filter((m) => !m.beg).length;
+  const colSub = [forms.length ? `${cur.nOrs} OR${cur.nOrs === 1 ? '' : 's'}` : '', `${nRem} remittance${nRem === 1 ? '' : 's'}`].filter(Boolean).join(' · ') + ` · ₱ ${money(r2((cur.orsTotal || 0) + (cur.remTotal || 0)))}`;
   // One compact panel on top: the two choices on one line, the three tabs under them.
   const body = hello() + topBar(kindPick, true) + `
-    ${tabs([['rep', K, subRep, repBody], ['col', 'Collections', `${cur.nOrs} OR${cur.nOrs === 1 ? '' : 's'} · ₱ ${money(cur.orsTotal)}`, colBody],
+    ${tabs([['rep', K, subRep, repBody], ['col', 'Collections', isLO ? colSub : `${cur.nOrs} OR${cur.nOrs === 1 ? '' : 's'} · ₱ ${money(cur.orsTotal)}`, isLO ? (forms.length ? colBody + remBlock : remBlock) : colBody],
       ['dep', isRem ? 'Remittances to MTO' : 'Deposits', `₱ ${money(cur.dep)} ${isRem ? 'remitted' : 'deposited'} · ₱ ${money(cur.end)} ${isRem ? 'unremitted' : 'undeposited'}`, depBody]])}
 `;
 
@@ -756,6 +758,7 @@ function wireAll(c) {
       }
       const fr = $('#rm-from').value.replace(/\D/g, ''), to = $('#rm-to').value.replace(/\D/g, '') || fr;
       if (fr && +to < +fr) { $('#rm-to').focus(); return bad('OR To must not be before OR From.'); }
+      if (fr && rangeOff(fr, to)) { $('#rm-to').focus(); return bad(`Check the OR range: ${rangeOff(fr, to)}. One remittance does not cover that many; correct OR From or OR To.`); }
       const m = lineOf(date, col, $('#rm-no').value, fr, to, amt), list = typedNow().slice(), editing = REM.key === selId && REM.i >= 0;
       if (editing) list[REM.i] = m; else list.push(m);
       if (await saveRems(list)) { REM.key = selId; REM.i = -1; REM.date = date; setTimeout(() => { const el = $('#rm-col'); if (el) el.focus(); }, 350); }
@@ -796,6 +799,9 @@ function wireAll(c) {
           c0 = fresh.get(k); c0.rows++;
         }
         if (!(amt > 0)) return problems.push({ line, why: 'Amount is missing.' });
+        { const fr = String(g('from') || '').replace(/\D/g, ''), to = String(g('to') || '').replace(/\D/g, '') || fr;
+          if (fr && +to < +fr) return problems.push({ line, why: 'OR To is before OR From.' });
+          if (fr && rangeOff(fr, to)) return problems.push({ line, why: `Check the OR range: ${rangeOff(fr, to)}.` }); }
         const m = lineOf(date, c0, String(g('no') || ''), g('from'), g('to'), amt), d = dupOf(m);
         if (d) return problems.push({ line, why: `Already in ${c0.name}'s ${d.reportNo}: tick it instead.` });
         add.push(m); });
@@ -1044,9 +1050,14 @@ const colOpts = (cs, sel) => { const own = cs.filter((x) => !x.office), br = cs.
   const op = (x) => `<option value="${esc(x.id)}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}${x.designation ? ' · ' + esc(x.designation) : ''}${x.office ? ' · ' + esc(x.office) : ''}</option>`;
   return `${own.length ? `<optgroup label="This office">${own.map(op).join('')}</optgroup>` : ''}${br.length ? `<optgroup label="Barangays">${br.map(op).join('')}</optgroup>` : ''}`; };
 const colName = (f, refs, id) => { const x = f.officers.find((y) => y.id === id); if (!x) return ''; const l = refs.lgu[x.lguId]; return `${x.name}${l && l.data.kind === 'barangay' ? ' · ' + l.data.name : ''}`; };
+// An OR range too long for one remittance (a typing slip, e.g. 3056651–3656653): flagged, and refused on entry.
+const REM_MAXPCS = 1000;
+const rangeOff = (fr, to) => { const a = +fr, z = +(to || fr); if (!a) return ''; const n = z - a + 1;
+  return n > REM_MAXPCS ? `${n.toLocaleString('en-US')} ORs in ${a}–${z}` : String(Math.trunc(a)).length !== String(Math.trunc(z)).length ? `OR From and OR To have a different number of digits` : ''; };
 // A remittance against the collector's ORs in its range: agree, not found, more, or not yet encoded.
 function remCheck(f, m) {
   if (!m.from) return '<span class="dim">no range</span>';
+  const off = rangeOff(m.from, m.to); if (off) return `<span class="pill p-bad" title="${esc(off)}">Check the OR range · ${esc(off)}</span>`;
   const a = +m.from, z = +(m.to || m.from);
   const xs = f.ors.filter((x) => x.officerId === m.collectorId && x.status !== 'cancelled' && +x.serial >= a && maxSer(x) <= z);
   if (!xs.length) return '<span class="pill p-flag">Collections not yet encoded</span>';
@@ -1327,7 +1338,7 @@ async function reportModal(c, K, g) {
         ${colChoices(fund0).length ? `<div class="af-tbl rp-colt"><table class="af-reg"><thead><tr><th style="width:30px"></th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount</th></tr></thead><tbody>
           ${colChoices(fund0).map(({ m, on }) => `<tr><td><input type="checkbox" data-rpk="${esc(m.key)}" ${on ? 'checked' : ''} aria-label="In this ${K}"></td><td>${esc(fmtDate(m.date))}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td></tr>`).join('')}</tbody></table></div>`
           : '<p class="dim" style="margin:6px 0">No collector\'s SCR / RCD naming this officer is waiting. Type a remittance in the RCD (Typed here) when the collector\'s report is not in the app.</p>'}</div>` : ''}
-      <p class="af-note">${pureLO ? `${K} Date: the date written on the ${K}. Remittances typed by hand go in the ${K} under "Typed here".` : `${K} Date: the date written on the ${K}; if none, the date of the last OR it covers. ORs go into the ${K} by their number in the OR Range.`}</p>
+      <p class="af-note">${pureLO ? `${K} Date: the date written on the ${K}. Remittances typed by hand are entered in the Collections tab of the ${K}.` : `${K} Date: the date written on the ${K}; if none, the date of the last OR it covers. ORs go into the ${K} by their number in the OR Range.`}</p>
       <p class="af-note" id="rp-prev"></p>`,
     onOpen: (bg) => { $$('#rp-date, #rp-fund, #rp-range, #rp-hard, [data-rpk]', bg).forEach((el) => { el.addEventListener('input', () => preview(bg)); el.addEventListener('change', () => preview(bg)); }); preview(bg); },
     buttons: [...(isNew ? [] : [{ label: 'Delete', cls: 'danger', value: 'del' }]), { label: 'Cancel', value: null },
