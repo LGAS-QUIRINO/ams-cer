@@ -425,8 +425,9 @@ export async function collectionsView(ctx) {
         <div class="field"><label for="rm-amt">Amount</label><input class="input r" id="rm-amt" inputmode="decimal" value="${ed ? esc(money(ed.amount)) : ''}"></div>
         <div class="field"><label>&nbsp;</label><button class="btn primary" type="button" id="rm-add">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn sm" type="button" id="rm-cancel">Cancel</button>' : ''}</div>
       </div><p class="af-note" style="margin-top:4px">Collector: type part of the name; the list has the officers of this office and its barangays. A name not on the list: Add asks for the office and adds the collector. A barangay treasurer is taken as an SCR, an LGU collector as an RCD. Enter moves to the next box; Enter on Amount adds the line.</p>` : ''}
-      ${typed.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th>#</th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check</th>${enc ? '<th></th>' : ''}</tr></thead>
-        <tbody>${typed.map((m, i) => `<tr class="${ed && REM.i === i ? 'cd-on' : ''}"><td>${i + 1}</td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${m.from ? `${esc(m.from)}–${esc(m.to || m.from)}` : '—'}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td><button class="btn sm" type="button" data-rmedit="${i}">Edit</button> <button class="btn sm" type="button" data-rmdel="${i}" aria-label="Remove">✕</button></td>` : ''}</tr>`).join('')}</tbody>
+      ${typed.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg rm-tbl"><thead><tr><th>#</th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check</th>${enc ? '<th></th>' : ''}</tr></thead>
+        <tbody>${remGroups(typed).map((grp, gi) => grp.map(({ m, i }, k) => `<tr class="${ed && REM.i === i ? 'cd-on' : ''} ${k ? 'rm-ser' : 'rm-first'}"><td>${k ? '' : gi + 1}</td><td>${!k || m.date !== grp[0].m.date ? esc(fmtDate(m.date)) : ''}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${k ? '' : esc(colName(f, refs, m.collectorId))}</td><td>${k ? '' : esc(m.reportNo || '')}</td><td class="mono">${m.from ? `${esc(m.from)}–${esc(m.to || m.from)}` : '—'}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td class="rm-act"><button class="btn sm" type="button" data-rmedit="${i}">Edit</button> <button class="btn sm" type="button" data-rmdel="${i}" aria-label="Remove">✕</button>${grp.length === 1 && m.reportNo ? ` <button class="btn sm" type="button" data-rmser="${i}" title="Another OR series of the same report">+ Series</button>` : ''}</td>` : ''}</tr>`).join('')
+          + (grp.length > 1 ? `<tr class="rm-sub"><td></td><td></td><td></td><td></td><td><b>${grp.length} series</b></td><td class="r"><b>${money(r2(grp.reduce((n, x) => n + (+x.m.amount || 0), 0)))}</b></td><td></td>${enc ? `<td class="rm-act"><button class="btn sm" type="button" data-rmser="${grp[0].i}" title="Another OR series of the same report">+ Series</button></td>` : ''}</tr>` : '')).join('')}</tbody>
         <tfoot><tr class="cd-foot"><td colspan="5">Total remittances received${cur.pending ? '' : ' in this RCD'}</td><td class="r">${money(inTot)}</td><td colspan="${enc ? 2 : 1}"></td></tr></tfoot></table></div>` : (allIn.length ? `<p class="dim" style="margin:6px 0">Total remittances received${cur.pending ? '' : ' in this RCD'}: <b>₱ ${money(inTot)}</b></p>` : '')}
       <datalist id="cd-crlist">${[...new Set(crList)].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
       ${enc ? '<div class="cd-actions" style="justify-content:flex-start"><button class="btn sm" type="button" id="rm-imp">Import from Excel</button><a href="#" class="cd-link" id="rm-tpl">Template</a><span class="dim" style="font-size:12.5px">many lines at once: Date · Collector · SCR/RCD No. · OR From · OR To · Amount</span></div>' : ''}
@@ -723,6 +724,19 @@ function wireAll(c) {
   };
   // Saves the typed list of this report: a remittance already in the collector's records is not saved again; one whose
   // collector's SCR / RCD is not in the app makes it (No., date, OR range); only its collections are left to encode there.
+  // A collector's SCR / RCD made from the LO's lines carries the OR series of all those lines (one report, several series);
+  // a series taken out is taken out of it too, while the report has no OR of its own yet.
+  const syncShells = async (list) => {
+    const ids = new Set(list.map((m) => m.reportId).filter(Boolean));
+    for (const id of ids) {
+      const sh = f.reports.find((r) => r.id === id && r.madeFrom && r.madeFrom.officerId === o.id); if (!sh) continue;
+      const mine = mergeRanges(list.filter((m) => m.reportId === id && m.from).map((m) => [+m.from, +(m.to || m.from)]));
+      const want = f.ors.some((x) => x.reportId === id) ? mergeRanges([...(sh.ranges || []), ...mine]) : mine;
+      if (JSON.stringify(want) !== JSON.stringify(mergeRanges(sh.ranges || []))) { sh.ranges = want; await store.save('cer_reports', sh.id, { ...strip(sh), ranges: want }, by(refs), { quiet: true }); }
+    }
+  };
+  // Lines typed before series were grouped: their reports get the missing series (once, quietly).
+  syncShells(f.reports.filter((r) => r.officerId === o.id && !r.pending).flatMap((r) => (r.remittances || []).filter((m) => !m.fromCol))).catch(() => {});
   const saveRems = async (list, quiet) => {
     const was = typedNow();
     for (const m of list) {
@@ -742,8 +756,9 @@ function wireAll(c) {
         ranges: m.from ? [[+m.from, +(m.to || m.from)]] : [], deposits: [], remittances: [], begTyped: 0, madeFrom: { officerId: o.id, name: o.name, no: cur.pending ? '' : cur.rec.no || '', reportId: cur.pending ? '' : cur.id } }, by(refs), { quiet: true });
       m.reportId = nid;
     }
+    await syncShells(list);
     await pendRec({ remittances: [...list].sort((a, b) => String(a.date).localeCompare(String(b.date))) });
-    if (!quiet) toast('Remittance saved.', 'ok');
+    if (!quiet) { const n = list.filter((x) => x.reportId && x.reportId === list[list.length - 1]?.reportId).length; toast(n > 1 ? `Saved as series ${n} of ${list[list.length - 1].reportNo}.` : 'Remittance saved.', 'ok'); }
     return true;
   };
   if ($('#rm-form')) {
@@ -771,11 +786,15 @@ function wireAll(c) {
     $('#rm-add').onclick = add;
     if ($('#rm-cancel')) $('#rm-cancel').onclick = () => { REM.i = -1; emitChange('local'); };
   }
+  // + Series: the entry line filled with the report's date, collector and No.; only OR From, OR To and Amount are left.
+  $$('[data-rmser]').forEach((b) => { b.onclick = () => { const m = typedNow()[+b.dataset.rmser]; if (!m) return; REM.i = -1;
+    const x = colsAll.find((y) => y.id === m.collectorId); $('#rm-date').value = m.date; $('#rm-col').value = x ? cLabel(x) : ''; $('#rm-no').value = m.reportNo || '';
+    ['#rm-from', '#rm-to', '#rm-amt'].forEach((k) => { $(k).value = ''; }); $('#rm-from').focus(); $('#rm-form').scrollIntoView({ block: 'center', behavior: 'smooth' }); }; });
   $$('[data-rmedit]').forEach((b) => { b.onclick = () => { REM.key = selId; REM.i = +b.dataset.rmedit; emitChange('local'); setTimeout(() => { const el = $('#rm-amt'); if (el) el.focus(); }, 350); }; });
   $$('[data-rmdel]').forEach((b) => { b.onclick = async () => { const gone = typedNow()[+b.dataset.rmdel], list = typedNow().filter((_, i) => i !== +b.dataset.rmdel); REM.i = -1;
     if (!(await saveRems(list, true))) return;
     // The collector's SCR / RCD made from this line, still without any OR: removed with it.
-    const sh = gone && gone.reportId && f.reports.find((r) => r.id === gone.reportId && r.madeFrom && r.madeFrom.officerId === o.id);
+    const sh = gone && gone.reportId && !list.some((m) => m.reportId === gone.reportId) && f.reports.find((r) => r.id === gone.reportId && r.madeFrom && r.madeFrom.officerId === o.id);
     if (sh && !f.ors.some((x) => x.reportId === sh.id) && !(sh.deposits || []).some((d) => !d.fromLO)) await store.save('cer_reports', sh.id, strip(sh), by(refs), { deleted: true, quiet: true });
     toast('Remittance removed.', 'ok'); }; });
   if ($('#rm-tpl')) $('#rm-tpl').onclick = async (e) => { e.preventDefault();
@@ -1053,6 +1072,12 @@ const colOpts = (cs, sel) => { const own = cs.filter((x) => !x.office), br = cs.
   const op = (x) => `<option value="${esc(x.id)}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}${x.designation ? ' · ' + esc(x.designation) : ''}${x.office ? ' · ' + esc(x.office) : ''}</option>`;
   return `${own.length ? `<optgroup label="This office">${own.map(op).join('')}</optgroup>` : ''}${br.length ? `<optgroup label="Barangays">${br.map(op).join('')}</optgroup>` : ''}`; };
 const colName = (f, refs, id) => { const x = f.officers.find((y) => y.id === id); if (!x) return ''; const l = refs.lgu[x.lguId]; return `${x.name}${l && l.data.kind === 'barangay' ? ' · ' + l.data.name : ''}`; };
+// Typed remittances grouped by the collector's report (same collector and No.): one row per report, its OR series under it.
+function remGroups(list) {
+  const key = (m) => (m.reportNo ? `${m.collectorId}|${String(m.reportNo).replace(/[^0-9A-Za-z]/g, '').toUpperCase()}` : `#${Math.random()}`);
+  const out = new Map(); list.forEach((m, i) => { const k = key(m); if (!out.has(k)) out.set(k, []); out.get(k).push({ m, i }); });
+  return [...out.values()];
+}
 // An LO's RCD: the collectors' SCR / RCD it covers (distinct reports), their numbers as runs (417–442).
 function coveredOf(f, refs, rec) { const seen = new Map();
   (rec.remittances || []).filter((m) => !m.beg && m.reportNo).forEach((m) => { const k = `${m.collectorId}|${String(m.reportNo).replace(/[^0-9A-Za-z]/g, '').toUpperCase()}`; if (!seen.has(k)) seen.set(k, m); });

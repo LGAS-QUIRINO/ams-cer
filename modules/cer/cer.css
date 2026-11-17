@@ -972,3 +972,7 @@ table.af-reg.tr-month{min-width:0}
 .cd-sumtbl th:first-child, .cd-sumtbl td:first-child{padding-left:16px}
 .cd-sumtbl thead th:nth-child(n+2):not(:nth-child(5)), .cd-sumtbl tbody td:nth-child(n+2):not(:nth-child(5)){width:1%; white-space:nowrap}
 .cd-sumtbl td .btn.sm{padding:3px 10px; min-height:0; line-height:1.4}
+/* LO: a collector's report with several OR series: one row per report, its series under it. */
+.rm-tbl tr.rm-ser td{border-top:1px dashed #e3e8f2}
+.rm-tbl tr.rm-sub td{border-top:1px dashed #e3e8f2; background:#f8faff; padding-top:6px; padding-bottom:6px}
+.rm-tbl td.rm-act{white-space:nowrap}
