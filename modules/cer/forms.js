@@ -1691,7 +1691,17 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
       parts.forEach((s) => { s.unused = unusedFromTyped(r.ranges, pv.mode, s.x, s.y); });
       if (parts.every((s) => !s.unused)) return { error: 'None of the numbers typed changed a booklet. Check the numbers.' };
     }
-    for (const s of parts) { const hit = overlaps(f, form, s.x, s.y); if (hit.length) return { error: `${FORM_SHORT[form]} ${rangeText(s.x, s.y)} overlaps ${rangeText(hit[0].from, hit[0].to)} already encoded${hit[0].officerId ? ' with ' + (f.officers.find((x) => x.id === hit[0].officerId)?.name || 'another officer') : ' in the custodian\'s stock'}.` }; }
+    for (const s of parts) {
+      const hit = overlaps(f, form, s.x, s.y); if (!hit.length) continue;
+      const h = hit[0];
+      // Received by the custodian but not yet issued: the same booklet is issued to this officer (no second copy).
+      if (src === 'custodian' && hit.length === 1 && h.status === 'stock' && h.lguId === regId) {
+        if (h.from !== s.x || h.to !== s.y) return { error: `${FORM_SHORT[form]} ${rangeText(h.from, h.to)} is in the custodian's stock as one booklet: enter that exact series (Per Booklet ${h.to - h.from + 1}).` };
+        if (h.receivedDate && h.receivedDate > asOf) return { error: `${FORM_SHORT[form]} ${rangeText(h.from, h.to)} was received by the custodian on ${fmtDate(h.receivedDate)}, after ${fmtDate(asOf)}: it could not be in the officer's hands ${cut ? 'before the cut-off' : 'at the last cash exam'}. Issue it in Accountable Forms with its date issued.` };
+        s.stock = h; continue;
+      }
+      return { error: `${FORM_SHORT[form]} ${rangeText(s.x, s.y)} overlaps ${rangeText(h.from, h.to)} already encoded${h.officerId ? ' with ' + (f.officers.find((x) => x.id === h.officerId)?.name || 'another officer') : h.status === 'stock' ? ' in the custodian\'s stock' : ''}.` };
+    }
     return { src, form, parts, per: p };
   };
   let lastSrc = 'custodian';
@@ -1709,7 +1719,9 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
     const box = $('#g-prev', bg);
     if ((!ns && !int($('#g-from', bg).value)) || !int($('#g-to', bg).value)) { box.innerHTML = ''; return; }
     const r = read(bg);
-    box.innerHTML = r.error ? `<b class="warn-t">${esc(r.error)}</b>` : startPreview({ parts: r.parts, held: o.id, ns: r.ns }).replace('in the officer\'s hands', `in ${esc(o.name)}'s hands at the last cash exam`);
+    const st = r.error ? [] : r.parts.filter((s) => s.stock);
+    box.innerHTML = r.error ? `<b class="warn-t">${esc(r.error)}</b>` : startPreview({ parts: r.parts, held: o.id, ns: r.ns }).replace('in the officer\'s hands', `in ${esc(o.name)}'s hands ${cut ? 'at the cut-off' : 'at the last cash exam'}`)
+      + (st.length ? `<div class="msg info af-fromstock">${st.map((s) => `<b>${rangeText(s.x, s.y)}</b>`).join(', ')} ${st.length > 1 ? 'are' : 'is'} in the custodian's stock${st.length === 1 && st[0].stock.receivedDate ? ` (received ${esc(fmtDate(st[0].stock.receivedDate))})` : ''}: issued to ${esc(o.name)} ${cut ? 'as presented at the cut-off' : 'as beginning forms'} (the same booklet, not a second copy).</div>` : '');
   };
   // The officer's own forms (ticked in Audit Setup) only; the custodian, or an officer with none ticked yet, sees them all.
   const allForms = formsFor(f, regId);
@@ -1759,6 +1771,13 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
   const from = { custodian: '', bank: 'Bank', direct: plan.other }[plan.src];
   const direct = plan.src !== 'custodian';
   for (const s of plan.parts) {
+    if (s.stock) {
+      // In the custodian's stock: the same booklet issued to the officer; its receipt stays as encoded (RAAF).
+      const b = s.stock;
+      await store.save('cer_booklets', b.id, { ...strip(b), status: 'issued', officerId: o.id, issuedDate: asOf, issuedAsOf: true, ...(cut ? { foundAtCount: true } : { beginAs: 'ao', beginDate: asOf }), usedBefore: null, unusedAtStart: s.unused, receivedDirect: false,
+        history: [...(b.history || []), hist(refs, 'issued', asOf, { officerId: o.id, note: `From the custodian's stock; date issued not yet known, ${cut ? 'presented at the cash count (cut-off)' : "in the officer's hands at the last cash exam"}${s.unused ? `, partly used: ${countRanges(s.unused)} unused` : ''} · ${cut ? 'Cash Count' : 'Audit Setup'}` })] }, by(refs), { quiet: true });
+      continue;
+    }
     // The officer's beginning as of the last cash exam: dates not yet known (added with Edit when found).
     const rec = { lguId: regId, form: plan.form, from: s.x, to: s.y, qty: s.y - s.x + 1, reference: '', status: 'issued', officerId: o.id, ...(plan.ns ? { noSerial: true } : {}),
       issuedDate: asOf, issuedAsOf: true, ...(cut ? { foundAtCount: true } : { beginAs: 'ao', beginDate: asOf }), usedBefore: null, unusedAtStart: s.unused,
