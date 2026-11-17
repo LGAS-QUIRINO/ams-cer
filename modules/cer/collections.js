@@ -409,7 +409,9 @@ export async function collectionsView(ctx) {
   const progress = hardT === null ? '' : Math.abs(hardT - inTot) < 0.005 ? `<span class="pill p-done">Hard copy ₱${money(hardT)} · entered ₱${money(inTot)} · agrees</span>`
     : `<span class="pill p-flag">Hard copy ₱${money(hardT)} · entered ₱${money(inTot)} · ₱${money(Math.abs(r2(hardT - inTot)))} ${hardT > inTot ? 'to go' : 'more than the hard copy'}</span>`;
   const colLabel = (x) => `${x.name}${x.designation ? ' · ' + x.designation : ''}${x.office ? ' · ' + x.office : ''}`;
-  const ed = REM.key === selId && REM.i >= 0 ? typed[REM.i] || null : null;
+  // Edit opens the whole report (all its series) in the entry line.
+  const edGrp = REM.key === selId && REM.i >= 0 ? remGroups(typed).find((g) => g.some((x) => x.i === REM.i)) || null : null;
+  const ed = edGrp ? edGrp[0].m : null;
   const remBlock = isLO ? `<div class="cd-block"><div class="cd-orhead"><h3 class="cer-h3">Remittances from the collectors <small class="dim">(the collections of ${cur.pending ? 'this Liquidating Officer' : `this ${K}`})</small></h3>${progress}</div>
       ${colIn.length || colFree.length ? `<h3 class="cer-h3" style="margin-top:4px">In the app: the collectors' SCR / RCD <small class="dim">${cur.pending ? '(tick them in her RCD)' : '(tick those listed on the hard copy of this RCD)'}</small></h3>
         <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr>${cur.pending ? '' : '<th style="width:30px"></th>'}<th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
@@ -420,14 +422,14 @@ export async function collectionsView(ctx) {
         <div class="field rm-col"><label for="rm-col">Collector</label><input class="input" id="rm-col" list="rm-cols" autocomplete="off" placeholder="Type part of the name" value="${esc(ed ? colLabel(collectors.find((x) => x.id === ed.collectorId) || { name: '' }) : '')}">
           <datalist id="rm-cols">${collectors.map((x) => `<option value="${esc(colLabel(x))}">`).join('')}</datalist></div>
         <div class="field"><label for="rm-no">Their SCR / RCD No.</label><input class="input mono" id="rm-no" list="cd-crlist" value="${esc(ed ? ed.reportNo || '' : '')}"></div>
-        <div class="field"><label for="rm-from">OR From</label><input class="input mono" id="rm-from" inputmode="numeric" value="${esc(ed ? ed.from || '' : '')}"></div>
-        <div class="field"><label for="rm-to">OR To</label><input class="input mono" id="rm-to" inputmode="numeric" value="${esc(ed ? ed.to || '' : '')}"></div>
-        <div class="field"><label for="rm-amt">Amount</label><input class="input r" id="rm-amt" inputmode="decimal" value="${ed ? esc(money(ed.amount)) : ''}"></div>
-        <div class="field"><label>&nbsp;</label><button class="btn primary" type="button" id="rm-add">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn sm" type="button" id="rm-cancel">Cancel</button>' : ''}</div>
-      </div><p class="af-note" style="margin-top:4px">Collector: type part of the name; the list has the officers of this office and its barangays. A name not on the list: Add asks for the office and adds the collector. A barangay treasurer is taken as an SCR, an LGU collector as an RCD. Enter moves to the next box; Enter on Amount adds the line.</p>` : ''}
+        <div class="rm-sers"><div class="rm-shead"><label>OR From</label><label>OR To</label><label class="r">Amount</label><span></span></div>
+          <div id="rm-srows">${(edGrp ? edGrp.map((x) => x.m) : [null]).map(serRow).join('')}</div>
+          <div class="rm-sfoot"><a href="#" class="cd-link" id="rm-addser">+ Series</a><span class="dim">same report</span><span id="rm-tot"></span></div></div>
+        <div class="field rm-addbox"><button class="btn primary" type="button" id="rm-add">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn sm" type="button" id="rm-cancel">Cancel</button>' : ''}</div>
+      </div><p class="af-note" style="margin-top:4px">Collector: type part of the name; the list has the officers of this office and its barangays. A name not on the list: Add asks for the office and adds the collector. A barangay treasurer is taken as an SCR, an LGU collector as an RCD. Several OR series in one report: + Series. Enter moves to the next box (on the last Amount, it opens another series); Enter on an empty series, or Add, saves the report.</p>` : ''}
       ${typed.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg rm-tbl"><thead><tr><th>#</th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check</th>${enc ? '<th></th>' : ''}</tr></thead>
-        <tbody>${remGroups(typed).map((grp, gi) => grp.map(({ m, i }, k) => `<tr class="${ed && REM.i === i ? 'cd-on' : ''} ${k ? 'rm-ser' : 'rm-first'}"><td>${k ? '' : gi + 1}</td><td>${!k || m.date !== grp[0].m.date ? esc(fmtDate(m.date)) : ''}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${k ? '' : esc(colName(f, refs, m.collectorId))}</td><td>${k ? '' : esc(m.reportNo || '')}</td><td class="mono">${m.from ? `${esc(m.from)}–${esc(m.to || m.from)}` : '—'}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td class="rm-act"><button class="btn sm" type="button" data-rmedit="${i}">Edit</button> <button class="btn sm" type="button" data-rmdel="${i}" aria-label="Remove">✕</button>${grp.length === 1 && m.reportNo ? ` <button class="btn sm" type="button" data-rmser="${i}" title="Another OR series of the same report">+ Series</button>` : ''}</td>` : ''}</tr>`).join('')
-          + (grp.length > 1 ? `<tr class="rm-sub"><td></td><td></td><td></td><td></td><td><b>${grp.length} series</b></td><td class="r"><b>${money(r2(grp.reduce((n, x) => n + (+x.m.amount || 0), 0)))}</b></td><td></td>${enc ? `<td class="rm-act"><button class="btn sm" type="button" data-rmser="${grp[0].i}" title="Another OR series of the same report">+ Series</button></td>` : ''}</tr>` : '')).join('')}</tbody>
+        <tbody>${remGroups(typed).map((grp, gi) => grp.map(({ m, i }, k) => `<tr class="${edGrp && edGrp.some((x) => x.i === i) ? 'cd-on' : ''} ${k ? 'rm-ser' : 'rm-first'}"><td>${k ? '' : gi + 1}</td><td>${!k || m.date !== grp[0].m.date ? esc(fmtDate(m.date)) : ''}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${k ? '' : esc(colName(f, refs, m.collectorId))}</td><td>${k ? '' : esc(m.reportNo || '')}</td><td class="mono">${m.from ? `${esc(m.from)}–${esc(m.to || m.from)}` : '—'}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td class="rm-act">${k ? '' : `<button class="btn sm" type="button" data-rmedit="${i}">Edit</button> `}<button class="btn sm" type="button" data-rmdel="${i}" aria-label="Remove${grp.length > 1 ? ' this series' : ''}" title="${grp.length > 1 ? 'Remove this series' : 'Remove'}">✕</button></td>` : ''}</tr>`).join('')
+          + (grp.length > 1 ? `<tr class="rm-sub"><td></td><td></td><td></td><td></td><td><b>${grp.length} series</b></td><td class="r"><b>${money(r2(grp.reduce((n, x) => n + (+x.m.amount || 0), 0)))}</b></td><td></td>${enc ? '<td></td>' : ''}</tr>` : '')).join('')}</tbody>
         <tfoot><tr class="cd-foot"><td colspan="5">Total remittances received${cur.pending ? '' : ' in this RCD'}</td><td class="r">${money(inTot)}</td><td colspan="${enc ? 2 : 1}"></td></tr></tfoot></table></div>` : (allIn.length ? `<p class="dim" style="margin:6px 0">Total remittances received${cur.pending ? '' : ' in this RCD'}: <b>₱ ${money(inTot)}</b></p>` : '')}
       <datalist id="cd-crlist">${[...new Set(crList)].map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
       ${enc ? '<div class="cd-actions" style="justify-content:flex-start"><button class="btn sm" type="button" id="rm-imp">Import from Excel</button><a href="#" class="cd-link" id="rm-tpl">Template</a><span class="dim" style="font-size:12.5px">many lines at once: Date · Collector · SCR/RCD No. · OR From · OR To · Amount</span></div>' : ''}
@@ -752,45 +754,84 @@ function wireAll(c) {
       const hit = f.reports.find((r) => !r.pending && r.officerId === col.id && (r.kind || ckind) === ckind && String(r.no).trim().toUpperCase() === m.reportNo.toUpperCase());
       if (hit) { m.reportId = hit.id; continue; }
       const nid = newId('cerr');
-      await store.save('cer_reports', nid, { lguId: col.lguId, officerId: col.id, kind: ckind, no: m.reportNo, date: m.date, fund: cl && isBrgy(cl) ? 'General Fund' : curFund, hardTotal: null,
-        ranges: m.from ? [[+m.from, +(m.to || m.from)]] : [], deposits: [], remittances: [], begTyped: 0, madeFrom: { officerId: o.id, name: o.name, no: cur.pending ? '' : cur.rec.no || '', reportId: cur.pending ? '' : cur.id } }, by(refs), { quiet: true });
+      const rec = { lguId: col.lguId, officerId: col.id, kind: ckind, no: m.reportNo, date: m.date, fund: cl && isBrgy(cl) ? 'General Fund' : curFund, hardTotal: null,
+        ranges: m.from ? [[+m.from, +(m.to || m.from)]] : [], deposits: [], remittances: [], begTyped: 0, madeFrom: { officerId: o.id, name: o.name, no: cur.pending ? '' : cur.rec.no || '', reportId: cur.pending ? '' : cur.id } };
+      await store.save('cer_reports', nid, rec, by(refs), { quiet: true });
       m.reportId = nid;
+      // The other series of the same report (same save) find it, not a second copy.
+      f.reports.push({ id: nid, ...rec });
     }
     await syncShells(list);
+    // A report made from these lines that no line uses any more (e.g. its No. corrected with Edit), still without ORs: removed.
+    for (const id of new Set(was.map((m) => m.reportId).filter((x) => x && !list.some((m) => m.reportId === x)))) {
+      const sh = f.reports.find((r) => r.id === id && r.madeFrom && r.madeFrom.officerId === o.id);
+      if (sh && !f.ors.some((x) => x.reportId === id) && !(sh.deposits || []).some((d) => !d.fromLO)) await store.save('cer_reports', sh.id, strip(sh), by(refs), { deleted: true, quiet: true });
+    }
     await pendRec({ remittances: [...list].sort((a, b) => String(a.date).localeCompare(String(b.date))) });
     if (!quiet) { const n = list.filter((x) => x.reportId && x.reportId === list[list.length - 1]?.reportId).length; toast(n > 1 ? `Saved as series ${n} of ${list[list.length - 1].reportNo}.` : 'Remittance saved.', 'ok'); }
     return true;
   };
   if ($('#rm-form')) {
-    const els = ['#rm-date', '#rm-col', '#rm-no', '#rm-from', '#rm-to', '#rm-amt'].map((k) => $(k));
+    const edGrp = REM.key === selId && REM.i >= 0 ? remGroups(typedNow()).find((g) => g.some((x) => x.i === REM.i)) || null : null;
+    const box = $('#rm-srows');
+    const rows = () => $$('.rm-srow', box);
+    const blank = (r) => !['.rm-sf', '.rm-st', '.rm-sa'].some((k) => $(k, r).value.trim());
+    const order = () => [$('#rm-date'), $('#rm-col'), $('#rm-no'), ...rows().flatMap((r) => ['.rm-sf', '.rm-st', '.rm-sa'].map((k) => $(k, r)))];
+    const total = () => { const rs = rows().filter((r) => !blank(r)), t = r2(rs.reduce((n, r) => n + (num($('.rm-sa', r).value) || 0), 0));
+      $('#rm-tot').innerHTML = rs.length > 1 ? `Total <b>₱ ${money(t)}</b> · ${rs.length} series` : '';
+      rows().forEach((r) => { $('.rm-sx', r).style.visibility = rows().length > 1 ? 'visible' : 'hidden'; }); };
+    const newRow = (focus = true) => { box.insertAdjacentHTML('beforeend', serRow(null)); wireRow(rows()[rows().length - 1]); total(); if (focus) $('.rm-sf', rows()[rows().length - 1]).focus(); };
+    const wireRow = (r) => {
+      $('.rm-sx', r).onclick = () => { if (rows().length > 1) { r.remove(); total(); } };
+      $('.rm-sa', r).onblur = () => { const v = num($('.rm-sa', r).value); if (v !== null) $('.rm-sa', r).value = money(v); total(); };
+      ['.rm-sf', '.rm-st', '.rm-sa'].forEach((k) => { $(k, r).oninput = total; });
+    };
+    rows().forEach(wireRow); total();
+    $('#rm-addser').onclick = (e) => { e.preventDefault(); newRow(); };
     const add = async () => {
-      const date = $('#rm-date').value, amt = num($('#rm-amt').value); let col = resolveCol($('#rm-col').value);
+      const date = $('#rm-date').value; let col = resolveCol($('#rm-col').value);
+      const sers = rows().filter((r) => !blank(r));
       if (!date) { $('#rm-date').focus(); return bad('Enter the date received.'); }
-      if (!(amt > 0)) { $('#rm-amt').focus(); return bad('Enter the amount.'); }
+      if (!sers.length) { $('.rm-sa', rows()[0]).focus(); return bad('Enter the amount.'); }
       if (!col && !$('#rm-col').value.trim()) { $('#rm-col').focus(); return bad('Type the collector\'s name.'); }
+      const lines = [];
+      for (const r of sers) {
+        const amt = num($('.rm-sa', r).value), fr = $('.rm-sf', r).value.replace(/\D/g, ''), to = $('.rm-st', r).value.replace(/\D/g, '') || fr;
+        if (!(amt > 0)) { $('.rm-sa', r).focus(); return bad('Enter the amount of each series.'); }
+        if (fr && +to < +fr) { $('.rm-st', r).focus(); return bad('OR To must not be before OR From.'); }
+        if (fr && rangeOff(fr, to)) { $('.rm-st', r).focus(); return bad(`Check the OR range: ${rangeOff(fr, to)}. One remittance does not cover that many; correct OR From or OR To.`); }
+        if (sers.length > 1 && !fr) { $('.rm-sf', r).focus(); return bad('Each series needs its OR From and OR To.'); }
+        lines.push({ fr, to, amt });
+      }
+      { const rs = lines.filter((x) => x.fr).map((x) => [+x.fr, +x.to]).sort((p, q) => p[0] - q[0]);
+        for (let k = 1; k < rs.length; k++) if (rs[k][0] <= rs[k - 1][1]) return bad(`The series ${rs[k - 1][0]}–${rs[k - 1][1]} and ${rs[k][0]}–${rs[k][1]} overlap.`); }
       if (!col) {
         // Several names fit what was typed: choose one from the list; none fits: a new collector.
         const part = letters(cleanName($('#rm-col').value)), many = colsAll.filter((x) => letters(x.name).includes(part));
         if (many.length > 1) { $('#rm-col').focus(); return bad(`${many.length} collectors fit "${$('#rm-col').value.trim()}". Choose one from the list.`); }
         col = await newColModal($('#rm-col').value); if (!col) return;
       }
-      const fr = $('#rm-from').value.replace(/\D/g, ''), to = $('#rm-to').value.replace(/\D/g, '') || fr;
-      if (fr && +to < +fr) { $('#rm-to').focus(); return bad('OR To must not be before OR From.'); }
-      if (fr && rangeOff(fr, to)) { $('#rm-to').focus(); return bad(`Check the OR range: ${rangeOff(fr, to)}. One remittance does not cover that many; correct OR From or OR To.`); }
-      const m = lineOf(date, col, $('#rm-no').value, fr, to, amt), list = typedNow().slice(), editing = REM.key === selId && REM.i >= 0;
-      if (editing) list[REM.i] = m; else list.push(m);
-      if (await saveRems(list)) { REM.key = selId; REM.i = -1; REM.date = date; setTimeout(() => { const el = $('#rm-col'); if (el) el.focus(); }, 350); }
+      const ms = lines.map((x) => lineOf(date, col, $('#rm-no').value, x.fr, x.to, x.amt));
+      const gone = new Set(edGrp ? edGrp.map((x) => x.i) : []);
+      const list = [...typedNow().filter((_, i) => !gone.has(i)), ...ms];
+      if (await saveRems(list, true)) { toast(ms.length > 1 ? `Saved: ${ms[0].reportNo || 'the report'} with ${ms.length} series, ₱ ${money(r2(ms.reduce((n, m) => n + m.amount, 0)))}.` : 'Remittance saved.', 'ok');
+        REM.key = selId; REM.i = -1; REM.date = date; setTimeout(() => { const el = $('#rm-col'); if (el) el.focus(); }, 350); }
     };
-    els.forEach((el, i) => { el.onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); if (i === els.length - 1) add(); else els[i + 1].focus(); }; });
-    $('#rm-amt').onblur = () => { const v = num($('#rm-amt').value); if (v !== null) $('#rm-amt').value = money(v); };
+    // Enter: next box; on the last Amount, another series; on an empty series row (not the only one), save.
+    $('#rm-form').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) return add();
+      const r = e.target.closest('.rm-srow');
+      if (r && blank(r) && rows().length > 1) { r.remove(); total(); return add(); }
+      const els = order(), i = els.indexOf(e.target);
+      if (i === els.length - 1) { if (blank(r)) return add(); return newRow(); }
+      if (i >= 0) els[i + 1].focus();
+    });
     $('#rm-add').onclick = add;
     if ($('#rm-cancel')) $('#rm-cancel').onclick = () => { REM.i = -1; emitChange('local'); };
   }
-  // + Series: the entry line filled with the report's date, collector and No.; only OR From, OR To and Amount are left.
-  $$('[data-rmser]').forEach((b) => { b.onclick = () => { const m = typedNow()[+b.dataset.rmser]; if (!m) return; REM.i = -1;
-    const x = colsAll.find((y) => y.id === m.collectorId); $('#rm-date').value = m.date; $('#rm-col').value = x ? cLabel(x) : ''; $('#rm-no').value = m.reportNo || '';
-    ['#rm-from', '#rm-to', '#rm-amt'].forEach((k) => { $(k).value = ''; }); $('#rm-from').focus(); $('#rm-form').scrollIntoView({ block: 'center', behavior: 'smooth' }); }; });
-  $$('[data-rmedit]').forEach((b) => { b.onclick = () => { REM.key = selId; REM.i = +b.dataset.rmedit; emitChange('local'); setTimeout(() => { const el = $('#rm-amt'); if (el) el.focus(); }, 350); }; });
+  $$('[data-rmedit]').forEach((b) => { b.onclick = () => { REM.key = selId; REM.i = +b.dataset.rmedit; emitChange('local'); setTimeout(() => { const el = $('#rm-srows .rm-sa'); if (el) { el.focus(); $('#rm-form').scrollIntoView({ block: 'center', behavior: 'smooth' }); } }, 350); }; });
   $$('[data-rmdel]').forEach((b) => { b.onclick = async () => { const gone = typedNow()[+b.dataset.rmdel], list = typedNow().filter((_, i) => i !== +b.dataset.rmdel); REM.i = -1;
     if (!(await saveRems(list, true))) return;
     // The collector's SCR / RCD made from this line, still without any OR: removed with it.
@@ -1072,6 +1113,8 @@ const colOpts = (cs, sel) => { const own = cs.filter((x) => !x.office), br = cs.
   const op = (x) => `<option value="${esc(x.id)}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}${x.designation ? ' · ' + esc(x.designation) : ''}${x.office ? ' · ' + esc(x.office) : ''}</option>`;
   return `${own.length ? `<optgroup label="This office">${own.map(op).join('')}</optgroup>` : ''}${br.length ? `<optgroup label="Barangays">${br.map(op).join('')}</optgroup>` : ''}`; };
 const colName = (f, refs, id) => { const x = f.officers.find((y) => y.id === id); if (!x) return ''; const l = refs.lgu[x.lguId]; return `${x.name}${l && l.data.kind === 'barangay' ? ' · ' + l.data.name : ''}`; };
+// One OR series row of the LO's entry line (OR From, OR To, Amount, ✕).
+const serRow = (m) => `<div class="rm-srow"><input class="input mono rm-sf" inputmode="numeric" aria-label="OR From" value="${esc(m ? m.from || '' : '')}"><input class="input mono rm-st" inputmode="numeric" aria-label="OR To" value="${esc(m ? m.to || '' : '')}"><input class="input r rm-sa" inputmode="decimal" aria-label="Amount" value="${m ? esc(money(m.amount)) : ''}"><button class="btn sm rm-sx" type="button" aria-label="Remove this series" title="Remove this series">✕</button></div>`;
 // Typed remittances grouped by the collector's report (same collector and No.): one row per report, its OR series under it.
 function remGroups(list) {
   const key = (m) => (m.reportNo ? `${m.collectorId}|${String(m.reportNo).replace(/[^0-9A-Za-z]/g, '').toUpperCase()}` : `#${Math.random()}`);

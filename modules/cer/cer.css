@@ -960,7 +960,17 @@ table.af-reg.tr-month{min-width:0}
 .rp-cols{margin-top:12px; border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:13px}
 .rp-colt{max-height:260px; overflow:auto; margin-top:8px}
 .rp-colt table.af-reg{min-width:0; width:100%}
-.rm-line{display:grid; grid-template-columns:150px minmax(220px,2fr) 150px 120px 120px 130px auto; gap:8px; align-items:end; margin-top:4px}
+.rm-line{display:grid; grid-template-columns:150px minmax(200px,2fr) 150px minmax(400px,3fr) auto; gap:8px; align-items:start; margin-top:4px}
+.rm-line > .field{margin:0}
+.rm-line > .field label, .rm-shead label{display:block; font-size:13px; font-weight:700; margin-bottom:6px; height:18px}
+.rm-shead, .rm-srow{display:grid; grid-template-columns:1fr 1fr 1.1fr 30px; gap:8px; align-items:center}
+.rm-srow{margin-bottom:6px}
+.rm-srow .rm-sx{padding:2px 0; width:30px}
+.rm-sfoot{display:flex; gap:10px; align-items:baseline; font-size:12.5px}
+.rm-sfoot #rm-tot{margin-left:auto; padding-right:38px; white-space:nowrap}
+.rm-sfoot #rm-addser{white-space:nowrap; font-weight:600}
+.rm-sfoot .dim{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0}
+.rm-addbox{padding-top:24px; white-space:nowrap}
 .rm-line .field{margin:0}
 @media (max-width:1000px){ .rm-line{grid-template-columns:1fr 1fr} }
 .bk-na{border:1px solid #f0c27a; background:#fffaf2; border-radius:10px; padding:12px 14px; font-size:13.5px; margin-top:8px}
