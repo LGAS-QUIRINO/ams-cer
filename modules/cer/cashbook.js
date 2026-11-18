@@ -11,7 +11,7 @@ import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, hasRole, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num } from './cer.js';
 import { loadForms, orIn, FORM_SHORT } from './forms.js';
 import { listT, loadJournal, checkAmountOf, chkNo, transfersInto, typedTransfer } from '../src/journal.js';
-import { tagSameDay, depRefText } from './collections.js';
+import { tagSameDay, depRefText, orInScope } from './collections.js';
 import { accountability } from './verify.js';
 import { accountsOf, caAcct, begByFund, restFund, sameFund, colFundOf } from './funds.js';
 import { remOf, remAcctId, remText } from '../src/taxrem.js';
@@ -43,7 +43,7 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
   const row = (date, part, ref, v) => rows.push({ date, part, ref, cltC: 0, cltD: 0, cibD: 0, cibK: 0, ca: 0, pc: 0, ...v });
   // Collections: one line per day and form, with the OR numbers.
   const byDay = {};
-  f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && orIn(f, x, from, to) && ofF(x.fund)).forEach((x) => { const k = `${x.date}|${x.form}`; (byDay[k] = byDay[k] || []).push(x); });
+  f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && orInScope(f, x, from, to, exam) && ofF(x.fund)).forEach((x) => { const k = `${x.date}|${x.form}`; (byDay[k] = byDay[k] || []).push(x); });
   Object.entries(byDay).forEach(([k, xs]) => { const [date, form] = k.split('|'); const ns = xs.flatMap((x) => [+x.serial, x.range ? +x.serialTo : +x.serial]).sort((a, b) => a - b);
     row(date, `Collections (${SHORT[form] || FORM_SHORT[form] || form})`, `${ns[0]}${ns.length > 1 ? '–' + ns[ns.length - 1] : ''}`, { cltC: r2(xs.reduce((n, x) => n + (+x.amount || 0), 0)) }); });
   // Deposits (and, for the SCR, remittances to the MTO).

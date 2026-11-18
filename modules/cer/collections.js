@@ -133,6 +133,10 @@ export function begOr(f, x, lx, br) {
   if (!Array.isArray(bk.unusedAtStart)) return false;   // whole booklet unused at the exam
   return !bk.unusedAtStart.some(([a, z]) => n >= a && n <= z);
 }
+// An OR within the scope of the audit (reports, Verification, Cashbook): after the last cash exam up to the cash count; on the
+// exam day itself unless it is of the beginning (begOr: the beginning series typed in Audit Setup, else the beginning booklet),
+// so the reports count exactly the ORs the SCDs / RCDs count.
+export const orInScope = (f, x, from, to, exam) => !!x.date && x.date <= to && (!from || x.date > from || (x.date === from && !begOr(f, x, from, begRangesOf(exam))));
 const orAmount = (o) => (o.status === 'cancelled' || o.beg ? 0 : r2((o.items || []).reduce((n, i) => n + (+i.amt || 0), 0)));
 const maxSer = (x) => (x.range ? +x.serialTo : +x.serial);
 export const serialsOf = (x) => { const out = []; for (let n = +x.serial, z = maxSer(x); n <= z && out.length < 5001; n++) out.push(n); return out; };

@@ -17,7 +17,7 @@ import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
 import { bankFindings } from './banks.js';
 import { loadForms, orIn, cutoffFindings, checkUsage, exportXlsx } from './forms.js';
-import { figuresOf, fundsOf, kindOfForm, repName, tagSameDay, partOk, ctcBegShare, ctcAlloc, depPart, depsBeforeOrs } from './collections.js';
+import { figuresOf, fundsOf, kindOfForm, repName, tagSameDay, partOk, ctcBegShare, ctcAlloc, depPart, depsBeforeOrs, orInScope } from './collections.js';
 import { booksOf, compute } from './count.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -68,7 +68,7 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
   const from = exam.lastExamDate || '', to = audit.countDate;
   const o = exam.o;
   const inScope = (d) => !!d && (!from || d >= from) && d <= to;   // from the last cash exam date (after its cut-off)
-  const orOk = (x) => orIn(f, x, from, to);
+  const orOk = (x) => orInScope(f, x, from, to, exam);
   // A liquidation counts when dated within the scope, or when the auditor ticked "Count even if outside the scope".
   const liqIn = (l) => inScope(l.date) || !!l.countAnyway;
   const bal = exam.balances || {};
