@@ -9,7 +9,7 @@
 //   cer_raaf       the custodian's RAAF for a month and form             id = lguId|YYYY-MM|form   { lguId, month, form, beg, rec, iss, end, receivedDate }
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
-import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer } from './cer.js';
+import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer, samePerson } from './cer.js';
 import { sameFund } from './funds.js';
 
 export const FORM_SHORT = { af51: 'Accountable Form 51 – LGU', af51b: 'Accountable Form 51 – Barangay', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate',
@@ -1294,7 +1294,7 @@ function planIssue(XLSX, sheet, f, refs, lguId, form) {
   const known = new Map(offs.map((o) => [nameKey(o.name), o]));
   const newOff = new Map();
   const taken = f.booklets.filter((b) => b.form === form).map((b) => ({ ...b }));
-  const plan = { kind: 'issue', form, add: [], same: [], problems: [], newOfficers: [] };
+  const plan = { kind: 'issue', form, add: [], same: [], problems: [], newOfficers: [], sameAs: [] };
   for (let i = sheet.header + 1; i < sheet.rows.length; i++) {
     const row = sheet.rows[i], line = i + 1;
     const a = int(get(row, 'from')), z = int(get(row, 'to'));
@@ -1317,6 +1317,8 @@ function planIssue(XLSX, sheet, f, refs, lguId, form) {
     const other = otherFormOf(f, lguId, form, a, z); if (other) { bad(`Already in the register as ${FORM_SHORT[other.form] || other.form}. Check the Form Type.`); continue; }
     const key = nameKey(nm);
     let o = known.get(key) || newOff.get(key);
+    // The same person under another spelling (no middle initial, Jr./Sr., order): the officer already here, not a new one.
+    if (!o) { const sm = samePerson(offs, nm); if (sm.length === 1) { o = sm[0]; const t = plan.sameAs.find((x) => x.typed === key); if (t) t.rows++; else plan.sameAs.push({ typed: key, name: o.name, rows: 1 }); } }
     const hit = taken.filter((b) => b.from <= z && a <= b.to);
     const exact = hit.length === 1 && hit[0].from === a && hit[0].to === z ? hit[0] : null;
     if (exact && exact.status === 'issued') {
@@ -1431,6 +1433,7 @@ function previewHtml(refs, f, plan) {
       <div class="${plan.problems.length ? 'warn' : ''}"><b>${plan.problems.length}</b><span>rows not imported</span><small>listed below</small></div>
     </div>
     ${(plan.newOfficers || []).length ? `<p class="hint" style="margin:0"><b>New officers:</b> ${plan.newOfficers.map((o) => `${esc(o.name)}${o.designation ? ` (${esc(o.designation)})` : ''}${refs.lgu[o.lguId]?.data.kind === 'barangay' ? ` · ${esc(agencyName(refs, refs.lgu[o.lguId]))}` : ''}`).join(', ')}</p>` : ''}
+    ${(plan.sameAs || []).length ? `<p class="hint" style="margin:6px 0 0"><b>Matched to an officer already in the app (same person):</b> ${plan.sameAs.map((x) => `${esc(x.typed)} → <b>${esc(x.name)}</b> (${x.rows} row${x.rows === 1 ? '' : 's'})`).join('; ')}. If one is a different person, correct the name in the Excel file.</p>` : ''}
     ${plan.problems.length ? `<div class="af-probs"><b>Rows not imported</b>${plan.problems.slice(0, 60).map((p) => `<div>Row ${p.line}${p.no ? ` · No. ${esc(p.no)}` : ''} · ${esc(p.text)} — ${esc(p.why)}</div>`).join('')}${plan.problems.length > 60 ? `<div>…and ${plan.problems.length - 60} more</div>` : ''}</div>` : ''}`;
 }
 

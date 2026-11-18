@@ -87,6 +87,63 @@ export async function loadCer() {
   const brgyAudit = new Set(A.filter((x) => /^brgy-/.test(x.lguId || '')).map((x) => x.id));
   return { officers: officers.map(flat), audits: A, exams: exams.map(flat).map((e) => (e.remitToLO && brgyAudit.has(e.auditId) ? { ...e, remitToLO: false } : e)) };
 }
+// The same person under two spellings: first name and surname alike, whatever the middle initial, Jr./Sr., dots, spacing,
+// or "SURNAME, First" order. Officers are matched on this before a new one is added, and doubled ones can be merged.
+const SUFFIX = /^(JR|SR|II|III|IV|V)$/;
+export const personKey = (name) => {
+  let t = String(name || '').toUpperCase().replace(/\s+/g, ' ').trim();
+  if (t.includes(',')) { const [a, ...b] = t.split(','); const rest = b.join(' ').replace(/[^A-ZÑ\s]/g, ' ').split(/\s+/).filter((x) => x && !SUFFIX.test(x)); if (rest.length) t = `${rest.join(' ')} ${a}`; }
+  const w = t.replace(/[^A-ZÑ\s-]/g, ' ').split(/\s+/).filter((x) => x.length > 1 && !SUFFIX.test(x));
+  return w.length >= 2 ? `${w[0]}|${w[w.length - 1]}` : '';
+};
+export const samePerson = (list, name, exceptId) => { const k = personKey(name); return k ? list.filter((o) => o.id !== exceptId && personKey(o.name) === k) : []; };
+// Merging officer `from` into `to`: every record naming `from` is moved to `to` (ids are unique, so any field or key equal
+// to it is the officer); `from` is then removed. Two cash examinations of both in the same audit stop the merge.
+const MERGE_T = [['cer_booklets', 'booklet'], ['cer_ors', 'OR'], ['cer_reports', 'SCD / SCR / RCD'], ['cer_exams', 'cash examination'], ['cer_cashadv', 'cash advance'], ['cer_liquid', 'liquidation'],
+  ['cer_cutoff', 'cut-off'], ['cer_cashcount', 'cash count'], ['cer_verify', 'verification'], ['cer_bankrec', 'bank record'], ['cer_formcheck', 'form check'], ['cer_raaf', 'RAAF line'], ['src_ckdj', 'CkDJ entry'], ['cer_settings', 'setting']];
+function swapId(v, a, b) {
+  if (v === a) return { v: b, n: 1 };
+  if (Array.isArray(v)) { let n = 0; const out = v.map((x) => { const r = swapId(x, a, b); n += r.n; return r.v; }); return { v: n ? out : v, n }; }
+  if (v && typeof v === 'object') { let n = 0; const out = {}; for (const [k, x] of Object.entries(v)) { const r = swapId(x, a, b); n += r.n + (k === a ? 1 : 0); out[k === a ? b : k] = r.v; } return { v: n ? out : v, n }; }
+  return { v, n: 0 };
+}
+async function mergePlan(fromId, toId) {
+  const out = [], conflicts = [];
+  for (const [t, label] of MERGE_T) {
+    const list = await store.list(t); const hits = list.filter((r) => !r.deleted && swapId(r.data, fromId, toId).n);
+    if (hits.length) out.push({ t, label, hits });
+    if (t === 'cer_exams') { const mine = new Set(list.filter((r) => !r.deleted && r.data.officerId === toId).map((r) => r.data.auditId)); hits.filter((r) => r.data.officerId === fromId && mine.has(r.data.auditId)).forEach((r) => conflicts.push(r.data.auditId)); }
+  }
+  return { out, conflicts };
+}
+async function mergeOfficers(refs, cer, fromId, toId) {
+  const A = cer.officers.find((x) => x.id === fromId), B = cer.officers.find((x) => x.id === toId); if (!A || !B) return false;
+  const plan = await mergePlan(fromId, toId);
+  if (plan.conflicts.length) { const au = plan.conflicts.map((id) => cer.audits.find((x) => x.id === id)).filter(Boolean).map((x) => fmtDate(x.countDate)).join(', ');
+    await modal({ title: 'Cannot merge yet', body: `<div class="msg bad">Both ${esc(A.name)} and ${esc(B.name)} have a cash examination in the same audit (${esc(au || 'same cash count')}). Remove one of them from that cash examination first (keep the one with the records), then merge.</div>`, buttons: [{ label: 'OK', value: null }] });
+    return false; }
+  const what = plan.out.map((x) => `${x.hits.length} ${x.label}${x.hits.length === 1 ? '' : 's'}`).join(', ');
+  const ok = await modal({ title: 'Merge officers',
+    body: `<p style="margin-top:0"><b>${esc(A.name)}</b>${A.designation ? ' · ' + esc(A.designation) : ''} will be merged into <b>${esc(B.name)}</b>${B.designation ? ' · ' + esc(B.designation) : ''}.</p>
+      <p>${what ? `Moved to ${esc(B.name)}: ${esc(what)}.` : `${esc(A.name)} has no records yet.`} Then ${esc(A.name)} is removed from the list of officers.</p>
+      <div class="msg warn">A merge cannot be undone easily. Check that both are the same person.</div>`,
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Merge', cls: 'primary', value: 'go' }] });
+  if (ok !== 'go') return false;
+  for (const x of plan.out) for (const r of x.hits) await store.save(x.t, r.id, swapId(r.data, fromId, toId).v, by(refs), { quiet: true });
+  await store.save('cer_officers', A.id, { lguId: A.lguId, name: A.name, designation: A.designation || '', mergedInto: B.id }, by(refs), { deleted: true, quiet: true });
+  emitChange('local'); toast(`${A.name} merged into ${B.name}.`, 'ok');
+  return B.id;
+}
+// Pick which one to keep: the officer `fromId` merged into one chosen from `cands` (the same person first).
+async function mergeModal(refs, cer, fromId, cands) {
+  const A = cer.officers.find((x) => x.id === fromId); if (!A || !cands.length) return false;
+  let pick = null;
+  await modal({ title: `Merge ${A.name} with…`,
+    body: `<p class="hint" style="margin-top:0">Choose the officer to keep. Everything under ${esc(A.name)} goes to that name, then ${esc(A.name)} is removed.</p>
+      <div class="field"><label for="mg-to">Keep</label><select class="input" id="mg-to">${cands.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}${x.designation ? ' · ' + esc(x.designation) : ''}${personKey(x.name) === personKey(A.name) ? ' (same person)' : ''}</option>`).join('')}</select></div>`,
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Next', cls: 'primary', value: 'ok', check: (bg) => { pick = $('#mg-to', bg).value; return !!pick; } }] });
+  return pick ? mergeOfficers(refs, cer, fromId, pick) : false;
+}
 // This officer's latest exam before the given cash count date (any cash examination).
 function prevExam(cer, officerId, countDate, examId) {
   if (!officerId || !countDate) return null;
@@ -523,12 +580,15 @@ function officerHtml(refs, cer, st, edit) {
     : `${begRows.length ? FM.beginningTableHtml(FX, begRows, edit) : `<p class="cer-wait">No accountable forms in ${esc(o.name)}'s hands as of ${esc(fmtDate(lastExam))} are encoded yet.</p>`}
       <div class="cer-headrow cer-begfoot"><span class="hint">Forms from the custodian go to the Forms Register as issuances still in the officer's hands; checkbooks from the bank stay on this officer's records only.${during.length ? ` ${during.length} booklet${during.length > 1 ? 's' : ''} received after the last cash exam ${during.length > 1 ? 'are' : 'is'} in Accountable Forms.` : ''}${edit && begRows.length ? ' Click a booklet to Edit or Delete it.' : ''}</span>
         ${edit ? '<button class="btn" type="button" id="cer-addbeg">+ Add Beginning Forms</button>' : ''}</div>`;
-  return `${acc('officer', 'Officer and Functions', h.officer, `<div class="cer-g3">
+  // Names that look doubled (the same person under two spellings): flagged, with Merge for an auditor.
+  const dupes = []; offs.forEach((x) => { const k = personKey(x.name); if (!k) return; const g = dupes.find((d) => d.k === k); if (g) g.list.push(x); else dupes.push({ k, list: [x] }); });
+  const dupBox = dupes.filter((d) => d.list.length > 1).map((d) => `<div class="msg warn cer-dupes">${d.list.map((x) => `<b>${esc(x.name)}</b>`).join(' and ')} look like the same person.${edit && isAuditor(refs) ? ` <a href="#" data-mergepair="${esc(d.list.map((x) => x.id).join('|'))}">Merge</a>` : ''}</div>`).join('');
+  return `${acc('officer', 'Officer and Functions', h.officer, `${dupBox}<div class="cer-g3">
       <div class="field"><label for="cer-officer">Accountable Officer</label>
         <select class="input" id="cer-officer" ${dis}><option value="">— Choose the officer —</option>
           ${offs.map((x) => `<option value="${esc(x.id)}" ${x.id === st.officerId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
           ${edit ? '<option value="__new">+ Add new officer…</option>' : ''}</select>
-        ${o ? `<span class="hint">Designation: ${esc(o.designation || '—')}${edit ? ` · <a href="#" id="cer-edit-off">Edit officer</a>` : ''}</span>` : ''}</div>
+        ${o ? `<span class="hint">Designation: ${esc(o.designation || '—')}${edit ? ` · <a href="#" id="cer-edit-off">Edit officer</a>${isAuditor(refs) && offs.length > 1 ? ` · <a href="#" id="cer-merge-off">Merge with…</a>` : ''}` : ''}</span>` : ''}</div>
       <fieldset class="field cer-span2"><legend>Accountability functions (tick all that apply)</legend>
         <div class="cer-chips">${funcs.map(([k, label]) => `<label class="cer-chip"><input type="checkbox" data-func="${k}" ${chk(st.functions, k)} ${dis}> ${esc(label)}</label>`).join('')}</div>
         ${isBrgy(lgu) ? '<span class="hint">Barangay Treasurer: collecting and disbursing accountabilities are computed separately.</span>' : ''}</fieldset>
@@ -634,6 +694,14 @@ function wireSetup(refs, cer, q, rerender) {
       if (offSel.value !== '__new') return pickOfficer(offSel.value);
       const v = await officerModal(refs, st.lguId, null);
       if (!v) { offSel.value = st.officerId; return; }
+      // Already here under another spelling: use that officer instead of a second record.
+      const sim = samePerson(cer.officers.filter((x) => x.lguId === st.lguId), v.name);
+      if (sim.length) {
+        const use = await modal({ title: 'Same person?', body: `<p style="margin-top:0">Is <b>${esc(v.name)}</b> the same person as:</p>${sim.map((x) => `<label class="cer-chip" style="display:flex;margin:4px 0"><input type="radio" name="sp-o" value="${esc(x.id)}" ${x === sim[0] ? 'checked' : ''}> ${esc(x.name)}${x.designation ? ' · ' + esc(x.designation) : ''}</label>`).join('')}<p class="hint">One record per person keeps the names uniform in every report.</p>`,
+          buttons: [{ label: 'No, a different person', value: 'new' }, { label: 'Yes, use this officer', cls: 'primary', value: 'use', check: (bg) => { offSel.dataset.sp = $('input[name="sp-o"]:checked', bg)?.value || ''; return true; } }] });
+        if (use === 'use' && offSel.dataset.sp) { const id = offSel.dataset.sp; delete offSel.dataset.sp; return pickOfficer(id); }
+        if (use !== 'new') { offSel.value = st.officerId; return; }
+      }
       // The screen refreshes after the officer is saved; the unsaved setup is kept and the new officer is selected.
       const id = newId('cero');
       st.officerId = id; DRAFT.dirty = true;
@@ -646,6 +714,20 @@ function wireSetup(refs, cer, q, rerender) {
       const v = await officerModal(refs, st.lguId, o);
       if (v) await store.save('cer_officers', o.id, { lguId: o.lguId, ...v }, by(refs));
     };
+    // Merge: the setup is saved first (the merge rewrites the records), then the screen reloads with the officer kept.
+    const doMerge = async (fromId, cands) => {
+      if (DRAFT && DRAFT.dirty) { toast('Save the Audit Setup first, then merge.', 'bad'); return; }
+      const to = await mergeModal(refs, cer, fromId, cands);
+      if (to) { if (st.officerId === fromId) st.officerId = to; DRAFT = null; window.dispatchEvent(new HashChangeEvent('hashchange')); }
+    };
+    const mg = $('#cer-merge-off');
+    if (mg) mg.onclick = (e) => { e.preventDefault(); const o = cer.officers.find((x) => x.id === st.officerId); if (!o) return;
+      const others = cer.officers.filter((x) => x.lguId === o.lguId && x.id !== o.id), k = personKey(o.name);
+      doMerge(o.id, [...others.filter((x) => personKey(x.name) === k), ...others.filter((x) => personKey(x.name) !== k).sort((a, b) => a.name.localeCompare(b.name))]); };
+    $$('[data-mergepair]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); const ids = a.dataset.mergepair.split('|'), list = ids.map((id) => cer.officers.find((x) => x.id === id)).filter(Boolean);
+      // The shorter spelling goes into the fuller one (LOURDES DIMMOCLO into LOURDES B. DIMMOCLO); the keep box can change it.
+      const keep = list.slice().sort((x, y) => y.name.length - x.name.length)[0]; const from = list.find((x) => x !== keep);
+      doMerge(from.id, [keep, ...list.filter((x) => x !== keep && x !== from)]); }; });
     $$('[data-func]').forEach((c) => { c.onchange = () => {
       st.functions = $$('[data-func]').filter((x) => x.checked).map((x) => x.dataset.func);
       if (st.functions.includes('collecting') && !st.forms.length && isBrgy(refs.lgu[st.lguId])) st.forms = ['af51b', 'ctci'];

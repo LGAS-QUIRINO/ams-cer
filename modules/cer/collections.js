@@ -14,7 +14,7 @@
 //   cer_settings 'funds|<lguId>' { list }  the auditee's funds (General Fund, Special Education Fund, Trust Fund, plus any added)
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
-import { FORMS, fixBrgyForm, hasRole, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num } from './cer.js';
+import { FORMS, fixBrgyForm, hasRole, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, personKey, samePerson } from './cer.js';
 import { loadForms, FORM_SHORT, exportXlsx, rangesText, mergeRanges, bookletUnused, countRanges, loadXlsx, excelDate } from './forms.js';
 
 // Each auditee's funds: General Fund to start; the others are added with the Funds button. A fund already used stays listed.
@@ -693,7 +693,9 @@ function wireAll(c) {
   const letters = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
   const resolveCol = (v) => { const t = String(v || '').trim(); if (!t) return null;
     const hit = colsAll.find((x) => cLabel(x) === t) || colsAll.find((x) => letters(x.name) === letters(t.split('·')[0]));
-    if (hit) return hit; const part = colsAll.filter((x) => letters(x.name).includes(letters(t.split('·')[0]))); return part.length === 1 ? part[0] : null; };
+    if (hit) return hit; const part = colsAll.filter((x) => letters(x.name).includes(letters(t.split('·')[0]))); if (part.length === 1) return part[0];
+    // The same person under another spelling (LOURDES DIMMOCLO = LOURDES B. DIMMOCLO): that officer, so the names stay uniform.
+    const same = samePerson(colsAll, t.split('·')[0]); return same.length === 1 ? same[0] : null; };
   // A collector not yet in the app: added here (name, office, designation) and kept as an officer of that office, so Audit
   // Setup lists him or her later with the SCR / RCD made from the remittances already there.
   const offices = [audit.lguId, ...Object.keys(refs.lgu).filter((k) => refs.lgu[k]?.data.parentId === audit.lguId)].filter((k) => refs.lgu[k])
@@ -705,7 +707,8 @@ function wireAll(c) {
   const cleanName = (v) => String(v || '').split('·')[0].trim().replace(/\s+/g, ' ').toUpperCase();
   // Same surname and the same first letter: probably the same person.
   const similarTo = (nm) => { const w = cleanName(nm).split(' ').filter(Boolean), last = letters(w[w.length - 1]), first = letters(w[0]).charAt(0);
-    return last ? colsAll.filter((x) => { const v = cleanName(x.name).split(' '); return letters(v[v.length - 1]) === last && (!first || letters(v[0]).charAt(0) === first); }) : []; };
+    const same = samePerson(colsAll, nm);
+    return [...same, ...(last ? colsAll.filter((x) => { if (same.includes(x)) return false; const v = cleanName(x.name).split(' '); return letters(v[v.length - 1]) === last && (!first || letters(v[0]).charAt(0) === first); }) : [])]; };
   const desigFor = (lid) => (isBrgy(refs.lgu[lid]) ? 'Barangay Treasurer' : '');
   const saveNewCols = async (list) => { for (const x of list) { await store.save('cer_officers', x.id, { lguId: x.lguId, name: x.name, designation: x.designation || '' }, by(refs), { quiet: true }); f.officers.push(x); colsAll.push({ ...x, office: x.lguId === audit.lguId ? '' : refs.lgu[x.lguId]?.data.name || '' }); } };
   const newColModal = async (typedName) => {
@@ -890,11 +893,12 @@ function wireAll(c) {
       const hi = rows.findIndex((r) => r.some((x) => /date/i.test(String(x))) && r.some((x) => /amount/i.test(String(x)))); if (hi < 0) return { error: 'No header row with Date and Amount was found. Use the Template.' };
       const H = rows[hi].map((x) => String(x)), col = (re) => H.findIndex((x) => re.test(x));
       const M = { date: col(/date/i), col: col(/collector|name/i), off: col(/office|barangay/i), form: col(/^\s*form/i), pcs: col(/pcs|pieces|quantity|qty/i), no: col(/scr|rcd|report|\bno\b/i), from: col(/from/i), to: col(/\bto\b/i), amt: col(/amount/i) };
-      const add = [], problems = [], fresh = new Map();
+      const add = [], problems = [], fresh = new Map(), sameAs = [];
       rows.slice(hi + 1).forEach((r, i) => { const line = hi + i + 2, g = (k) => (M[k] < 0 ? '' : r[M[k]]);
         if (!String(g('col')).trim() && !g('amt')) return;
         const date = excelDate(XLSX, g('date')), amt = typeof g('amt') === 'number' ? r2(g('amt')) : num(g('amt'));
         let c0 = resolveCol(String(g('col')));
+        if (c0 && letters(c0.name) !== letters(cleanName(g('col'))) && samePerson([c0], g('col')).length) { const t = sameAs.find((x) => x.typed === cleanName(g('col'))); if (t) t.rows++; else sameAs.push({ typed: cleanName(g('col')), name: c0.name, rows: 1 }); }
         if (!date) return problems.push({ line, why: 'Date is missing or not a date.' });
         if (!c0) {
           // Not in the app yet: a new collector (one per name), its office from the Office column or chosen below.
@@ -911,7 +915,7 @@ function wireAll(c) {
         const m = lineOf(date, c0, String(g('no') || ''), g('from'), g('to'), amt, fk, fk === 'cash' ? (parseInt(String(g('pcs') || '').replace(/\D/g, ''), 10) || 0) : 0), d = dupOf(m);
         if (d) return problems.push({ line, why: `Already in ${c0.name}'s ${d.reportNo}: tick it instead.` });
         add.push(m); });
-      return { add, problems, fresh: [...fresh.values()] };
+      return { add, problems, fresh: [...fresh.values()], sameAs };
     };
     const v = await modal({ title: 'Import Remittances Received', wide: true,
       body: `<p class="af-note">Excel columns: <b>Date, Collector, SCR/RCD No., OR From, OR To, Amount</b>; Form (blank = AF 51) and Pcs for cash tickets; Office for a collector not yet in the app (see the Template). Remittances already in the collectors' records are skipped (tick them instead).</p><div class="field"><label for="rm-file">Excel file</label><input class="input" type="file" id="rm-file" accept=".xlsx,.xls,.csv"></div><div id="rm-res"></div>`,
@@ -920,6 +924,7 @@ function wireAll(c) {
         $('#rm-res', bg).innerHTML = plan.error ? `<div class="msg bad">${esc(plan.error)}</div>` : `<div class="oi-sum"><b>${plan.add.length} remittance${plan.add.length === 1 ? '' : 's'} to add</b> · ₱ ${money(r2(plan.add.reduce((n, m) => n + m.amount, 0)))}</div>
           ${nc.length ? `<h3 class="cer-h3" style="margin-top:10px">New collectors: ${nc.length} <small class="dim">(not in the app yet; added with the import, choose each one's office)</small></h3>
             <div class="af-tbl"><table class="af-reg rm-newcols"><thead><tr><th>Name</th><th>Lines</th><th>Office</th><th>Designation</th></tr></thead><tbody>${nc.map((x, i) => `<tr><td><b>${esc(x.name)}</b>${x.sim.length ? `<div class="warn-t" style="font-size:12px">Similar: ${x.sim.map((y) => esc(cLabel(y))).join('; ')}. If the same person, fix the name in the Excel file.</div>` : ''}</td><td class="r">${x.rows}</td><td><select class="input" data-ncoff="${i}">${offOpts(x.lguId)}</select></td><td><input class="input" data-ncdes="${i}" value="${esc(x.designation)}"></td></tr>`).join('')}</tbody></table></div>` : ''}
+          ${(plan.sameAs || []).length ? `<p class="hint" style="margin:8px 0 0"><b>Matched to a collector already in the app (same person):</b> ${plan.sameAs.map((x) => `${esc(x.typed)} → <b>${esc(x.name)}</b> (${x.rows} line${x.rows === 1 ? '' : 's'})`).join('; ')}. If one is a different person, correct the name in the Excel file.</p>` : ''}
           ${plan.problems.length ? `<div class="af-probs"><b>Not imported (${plan.problems.length})</b>${plan.problems.map((q) => `<div>Row ${q.line} — ${esc(q.why)}</div>`).join('')}</div>` : ''}`;
         $$('[data-ncoff]', bg).forEach((el) => { el.onchange = () => { const x = nc[+el.dataset.ncoff], d = $(`[data-ncdes="${el.dataset.ncoff}"]`, bg); if (d.value === x.designation) d.value = desigFor(el.value); x.lguId = el.value; x.designation = d.value; }; });
         $$('[data-ncdes]', bg).forEach((el) => { el.oninput = () => { nc[+el.dataset.ncdes].designation = el.value.trim(); }; }); }; },
