@@ -120,12 +120,14 @@ export function begRangesOf(exam) {
 }
 const inBegRanges = (br, x) => (br[x.form] || []).some(([a, z]) => a <= +x.serial && (x.range ? +x.serialTo : +x.serial) <= z);
 const outOfBooklets = (f, o, x) => !f.booklets.some((b) => b.officerId === o.id && b.form === x.form && !b.noSerial && b.from <= +x.serial && (x.range ? +x.serialTo : +x.serial) <= b.to);
-// An OR of the beginning (Before the period): dated before the last cash exam; or dated on the exam day itself with its number
-// among the numbers already used per the officer's beginning booklet (Partly used at the last cash exam).
-export function begOr(f, x, lx) {
+// An OR of the beginning (Before the period): dated before the last cash exam; or dated on the exam day itself and in the OR
+// series of the beginning balance typed in Audit Setup (when typed for its form, that series decides); with no series typed,
+// its number among those already used per the officer's beginning booklet (Partly used at the last cash exam).
+export function begOr(f, x, lx, br) {
   if (!lx || !x.date) return false;
   if (x.date < lx) return true;
   if (x.date !== lx) return false;
+  if (br && (br[x.form] || []).length) return inBegRanges(br, x);
   const n = +x.serial, bk = f.booklets.find((b) => b.id === x.bookletId) || f.booklets.find((b) => b.officerId === x.officerId && b.form === x.form && !b.noSerial && b.from <= n && n <= b.to);
   if (!bk || !n || n < bk.from || n > bk.to || !(bk.beginAs || bk.issuedAsOf || bk.foundAtCount) || (bk.issuedDate && bk.issuedDate > lx)) return false;
   if (!Array.isArray(bk.unusedAtStart)) return false;   // whole booklet unused at the exam
@@ -151,7 +153,7 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const begR = begRangesOf(exam);
   // An OR dated before the last cash exam is of the beginning (Before the period), tagged or not yet.
   const lx = exam?.lastExamDate || '';
-  const isBeg = (x) => (lx ? begOr(f, x, lx) : !!x.beg);   // always from the current Last Cash Exam date (and the beginning booklet on the exam day)
+  const isBeg = (x) => (lx ? begOr(f, x, lx, begR) : !!x.beg);   // always from the current Last Cash Exam date (and the beginning booklet on the exam day)
   const amtOf = (x) => (x.status === 'cancelled' || isBeg(x) ? 0 : r2((x.items || []).reduce((n, i) => n + (+i.amt || 0), 0)));
   const bal0 = exam?.balances || {}, gf = allFunds.find((x) => /general/i.test(x)) || allFunds[0];
   const begSetup = (kind, fund) => (fund !== gf || !exam ? null : r2(Object.entries(bal0).filter(([k]) => k.startsWith('col-') && kindOfForm(lgu, k.slice(4)) === kind).reduce((n, [, v]) => n + (+v?.amount || 0), 0)
@@ -352,9 +354,10 @@ export async function collectionsView(ctx) {
   // ORs dated before the last cash exam (entered one by one or imported before this rule): tagged Before the period once.
   // "Before the period" follows the current Last Cash Exam date: tag ORs dated before it, clear stale tags on ORs dated on or after it
   const lxd = exam.lastExamDate || '';
-  const oldOrs = lxd ? f.ors.filter((x) => x.officerId === o.id && x.date && begOr(f, x, lxd) !== !!x.beg) : [];
+  const brx = begRangesOf(exam);
+  const oldOrs = lxd ? f.ors.filter((x) => x.officerId === o.id && x.date && begOr(f, x, lxd, brx) !== !!x.beg) : [];
   if (canEncode(refs) && oldOrs.length) {
-    for (const x of oldOrs) { const { beg, ...rest } = strip(x); await store.save('cer_ors', x.id, begOr(f, x, lxd) ? { ...rest, beg: true } : rest, by(refs), { quiet: true }); }
+    for (const x of oldOrs) { const { beg, ...rest } = strip(x); await store.save('cer_ors', x.id, begOr(f, x, lxd, brx) ? { ...rest, beg: true } : rest, by(refs), { quiet: true }); }
     return collectionsView(ctx);
   }
   // Records dated on or before a submitted report go into it (e.g. ORs encoded after the SCD was added).
@@ -1041,7 +1044,7 @@ function wireAll(c) {
       if (hit) return bad(`${FORM_SHORT[form] || form} ${hit.range ? `${hit.serial}–${hit.serialTo}` : hit.serial} is already encoded (${fmtDate(hit.date)}).`);
       const cx = [...new Set(String($('#rg-cx').value).split(/[^\d]+/).filter(Boolean).map(Number))].filter((n) => n >= a && n <= z);
       const bk = c.bks.find((b) => b.from <= a && a <= b.to) || f.booklets.find((b) => b.form === form && b.officerId === o.id && b.from <= a && a <= b.to) || null;
-      const beg = begOr(f, { date, serial: a, bookletId: bk ? bk.id : '', officerId: o.id, form }, c.exam.lastExamDate);
+      const beg = begOr(f, { date, serial: a, bookletId: bk ? bk.id : '', officerId: o.id, form, range: true, serialTo: z }, c.exam.lastExamDate, begRangesOf(c.exam));
       const rec = { lguId: audit.lguId, officerId: o.id, form, bookletId: bk ? bk.id : '', serial: a, serialTo: z, range: true, date, status: 'issued', items: [{ p: 'Collections (by OR range)', amt: r2(tot) }], amount: r2(tot), fund: c.curFund,
         reportId: c.cur.pending || hasRange(c.cur) ? placeIn(c.fig.chains[c.curKey], date, a) : c.selId, ...(cx.length ? { cancelledNos: cx } : {}), ...(beg ? { beg: true } : {}) };
       Object.assign(LASTC, { date, rgNext: String(z + 1) });
@@ -1147,7 +1150,7 @@ function wireAll(c) {
 }
 const orData = (c, b, serial, date, status, items) => ({ lguId: c.audit.lguId, officerId: c.o.id, form: $('#cd-form') ? $('#cd-form').value : (b ? b.form : ''), bookletId: b ? b.id : '', serial, date, status,
   items, amount: status === 'cancelled' ? 0 : r2(items.reduce((n, i) => n + i.amt, 0)), fund: c.curFund, reportId: c.cur.pending || hasRange(c.cur) ? placeIn(c.fig.chains[c.curKey], date, serial) : c.selId,
-  ...(begOr(c.f, { date, serial, bookletId: b ? b.id : '', officerId: c.o.id, form: $('#cd-form') ? $('#cd-form').value : (b ? b.form : '') }, c.exam.lastExamDate) ? { beg: true } : {}) });   // before the period: its amount is in the beginning balance
+  ...(begOr(c.f, { date, serial, bookletId: b ? b.id : '', officerId: c.o.id, form: $('#cd-form') ? $('#cd-form').value : (b ? b.form : '') }, c.exam.lastExamDate, begRangesOf(c.exam)) ? { beg: true } : {}) });   // before the period: its amount is in the beginning balance
 function partRowHtml(i) {
   return `<div class="cd-prow"><label class="sr-only" for="cd-p${i}">Particular ${i + 1}</label><input class="input cd-p" id="cd-p${i}" list="cd-parts" placeholder="Type to search or add a new particular…" autocomplete="off">
     <label class="sr-only" for="cd-a${i}">Amount ${i + 1}</label><input class="input r cd-a" id="cd-a${i}" inputmode="decimal" placeholder="0.00" autocomplete="off">
@@ -1423,7 +1426,7 @@ async function importOrs(c) {
   for (const x of plan.add) {
     await store.save('cer_ors', newId('ceror'), { lguId: c.audit.lguId, officerId: o.id, form: plan.form, bookletId: x.bookletId, serial: x.n, date: x.date, status: x.cancelled ? 'cancelled' : 'issued',
       items: x.cancelled ? [] : x.items, amount: x.cancelled ? 0 : r2(x.items.reduce((t, i) => t + i.amt, 0)), fund: curFund, reportId: x.reportId,
-      ...(begOr(f, { date: x.date, serial: x.n, bookletId: x.bookletId, officerId: o.id, form: plan.form }, c.exam.lastExamDate) ? { beg: true } : {}) }, by(refs), { quiet: true });
+      ...(begOr(f, { date: x.date, serial: x.n, bookletId: x.bookletId, officerId: o.id, form: plan.form }, c.exam.lastExamDate, begRangesOf(c.exam)) ? { beg: true } : {}) }, by(refs), { quiet: true });
   }
   emitChange('local'); toast(`${plan.add.length} OR${plan.add.length === 1 ? '' : 's'} imported.`, 'ok');
 }
