@@ -8,6 +8,7 @@ import { auth } from './auth.js';
 
 export const syncState = { status: 'idle', pending: 0, message: '', lastSync: null };
 let running = null, timer = null, fails = 0;
+const PUSH_BATCH = 50;
 
 function publish(patch) {
   Object.assign(syncState, patch);
@@ -22,8 +23,11 @@ async function doSync() {
   let changed = false;
   const problems = [];
 
-  const outbox = await db.all('outbox');
-  if (outbox.length) {
+  // Sent in batches: the database (Apps Script) stops a run after 6 minutes, so a long list of changes is sent 50 at a time,
+  // each batch confirmed before the next one; the count of changes waiting goes down as they are sent.
+  const all = await db.all('outbox');
+  for (let at = 0; at < all.length; at += PUSH_BATCH) {
+    const outbox = all.slice(at, at + PUSH_BATCH);
     const res = await call('push', { changes: outbox.map(({ table, id, baseVersion, data, deleted }) => ({ table, id, baseVersion, data, deleted })) });
     for (const r of res.results) {
       const sent = outbox.find((o) => o.table === r.table && o.id === r.id);
@@ -46,6 +50,7 @@ async function doSync() {
       problems.push(r.status === 'conflict' ? `${r.record && r.record.updatedBy ? r.record.updatedBy : 'Someone else'} saved this first, so your change was not saved. The latest copy is now shown.` : r.error);
       changed = true;
     }
+    await refreshPending();
   }
 
   const last = await db.get('meta', 'lastSync');
