@@ -362,6 +362,11 @@ export async function collectionsView(ctx) {
   }
   // Records dated on or before a submitted report go into it (e.g. ORs encoded after the SCD was added).
   if (canEncode(refs) && misplaced(fig)) { await sweepChains(f, fig, refs); return collectionsView(ctx); }
+  // Remittances to the LO typed under another spelling of the officer's name (Sheena May G. Ualat): written as the officer's name.
+  if (canEncode(refs)) { let n = 0;
+    for (const r of f.reports.filter((y) => y.officerId === o.id && (y.deposits || []).some((d) => (d.toLO || (y.kind || '') === 'SCR') && d.ref && loCanon(refs, f, lgu, d.ref) !== d.ref))) {
+      await store.save('cer_reports', r.id, { ...strip(r), deposits: r.deposits.map((d) => ((d.toLO || (r.kind || '') === 'SCR') && d.ref ? { ...d, ref: loCanon(refs, f, lgu, d.ref) } : d)) }, by(refs), { quiet: true }); n++; }
+    if (n) return collectionsView(ctx); }
   const isLO = (exam.functions || []).includes('liquidating');
   const allForms = [...new Set(((exam.forms || []).length ? exam.forms : f.ors.filter((x) => x.officerId === o.id).map((x) => x.form)).map((k) => fixBrgyForm(lgu, k)))];
   // Report types in use for this officer: from the forms ticked in Audit Setup, plus any already encoded.
@@ -979,7 +984,7 @@ function wireAll(c) {
         const amt = num(g('amount')); if (!amt) return bad('Enter the amount of each deposit.');
         const sf = g('from').replace(/\D/g, ''), stt = g('to').replace(/\D/g, '') || sf;
         if (sf && +stt < +sf) return bad('OR To must not be before OR From.');
-        list.push({ date: g('date'), ref: g('ref'), ...(g('no') ? { no: g('no') } : {}), amount: amt, ...(c.toLO ? { toLO: true } : {}), ...(sf ? { from: sf, to: stt } : {}) });
+        list.push({ date: g('date'), ref: K === 'SCR' || c.toLO ? loCanon(refs, f, c.lgu, g('ref')) : g('ref'), ...(g('no') ? { no: g('no') } : {}), amount: amt, ...(c.toLO ? { toLO: true } : {}), ...(sf ? { from: sf, to: stt } : {}) });
       }
       list.sort((a, b) => a.date.localeCompare(b.date));
       // Not typed twice: a remittance the Liquidating Officer already recorded (shown from the LO's RCD) is not saved again.
@@ -1236,9 +1241,24 @@ function depRefs(f, lguId) {
 function loNames(refs, f, lgu) {
   const mun = lgu.data.kind === 'barangay' ? lgu.data.parentId : lgu.id;
   const inMun = (id) => id === mun || refs.lgu[id]?.data.parentId === mun;
-  const los = f.officers.filter((o) => o.lguId === mun && (/liquidating/i.test(o.designation || '') || f.exams.some((e) => e.officerId === o.id && (e.functions || []).includes('liquidating')))).map((o) => o.name);
+  const los = loOfficers(refs, f, lgu).map((o) => o.name);
   const typed = f.reports.filter((r) => r.kind === 'SCR' && inMun(r.lguId)).flatMap((r) => (r.deposits || []).map((d) => String(d.ref || '').trim())).filter((v) => v && !/^(mto\s*)?or\b|^\d+$/i.test(v));
-  return [...new Set([...los, ...typed])].sort((a, b) => a.localeCompare(b));
+  // One name per person: a typed name of an officer (another spelling or case) is shown once, as the officer's name.
+  const out = []; [...los, ...typed.map((v) => loCanon(refs, f, lgu, v))].forEach((v) => { if (!out.some((x) => x.toLowerCase().replace(/[^a-z]/g, '') === v.toLowerCase().replace(/[^a-z]/g, ''))) out.push(v); });
+  return out.sort((a, b) => a.localeCompare(b));
+}
+// The Liquidating Officers of the municipality (by designation or by the Liquidating function in a cash exam).
+function loOfficers(refs, f, lgu) {
+  const mun = lgu.data.kind === 'barangay' ? lgu.data.parentId : lgu.id;
+  return f.officers.filter((o) => o.lguId === mun && (/liquidating/i.test(o.designation || '') || f.exams.some((e) => e.officerId === o.id && (e.functions || []).includes('liquidating'))));
+}
+// A name typed for the LO, written as the officer's own name when it is that officer (case, dots, middle initial aside).
+function loCanon(refs, f, lgu, v) {
+  const t = String(v || '').trim(); if (!t) return t;
+  const offs = f.officers.filter((o) => { const mun = lgu.data.kind === 'barangay' ? lgu.data.parentId : lgu.id; return o.lguId === mun || refs.lgu[o.lguId]?.data.parentId === mun; });
+  const L = (x) => x.toLowerCase().replace(/[^a-z]/g, '');
+  const hit = offs.find((o) => L(o.name) === L(t)) || (samePerson(offs, t).length === 1 ? samePerson(offs, t)[0] : null);
+  return hit ? hit.name : t;
 }
 // "Cash Deposit Slip · No. 123456" or, for a remittance, "Sheena Gonzaga · OR 12345" (the No. is optional).
 export const depRefText = (d, rem = false) => [d.ref || '', d.no ? `${rem ? 'OR' : 'No.'} ${d.no}` : ''].filter(Boolean).join(' · ');
