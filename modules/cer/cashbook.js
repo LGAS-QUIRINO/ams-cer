@@ -10,7 +10,7 @@ import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, hasRole, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num } from './cer.js';
 import { loadForms, orIn, FORM_SHORT } from './forms.js';
-import { listT, loadJournal, checkAmountOf, chkNo, transfersInto, typedTransfer } from '../src/journal.js';
+import { listT, loadJournal, checkAmountOf, chkNo, transfersInto, typedTransfer, liqOwners } from '../src/journal.js';
 import { tagSameDay, depRefText, orInScope } from './collections.js';
 import { accountability } from './verify.js';
 import { accountsOf, caAcct, begByFund, restFund, sameFund, colFundOf } from './funds.js';
@@ -102,7 +102,7 @@ export async function cashbookEnding(refs, audit, acct) {
   const exams = f.exams.filter((e) => e.auditId === audit.id).map((e) => ({ ...e, o: f.officers.find((x) => x.id === e.officerId) })).filter((e) => e.o);
   const exam = exams.find((e) => /treasurer/i.test(e.o.designation || '')) || exams[0]; if (!exam) return null;
   const cb = (set0.map(flat).find((s) => s.id === `cashbook|${exam.id}|${acct.id}`)) || {};
-  return cashbookOf({ refs, f, audit, exam, acct, advs: advs0.map(flat), liqs: liqs0.map(flat), jr: await loadJournal(), cb }).end.cib;
+  return cashbookOf({ refs, f, audit, exam, acct, advs: advs0.map(flat), liqs: liqOwners(liqs0.map(flat), advs0.map(flat)), jr: await loadJournal(), cb }).end.cib;
 }
 
 export async function cashbookView(ctx) {
@@ -137,7 +137,7 @@ export async function cashbookView(ctx) {
 
   const cbId = `cashbook|${exam.id}|${acct.id}`;
   const cb = settings[cbId] || {};
-  const advs = advs0.map(flat), liqs = liqs0.map(flat), jr = await loadJournal();
+  const advs = advs0.map(flat), liqs = liqOwners(liqs0.map(flat), advs), jr = await loadJournal();
   const C = cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb });
   const m = (v) => (v ? money(v) : '');
   const sg = (v) => (!v ? '' : v < 0 ? `(${money(-v)})` : money(v));

@@ -7,7 +7,7 @@
 // Other reports follow.
 import { cnpHtml, fnpHtml } from './cnp.js';
 import { itemText } from './count.js';
-import { listT } from '../src/journal.js';
+import { listT, liqOwners } from '../src/journal.js';
 import { store } from '../../js/store.js';
 import { covOf, inCov, withLines, isPart } from './banks.js';
 import { tagSameDay } from './collections.js';
@@ -47,7 +47,7 @@ export async function reportsView(ctx) {
   const f = await loadForms();
   const [reports, advs0, liqs0, counts0, ver0, bank0, bset0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount', 'cer_verify', 'cer_bankrec', 'cer_settings'].map(listT));
   f.reports = tagSameDay(reports.map(flat));
-  const advs = advs0.map(flat), liqs = liqs0.map(flat), counts = counts0.map(flat);
+  const advs = advs0.map(flat), liqs = liqOwners(liqs0.map(flat), advs), counts = counts0.map(flat);
   const crumb = 'Reports';
   const hello = `<div class="hello"><div><h1>Reports</h1><p>Made from the records encoded: nothing is typed again. Print or export each one. More reports follow.</p></div></div>`;
   const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && (cycleOk(a) || a.id === q.get('a'))).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));

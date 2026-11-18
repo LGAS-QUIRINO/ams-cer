@@ -11,7 +11,7 @@
 //   cer_verify  id = examId  { examId, recon{ <column>: { cashbook, unrecBeg, unrecDebit, unrecCredit } },
 //                              decisions{ <finding key>: { decision, remarks } }, complete, completeBy, completeAt, ready, readyBy, readyAt }
 import { cnpData, fnpData } from './cnp.js';
-import { listT } from '../src/journal.js';
+import { listT, liqOwners } from '../src/journal.js';
 import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
@@ -124,7 +124,7 @@ export async function verifyView(ctx) {
   const f = await loadForms();
   const [reports, advs0, liqs0, counts0, ver0, bank0] = await Promise.all(['cer_reports', 'cer_cashadv', 'cer_liquid', 'cer_cashcount', 'cer_verify', 'cer_bankrec'].map(listT));
   f.reports = tagSameDay(reports.map(flat));
-  const advs = advs0.map(flat), liqs = liqs0.map(flat);
+  const advs = advs0.map(flat), liqs = liqOwners(liqs0.map(flat), advs);
   const crumb = 'Verification';
   const hello = `<div class="hello"><div><h1>Verification</h1><p>Everything encoded is put together for the auditor: the statement of accountability, the reconciliation with the officer's books, and the findings to decide on.</p></div></div>`;
   const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && (cycleOk(a) || a.id === q.get('a'))).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));

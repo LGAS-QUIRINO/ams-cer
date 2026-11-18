@@ -9,7 +9,7 @@
 //   cer_cashadv   one cash advance  { lguId, officerId, date, checkNo, particulars, amount }
 //   cer_liquid    one liquidation   { lguId, officerId, date, ref, particulars, amount, advanceId, type: 'liq' | 'refund' (refund: ref = OR No.),
 //                                    countAnyway (ticked: counted in the cash exam although dated outside the scope) }
-import { listT } from '../src/journal.js';
+import { listT, liqOwners } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num } from './cer.js';
@@ -68,7 +68,7 @@ export async function advancesView(ctx) {
   const advs = allAdv.filter((a) => !a.beg);   // cash advances during the period
   // Beginning checks: entered in Audit Setup, unliquidated as of the last cash exam (amount = what was still unliquidated).
   const begChecks = allAdv.filter((a) => a.beg && a.begExamId === exam.id);
-  const liqs = liqs0.map(flat).filter((l) => l.officerId === o.id);
+  const liqs = liqOwners(liqs0.map(flat), advs0.map(flat)).filter((l) => l.officerId === o.id);
   // Scope of this cash exam: from the last cash exam date (after its cut-off) up to the count date.
   const scope = { from: exam.lastExamDate || '', to: audit.countDate };
   const outOf = (d) => !!d && ((scope.from && d < scope.from) || d > scope.to);

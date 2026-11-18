@@ -92,6 +92,9 @@ export async function listAdvances(all = false) {
   return out;
 }
 // store.list, with the journal's cash advances added to cer_cashadv.
+// A liquidation (or refund) belongs to the officer of its cash advance: saved before the check was tied to the officer
+// (e.g. the payee matched two officers of the same name), it may carry no officer, or another one.
+export const liqOwners = (liqs, advs) => { const by = new Map(advs.map((a) => [a.id, a.officerId])); return liqs.map((l) => { const w = l.advanceId && by.get(l.advanceId); return w && w !== l.officerId ? { ...l, officerId: w } : l; }); };
 export const listT = (t) => (t === 'cer_cashadv' ? listAdvances() : t === 'src_ckdj' ? listJournal() : store.list(t));
 
 // For Bank Statements: the journal's checks of a bank account that are not AO cash advances (those come with Cash Advances).
