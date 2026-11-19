@@ -496,7 +496,7 @@ function setupHtml(refs, cer, q) {
   const newTab = !base.exam;   // a new officer exam is being set up
   const h = heads(refs, cer, st), opens = openState(key, h);
   return `<div class="hello"><div><h1>Audit Setup</h1><p>One cash examination per auditee and count date. Each accountable officer has a separate exam record.</p></div>
-      <div class="btn-row"><a class="btn" href="#/cer/setup">← All Cash Examinations</a><button class="btn" type="button" id="cer-hol">Holidays</button>${edit ? '<button class="btn primary" type="button" id="cer-save">Save Setup</button>' : ''}</div></div>
+      <div class="btn-row"><a class="btn" href="#/cer/setup">← All Cash Examinations</a><button class="btn" type="button" id="cer-hol">Holidays</button></div></div>
     ${locked ? '<div class="msg" style="margin-bottom:12px">This cash examination is marked <b>Ready for Reports</b>. Audit Setup is locked for Team Staff; an auditor reopens it in Verification to change it.</div>' : ''}
     ${edit || locked ? '' : '<div class="msg cer-ro">View only. The auditors and Team Staff (JO) of the team set up the cash examination.</div>'}
 
@@ -526,7 +526,8 @@ function setupHtml(refs, cer, q) {
         <div id="cer-off">${officerHtml(refs, cer, st, edit)}</div>
         ${edit && st.examId && isAuditor(refs) ? `<div class="cer-foot"><button class="btn sm" type="button" id="cer-remove">Remove this officer from the examination</button></div>` : ''}
       </div>
-    </section>`;
+    </section>
+    ${edit ? '<div class="btn-row cer-savebar"><button class="btn primary" type="button" id="cer-save">Save Setup</button></div>' : ''}`;
 }
 
 function lguOptions(refs, sel) {
