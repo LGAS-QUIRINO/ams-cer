@@ -394,7 +394,7 @@ export async function verifyView(ctx) {
     <section class="panel" id="vf-pane-sum" role="tabpanel" ${TAB === 'sum' ? '' : 'hidden'}><div class="cc-head"><span class="cd-num">1</span><h2>Findings Summary</h2><span class="cd-sub">one line per area · found by the app, decided by the auditor</span></div>
       <div class="cd-body">${complete ? summaryHtml : progressHtml}</div></section>
     <section class="panel" id="vf-pane-det" role="tabpanel" ${TAB === 'det' ? '' : 'hidden'}><div class="cc-head"><span class="cd-num">2</span><h2>Findings in Detail</h2><span class="cd-sub">decide each row</span>
-      ${complete ? `<label class="sr-only" for="vf-show">Show</label><select class="input af-sm" id="vf-show" style="width:auto;margin-left:auto"><option value="" ${!show ? 'selected' : ''}>All findings (${findings.length})</option><option value="todo" ${show === 'todo' ? 'selected' : ''}>To decide (${findings.length - decided})</option><option value="aom" ${show === 'aom' ? 'selected' : ''}>For AOM</option></select>` : ''}</div>
+      ${complete ? `<label class="sr-only" for="vf-show">Show</label><select class="input af-sm" id="vf-show" style="width:auto;margin-left:auto"><option value="" ${!show ? 'selected' : ''}>All findings (${findings.length})</option><option value="todo" ${show === 'todo' ? 'selected' : ''}>To decide (${findings.length - decided})</option><option value="aom" ${show === 'aom' ? 'selected' : ''}>For AOM</option></select>${auditor && !dis ? '<button class="btn sm" type="button" id="vf-allnoted" style="margin-left:8px" title="Every finding shown that is still To decide becomes Noted; For AOM and Not a finding stay">All to decide → Noted</button>' : ''}` : ''}</div>
       <div class="cd-body">${chkHtml}${complete ? `${detailHtml}<p class="af-note">Nothing is concluded by the app; the auditor decides each finding (click again to undo). Untick Encoding complete to go back to encoding.</p>` : progressHtml}</div></section>
     <div id="vf-pane-soa" role="tabpanel" ${TAB === 'soa' ? '' : 'hidden'}>
     <section class="panel" aria-labelledby="vf-h1"><div class="cc-head"><span class="cd-num">3</span><h2 id="vf-h1">Statement of Accountability</h2><span class="cd-sub">GF 74-A, part D · computed</span>
@@ -418,6 +418,12 @@ function wireVerify(c) {
   // Decision buttons: one per row; clicking the chosen one again sets it back to To decide (saved with Save Decisions).
   $$('.vf-decb button').forEach((btn) => { btn.onclick = () => { const tr = btn.closest('tr'); const v = tr.dataset.d === btn.dataset.v ? 'To decide' : btn.dataset.v; tr.dataset.d = v;
     $$('button', btn.parentNode).forEach((y) => { y.classList.toggle('on', y.dataset.v === v); y.setAttribute('aria-pressed', y.dataset.v === v); }); }; });
+  // All to decide → Noted: every row shown still To decide is set to Noted (saved with Save Decisions; click a row again to change it).
+  const an = $('#vf-allnoted');
+  if (an) an.onclick = () => { const rows = $$('tr[data-fk]').filter((tr) => !tr.dataset.d || tr.dataset.d === 'To decide');
+    if (!rows.length) return toast('No finding shown is still To decide.', 'bad');
+    rows.forEach((tr) => { tr.dataset.d = 'Noted'; $$('.vf-decb button', tr).forEach((y) => { y.classList.toggle('on', y.dataset.v === 'Noted'); y.setAttribute('aria-pressed', y.dataset.v === 'Noted'); }); });
+    toast(`${rows.length} finding${rows.length > 1 ? 's' : ''} set to Noted. Press Save Decisions to keep them.`, 'ok'); };
   const paintRc = () => books.forEach((b) => {
     const g = (f2) => { const el = $(`[data-rc="${b.key}"][data-f="${f2}"]`); return el ? (num(el.value) || 0) : 0; };
     const has = $(`[data-rc="${b.key}"][data-f="cashbook"]`)?.value.trim();
