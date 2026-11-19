@@ -35,6 +35,18 @@ function nsUnused(pv, a, z) {
 // Accountable forms kept in the register: the collecting forms plus checkbooks (received directly by the officer from the bank).
 const AF_FORMS = [...FORMS, ['chk', 'Checks']];
 const custOf = (l) => (l && l.data.kind === 'province' ? 'PTO' : 'MTO');   // the custodian's office
+// The custodian as an accountable officer: the officer of this register with the Custodian function in a cash examination
+// (the latest one). The custodian's stock is his accountability. None set up: "Custodian (MTO)" as before.
+export function custodianOf(f, regId) {
+  let best = null, bestD = '';
+  (f.exams || []).forEach((e) => { if (!(e.functions || []).includes('custodian')) return;
+    const o = (f.officers || []).find((x) => x.id === e.officerId); if (!o || o.lguId !== regId) return;
+    const d = (f.audits || []).find((a) => a.id === e.auditId)?.countDate || '';
+    if (!best || d > bestD) { best = o; bestD = d; } });
+  return best;
+}
+const custName = (refs, f, regId) => { const o = custodianOf(f, regId); return o ? o.name : ''; };
+const custLabel = (refs, f, regId) => { const n = custName(refs, f, regId), c = custOf(refs.lgu[regId]); return n ? `${n} · Custodian (${c})` : `Custodian (${c})`; };
 const RECEIVED_FROM = ['Provincial Treasurer', 'National Printing Office', 'Bank', 'Others'];
 // Received From is a flexible list kept per LGU register: the two usual suppliers, plus any source added with "+ Add source…".
 const DEF_SRC = ['Provincial Treasurer', 'National Printing Office'];
@@ -267,6 +279,7 @@ export async function formsView(ctx) {
   const sub = parts[1] || '';
   if (sub === 'officer') return officerView(ctx, f, lguId);
   if (sub === 'raaf') return raafView(ctx, f, lguId);
+  if (q.get('open') === '1') ENC.open = true;   // e.g. Starting Inventory from Audit Setup (the custodian's beginning)
   return registerView(ctx, f, lguId);
 }
 // Opens on the register of the latest cash examination, else the person's ticked municipality, else the first one.
@@ -333,7 +346,7 @@ function registerView(ctx, f, lguId) {
       <div class="panel-head"><h2 id="reg-h">Forms Register</h2><span class="pill">${rows.length}</span><span class="crumb-i" title="Click a booklet to see its history and to Issue, Transfer, Return or report it Lost.">ⓘ</span>
         <div class="af-filters">
           ${pick('form', [['', 'All form types'], ...formsFor(f, lguId).filter(([k]) => formsUsed.includes(k)).map(([k]) => [k, FORM_SHORT[k]])], fForm)}
-          ${pick('cust', [['', 'All custody'], ['stock', 'In stock (custodian)'], ['direct', 'Received directly by an AO'], ...offs.map((o) => [o.id, o.name])], fCust)}
+          ${pick('cust', [['', 'All custody'], ['stock', `In stock (${custName(refs, f, lguId) || 'custodian'})`], ['direct', 'Received directly by an AO'], ...offs.map((o) => [o.id, o.name])], fCust)}
           ${pick('st', [['open', 'Not exhausted'], ['all', 'All statuses'], ['stock', 'In stock'], ['new', 'Issued, not yet used'], ['part', 'Partly used'], ['done', 'Exhausted'], ['lost', 'Lost / Destroyed']], fStat)}
           ${pick('sort', [['serial', 'By form and serial'], ['days', 'Longest with AO first']], sort)}
         </div></div>
@@ -344,7 +357,7 @@ function registerView(ctx, f, lguId) {
           return `<tr data-bk="${esc(b.id)}" tabindex="0">
             <td class="af-frm">${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td class="r">${b.qty}</td>
             <td class="af-rcv">${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${b.receivedDirect ? `<b class="af-direct">Received directly</b> · ` : ''}${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'import' ? 'Imported from Excel' : ''))}</small>${begTag(b)}</td>
-            <td class="af-cust">${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small title="${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}">${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock · ${custOf(lgu)}`}</td>
+            <td class="af-cust">${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small title="${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}">${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock · ${esc(custLabel(refs, f, lguId))}`}</td>
             <td>${b.status !== 'stock' && b.issuedDate ? issuedText(b, true) : '<span class="dim">—</span>'}</td>
             <td class="r">${d === null ? '<span class="dim">—</span>' : `<b>${daysText(b, d)}</b><small class="dim af-nw">${aoCutoff(f, b.officerId) ? 'to ' + esc(fmtDate(cutOf(b))) : 'as of today'}</small>`}</td>
             <td class="r">${usedOf(b)}</td>
@@ -355,7 +368,7 @@ function registerView(ctx, f, lguId) {
     </section>`;
   const exportRows = () => rows.map((b) => { const o = f.officers.find((x) => x.id === b.officerId); const d = dAo(b);
     return { Form: FORM_SHORT[b.form] || b.form, 'Series From': b.from, 'Series To': b.to, Qty: b.qty, 'Date Received': fmtDate(b.receivedDate), 'Received From': b.receivedFrom || '',
-      'Received Directly': b.receivedDirect ? 'Yes' : '', Custody: b.status === 'issued' && o ? o.name : b.status === 'stock' ? `Custodian (${custOf(lgu)})` : '', Designation: b.status === 'issued' && o ? (o.designation || '') : '',
+      'Received Directly': b.receivedDirect ? 'Yes' : '', Custody: b.status === 'issued' && o ? o.name : b.status === 'stock' ? custLabel(refs, f, lguId) : '', Designation: b.status === 'issued' && o ? (o.designation || '') : '',
       'Date Issued': b.status !== 'stock' ? (b.issuedAsOf ? 'Not yet known (on hand as of ' + fmtDate(b.issuedDate) + ')' : fmtDate(b.issuedDate)) : '', 'Days with AO': d === null ? '' : (b.issuedAsOf ? '≥ ' + d : d), 'Days Counted To': d === null ? '' : (aoCutoff(f, b.officerId) ? fmtDate(cutOf(b)) : 'today'), Beginning: (() => { const g = beginOf(b); return g ? (g.as === 'ao' ? "AO's beginning" : 'Starting inventory (custodian)') + (g.date ? ' as of ' + fmtDate(g.date) : '') : ''; })(), Used: usedOf(b), 'Unused (ranges)': rt(b, unusedRanges(b)), 'Unused Qty': unusedOf(b), 'Unused Amount': faceOf(b) ? unusedOf(b) * faceOf(b) : '',
       'Skipped Numbers': rangesText(skippedOf(b)), Status: statusOf(b).label, 'Date Exhausted': fmtDate(b.exhaustedDate) }; });
   return { crumb: 'Accountable Forms · Forms Register', body, wire: () => {
@@ -404,13 +417,15 @@ function encodeHtml(refs, offs, q) {
   const range = `<div class="field"><label for="e-from">Serial From</label><input class="input r" id="e-from" inputmode="numeric" autocomplete="off"></div>
     <div class="field"><label for="e-to">Serial To</label><input class="input r" id="e-to" inputmode="numeric" autocomplete="off"></div>`;
   const per = `<div class="field"><label for="e-per">Per Booklet</label><input class="input r" id="e-per" inputmode="numeric" value="${LAST.per}"></div>`;
-  const offSel = (id, label, extra = '') => `<div class="field"><label for="${id}">${label}</label><select class="input" id="${id}">${extra.replace(`value="${LAST.off}"`, `value="${LAST.off}" selected`)}<option value="">— Choose the officer —</option>${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.off)}>${esc(officerLabel(refs, o))}</option>`).join('')}</select></div>`;
+  const offSel = (id, label, extra = '') => `<div class="field"><label for="${id}">${label}</label><select class="input" id="${id}">${extra.replace(`value="${LAST.off}"`, `value="${LAST.off}" selected`)}<option value="">— Choose the officer —</option>${offs.filter((o) => o.id !== custId).map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.off)}>${esc(officerLabel(refs, o))}</option>`).join('')}</select></div>`;
   let fields = '';
   const custName = refs.lgu[offs.lguId]?.data.kind === 'province' ? 'PTO' : 'MTO';
+  const custL = esc(custLabel(refs, offs.f, offs.lguId));
+  const custId = custodianOf(offs.f, offs.lguId)?.id || '';   // the custodian is the stock itself, not an officer to issue to
   if (mv === 'receive') fields = `<div class="af-enc g9">${formSel}${range}${per}
       <div class="field"><label for="e-date">Date Received</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
-      <div class="field"><label for="e-rby">Received By</label><select class="input" id="e-rby"><option value="custodian">Custodian (${custName})</option>
-        <optgroup label="Directly by AO">${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.rby)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
+      <div class="field"><label for="e-rby">Received By</label><select class="input" id="e-rby"><option value="custodian">${custL}</option>
+        <optgroup label="Directly by AO">${offs.filter((o) => o.id !== custId).map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.rby)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
       <div class="field"><label for="e-src">Received From</label><select class="input" id="e-src">${srcOptions(offs.f, offs.lguId, { cur: LAST.src, bank: chkByCustodian(offs.f, offs.lguId) })}</select></div>
       <div class="field"><label for="e-ref">Reference (optional)</label><input class="input" id="e-ref" placeholder="e.g. RIS No."></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>`;
@@ -421,8 +436,8 @@ function encodeHtml(refs, offs, q) {
     const offHeld = LAST.held !== 'custodian' && offs.some((o) => o.id === LAST.held);
     fields = `<div class="af-enc g7s">${formSel}${range}${per}
       <div class="field"><label for="e-date">As of</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
-      <div class="field"><label for="e-held">Held By</label><select class="input" id="e-held"><option value="custodian">Custodian (${custName}) · in stock</option>
-        <optgroup label="Accountable Officer">${offs.map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.held)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
+      <div class="field"><label for="e-held">Held By</label><select class="input" id="e-held"><option value="custodian">${custL} · in stock</option>
+        <optgroup label="Accountable Officer">${offs.filter((o) => o.id !== custId).map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.held)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>
     <div class="af-offrow one" id="e-offrow" ${offHeld ? '' : 'hidden'}>
       ${partBox('e')}
@@ -542,7 +557,7 @@ async function findSerial(ctx, f, lguId, offs, text) {
       : b.status === 'stock' ? 'In stock, unused' : b.status === 'lost' ? 'Booklet reported lost / destroyed' : unused ? '<b>Unused</b>' : 'Used (per the issuance record or logbook, not encoded in Collections)';
     const sk = skippedOf(b).some(([a, z]) => a <= n && n <= z);
     return `<div class="af-find"><b>${esc(FORM_SHORT[b.form] || b.form)} ${n}</b>
-      <span>Booklet ${serialText(b)} · ${b.status === 'issued' && o ? `with <b>${esc(o.name)}</b>${o.designation ? ', ' + esc(o.designation) : ''} since ${esc(fmtDate(b.issuedDate))}` : b.status === 'stock' ? `in stock with the custodian (${custOf(refs.lgu[b.lguId])})` : 'lost / destroyed'}${here ? '' : ` · in the register of ${esc(agencyName(refs, refs.lgu[b.lguId]))}`}</span>
+      <span>Booklet ${serialText(b)} · ${b.status === 'issued' && o ? `with <b>${esc(o.name)}</b>${o.designation ? ', ' + esc(o.designation) : ''} since ${esc(fmtDate(b.issuedDate))}` : b.status === 'stock' ? `in stock with ${esc(custLabel(refs, f, b.lguId))}` : 'lost / destroyed'}${here ? '' : ` · in the register of ${esc(agencyName(refs, refs.lgu[b.lguId]))}`}</span>
       <span>Number: ${state}${sk ? ' · unused, between used numbers' : ''}</span>
       <span class="af-findbtns">${here ? `<button class="btn sm" type="button" data-open="${esc(b.id)}">Open booklet</button>` : `<a class="btn sm" href="#/cer/forms?lgu=${esc(b.lguId)}">Go to that register</a>`}</span></div>`;
   }).join('');
@@ -1057,6 +1072,16 @@ function piecesAt(b, holder, date) {
   return rawUnused(b, date);
 }
 const prevDay = (d) => new Date(Date.parse(d) - 864e5).toISOString().slice(0, 10);
+// The custodian's stock on a date (his accountability as an officer): booklets of the register held by the custodian then,
+// with their numbers still unused.
+export function stockAt(f, regId, date) {
+  if (!regId || !date) return [];
+  return f.booklets.filter((b) => b.lguId === regId).map((b) => { const h = holderAt(holderEvents(b), date);
+    return h === 'mto' ? { b, unused: piecesAt(b, 'mto', date), src: 'stock' } : null; })
+    .filter((r) => r && r.unused.length).sort((x, y) => x.b.form.localeCompare(y.b.form) || x.b.from - y.b.from);
+}
+// The register whose stock an officer answers for: his own LGU when he is its custodian in this exam.
+export const stockRegOf = (f, o, exam) => (o && exam && (exam.functions || []).includes('custodian') && custodianOf(f, o.lguId)?.id === o.id ? o.lguId : '');
 function raafFigures(list, who, start, end) {
   const inX = (h) => !!h && h !== 'gone' && (who === 'all' ? true : who === 'mto' ? h === 'mto' : h === who);
   const rows = {};
@@ -1088,7 +1113,7 @@ function raafView(ctx, f, lguId) {
   const mine = f.booklets.filter((b) => b.lguId === lguId);
   const offs = officersOf(refs, f, lguId).filter((o) => mine.some((b) => (b.history || []).some((h) => h.officerId === o.id)));
   const who = q.get('who') === 'all' || q.get('who') === 'mto' || offs.some((o) => o.id === q.get('who')) ? q.get('who') : 'mto';
-  const whoName = who === 'all' ? `Consolidated · ${custOf(lgu)} and all accountable officers` : who === 'mto' ? `Custodian (${custOf(lgu)})` : officerLabel(refs, f.officers.find((o) => o.id === who));
+  const whoName = who === 'all' ? `Consolidated · ${custOf(lgu)} and all accountable officers` : who === 'mto' ? custLabel(refs, f, lguId) : officerLabel(refs, f.officers.find((o) => o.id === who));
   const rows = raafFigures(mine, who, start, end);
   const sections = rows.length ? [['', rows]] : [];
   const typedId = (fund, form) => `${lguId}|${who}|${m}|${fund}|${form}`;
@@ -1107,7 +1132,7 @@ function raafView(ctx, f, lguId) {
     <div class="panel af-bar">
       <div class="field"><label for="r-lgu">LGU</label><select class="input" id="r-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
       <div class="field"><label for="r-who">RAAF of</label><select class="input" id="r-who">
-        <option value="mto" ${who === 'mto' ? 'selected' : ''}>Custodian (${custOf(lgu)})</option>
+        <option value="mto" ${who === 'mto' ? 'selected' : ''}>${esc(custLabel(refs, f, lguId))}</option>
         <option value="all" ${who === 'all' ? 'selected' : ''}>Consolidated (${custOf(lgu)} and all AOs)</option>
         <optgroup label="Accountable officer">${offs.map((o) => `<option value="${esc(o.id)}" ${who === o.id ? 'selected' : ''}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
       <div class="field"><label for="r-m">Month</label><input class="input" type="month" id="r-m" value="${esc(m)}"></div>
@@ -1486,11 +1511,13 @@ export function cutoffLines(f, examId) {
 }
 // The officer's booklets for the cut-off dropdown: in hand per the register on the count date (beginning + received), not lost.
 // Only booklets with numbers still unused per the register (ORs encoded in Collections are used) and not yet entered at this cut-off.
-export function cutoffChoices(f, officerId, countDate, examId = '') {
+export function cutoffChoices(f, officerId, countDate, examId = '', stockReg = '') {
   const entered = new Set(examId ? cutoffLines(f, examId).map((l) => l.bookletId).filter(Boolean) : []);
-  return f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.status !== 'lost' && b.issuedDate && b.issuedDate <= countDate
-      && !entered.has(b.id) && rawUnused(b, countDate).length)
-    .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
+  const own = f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.status !== 'lost' && b.issuedDate && b.issuedDate <= countDate
+      && !entered.has(b.id) && rawUnused(b, countDate).length);
+  // The custodian: the stock he held at the count (booklets issued after it were still with him).
+  const stock = stockReg ? stockAt(f, stockReg, countDate).map((r) => r.b).filter((b) => !entered.has(b.id) && !own.includes(b)) : [];
+  return [...own, ...stock].sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
 }
 // A booklet's unused numbers as of a date (beginning, ORs encoded and checks in the CkDJ taken out): for the cut-off.
 export const unusedAt = (b, date) => rawUnused(b, date);
@@ -1558,6 +1585,23 @@ export function orIn(f, x, from, to) {
 export function saafRows(f, officerId, exam, from, to, advs = []) {
   const out = [];
   const cut = exam ? cutoffOf(f, exam.id) : null, lines = exam ? cutoffLines(f, exam.id) : [];
+  // The custodian: his stock (as the RAAF of the custodian) from the last cash exam to the count.
+  const reg = stockRegOf(f, (f.officers || []).find((o) => o.id === officerId), exam);
+  if (reg) f.booklets.filter((b) => b.lguId === reg && !(b.officerId === officerId && b.status !== 'stock')).forEach((b) => {
+    const evs = holderEvents(b), h0 = from ? holderAt(evs, from) : null;
+    const beg = h0 === 'mto' ? piecesAt(b, 'mto', from) : [];
+    let cur = h0, rec = [], recD = '';
+    evs.filter((e) => (!from || e.date > from) && e.date <= to).forEach((e) => { if (cur !== 'mto' && e.holder === 'mto') { rec.push(...piecesAt(b, 'mto', e.date)); recD = recD || e.date; } cur = e.holder; });
+    rec = mergeRanges(rec);
+    const end = holderAt(evs, to) === 'mto' ? piecesAt(b, 'mto', to) : [];
+    const mine = lines.filter((l) => l.bookletId === b.id);
+    const np = mine.length > 0 && mine.every((l) => l.np);
+    const count = cut ? mergeRanges(mine.filter((l) => !l.np).flatMap((l) => l.ranges)) : null;
+    if (!beg.length && !rec.length && !end.length && !(count && count.length)) return;
+    const issued = subtractRanges([...beg, ...rec], np || !count ? end : count);
+    out.push({ np, remarks: np ? 'Not presented' : '', id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, face: faceOf(b), beg, rec, issued, end, count,
+      diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || b.bankAccount || '', date: recD || b.receivedDate || '', stock: true });
+  });
   f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && b.issuedDate <= to)
     .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from).forEach((b) => {
       const beg = begRanges(f, b, from);
@@ -1610,6 +1654,10 @@ export function cutoffFindings(f, o, exam, from, to) {
     const onUn = (b.orNos || []).filter((x) => count.some(([a, z]) => a <= x.n && x.n <= z)).map((x) => x.n);
     if (onUn.length) add(`onun|${b.id}|${onUn.length}`, `${name}: ${onUn.length} OR${onUn.length > 1 ? 's' : ''} encoded on numbers still unused at the cut-off: ${rangesText(toR(onUn))}.`);
   });
+  // The custodian: booklets in his stock at the count not entered at the cut-off.
+  const reg = stockRegOf(f, o, exam);
+  if (reg) stockAt(f, reg, to).forEach(({ b, unused }) => { if (lines.some((l) => l.bookletId === b.id)) return;
+    add(`nps|${b.id}`, `${FORM_SHORT[b.form] || b.form} ${serialText(b)}: in the custodian's stock per the register (${b.noSerial ? countRanges(unused) + ' pcs' : rangesText(unused)}), but not presented at the cut-off.`); });
   lines.filter((l) => !l.bookletId).forEach((l) => add(`nir|${l.id}`, `${FORM_SHORT[l.form] || l.form} ${l.ns ? `${countRanges(l.ranges)} pcs (no serial)` : `${l.from} – ${l.to}`}: not in the register, no record of receipt. Check the logbook or the series encoded.`));
   const mineAll = f.booklets.filter((b) => b.officerId === o.id);
   outOfSequence({ booklets: mineAll }).forEach((id) => { const b = mineAll.find((x) => x.id === id); add(`oos|${id}`, `${FORM_SHORT[b.form]} ${serialText(b)} used while an earlier booklet of the same form still had unused numbers.`); });
@@ -1654,10 +1702,10 @@ export const receivedDuringOf = (f, officerId, asOf, countDate) =>
   f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && (!asOf || !isBeg(b, asOf)) && (!countDate || b.issuedDate <= countDate));
 export function beginningTableHtml(f, rows, canEdit) {
   if (!rows.length) return '';
-  const srcText = { custodian: 'From the custodian · in the Forms Register', bank: 'From the bank · this officer only', direct: 'Received directly · in the Forms Register' };
+  const srcText = { stock: 'Custodian\'s stock · in the Forms Register', custodian: 'From the custodian · in the Forms Register', bank: 'From the bank · this officer only', direct: 'Received directly · in the Forms Register' };
   const dirFrom = (b) => (b.receivedDirect && b.receivedFrom && b.receivedFrom !== 'Bank' ? ` (${esc(b.receivedFrom)})` : '');
   return `<div class="cer-tbl"><table class="af-reg cer-afbeg"><thead><tr><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col">Date Issued</th><th scope="col">Unused at the Last Cash Exam</th><th scope="col" class="r">Qty</th><th scope="col">Source</th></tr></thead>
-    <tbody>${rows.map(({ b, unused, src }) => `<tr ${canEdit ? `data-begbk="${esc(b.id)}" tabindex="0" class="click"` : ''}><td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td>${issuedText(b)}</td>
+    <tbody>${rows.map(({ b, unused, src }) => `<tr ${canEdit ? `data-begbk="${esc(b.id)}" tabindex="0" class="click"` : ''}><td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td>${src === 'stock' ? (b.receivedDate ? `<small class="dim">Received</small> ${esc(fmtDate(b.receivedDate))}` : '<span class="dim">—</span>') : issuedText(b)}</td>
       <td class="mono">${b.noSerial ? '—' : rangesText(unused)}</td><td class="r">${countRanges(unused)}${faceOf(b) ? `<small>${peso(countRanges(unused) * faceOf(b))}</small>` : ''}</td><td><small class="dim">${srcText[src]}${dirFrom(b)}</small></td></tr>`).join('')}</tbody></table></div>`;
 }
 export function openBooklet(refs, f, id) {

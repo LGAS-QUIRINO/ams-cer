@@ -15,7 +15,7 @@ import { listT, liqOwners } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
-import { loadForms, unusedFormsOf, notPresentedOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges, unusedAt, subtractRanges } from './forms.js';
+import { loadForms, stockRegOf, unusedFormsOf, notPresentedOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges, unusedAt, subtractRanges } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, tagSameDay, ctcSplit, ctcBalance, ctcBegShare, isCtc, ctcAlloc, depPart } from './collections.js';
 import { accountsOf, caFund, restFund, fundOrder, carriedOpen, afterLast, prevSys } from './funds.js';
 
@@ -125,7 +125,7 @@ export async function countView(ctx) {
   // Booklets for the cut-off, each with its numbers still unused at the count: ORs encoded and, for checks, the checks in the
   // CkDJ and the cash advance checks taken out. Only booklets with unused numbers are listed; choosing one fills them in.
   const ckNo = (v) => +String(v ?? '').replace(/\D/g, '') || 0;
-  const choices = cutoffChoices(f, o.id, audit.countDate, exam.id).map((b) => {
+  const choices = cutoffChoices(f, o.id, audit.countDate, exam.id, stockRegOf(f, o, exam)).map((b) => {
     let un = unusedAt(b, audit.countDate);
     if (b.form === 'chk') { const used = advs.filter((a) => a.date && a.date <= audit.countDate).map((a) => ckNo(a.checkNo)).filter((n) => n >= b.from && n <= b.to).map((n) => [n, n]); if (used.length) un = subtractRanges(un, used); }
     return { ...b, un };

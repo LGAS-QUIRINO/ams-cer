@@ -243,7 +243,7 @@ function heads(refs, cer, st) {
   }
   if (!o) h.forms = ['Choose the officer first', 'info'];
   else if (!lastExam) h.forms = ['Set the last cash exam date first', 'info'];
-  else { const r = FM && FX ? FM.beginningFormsOf(FX, o.id, lastExam) : [];
+  else { const r = begFormsOf(o, st, lastExam);
     const mv = r.reduce((n, x) => n + FM.countRanges(x.unused) * FM.faceOf(x.b), 0);
     h.forms = [r.length ? `${r.length} booklet${r.length > 1 ? 's' : ''} · ${r.reduce((n, x) => n + FM.countRanges(x.unused), 0)} unused pcs${mv ? ` · ₱${money(mv)} with money value` : ''} as of ${esc(fmtDate(lastExam))}` : `None on hand as of ${esc(fmtDate(lastExam))}`, r.length ? 'ok' : 'info']; }
   return h;
@@ -592,14 +592,15 @@ function officerHtml(refs, cer, st, edit) {
   const h = heads(refs, cer, st), opens = openState(location.hash, h);
   // When nothing open still needs input, the next section that does opens by itself.
   if (!opens.size) { const nx = ACC_ORDER.find((k) => k !== 'exam' && h[k] && h[k][1] === 'need'); if (nx) opens.add(nx); }
-  const begRows = o && lastExam && FM && FX ? FM.beginningFormsOf(FX, o.id, lastExam) : [];
+  const begRows = begFormsOf(o, st, lastExam);
+  const stockReg = o && FM && FX ? FM.stockRegOf(FX, o, { functions: st.functions || [] }) : '';
   const moneyForms = begRows.reduce((n, x) => n + FM.countRanges(x.unused) * FM.faceOf(x.b), 0);
   const during = o && FM && FX ? FM.receivedDuringOf(FX, o.id, lastExam, st.countDate) : [];
   const begBody = !o ? '<p class="cer-wait">Choose the accountable officer first.</p>'
     : !lastExam ? '<p class="cer-wait">Set the last cash exam date (Examination Period) first. The beginning forms are the ones on hand on that date.</p>'
     : `${begRows.length ? FM.beginningTableHtml(FX, begRows, edit) : `<p class="cer-wait">No accountable forms in ${esc(o.name)}'s hands as of ${esc(fmtDate(lastExam))} are encoded yet.</p>`}
-      <div class="cer-headrow cer-begfoot"><span class="hint">Forms from the custodian go to the Forms Register as issuances still in the officer's hands; checkbooks from the bank stay on this officer's records only.${during.length ? ` ${during.length} booklet${during.length > 1 ? 's' : ''} received after the last cash exam ${during.length > 1 ? 'are' : 'is'} in Accountable Forms.` : ''}${edit && begRows.length ? ' Click a booklet to Edit or Delete it.' : ''}</span>
-        ${edit ? '<button class="btn" type="button" id="cer-addbeg">+ Add Beginning Forms</button>' : ''}</div>`;
+      <div class="cer-headrow cer-begfoot"><span class="hint">${stockReg ? 'The custodian\'s stock comes from the Forms Register: booklets received or in the starting inventory, less those issued to the officers. ' : ''}${stockReg && onlyCust ? '' : 'Forms from the custodian go to the Forms Register as issuances still in the officer\'s hands; checkbooks from the bank stay on this officer\'s records only.'}${during.length ? ` ${during.length} booklet${during.length > 1 ? 's' : ''} received after the last cash exam ${during.length > 1 ? 'are' : 'is'} in Accountable Forms.` : ''}${edit && begRows.length ? ' Click a booklet to Edit or Delete it.' : ''}</span>
+        ${edit ? `${stockReg ? `<a class="btn" href="#/cer/forms?lgu=${esc(stockReg)}&mv=starting&open=1">+ Add to the Custodian's Stock</a> ` : ''}${stockReg && onlyCust ? '' : '<button class="btn" type="button" id="cer-addbeg">+ Add Beginning Forms</button>'}` : ''}</div>`;
   // Names that look doubled (the same person under two spellings): flagged, with Merge for an auditor.
   const dupes = []; offs.forEach((x) => { const k = personKey(x.name); if (!k) return; const g = dupes.find((d) => d.k === k); if (g) g.list.push(x); else dupes.push({ k, list: [x] }); });
   const dupBox = dupes.filter((d) => d.list.length > 1).map((d) => `<div class="msg warn cer-dupes">${d.list.map((x) => `<b>${esc(x.name)}</b>`).join(' and ')} look like the same person.${edit && isAuditor(refs) ? ` <a href="#" data-mergepair="${esc(d.list.map((x) => x.id).join('|'))}">Merge</a>` : ''}</div>`).join('');
@@ -1014,6 +1015,12 @@ async function begChecksModal(refs, cer, st, k, edit) {
   emitChange('local');
 }
 
+// The officer's beginning forms; the custodian also answers for the custodian's stock on that date.
+function begFormsOf(o, st, asOf) {
+  if (!o || !asOf || !FM || !FX) return [];
+  const reg = FM.stockRegOf(FX, o, { functions: st.functions || [] });
+  return [...FM.beginningFormsOf(FX, o.id, asOf), ...(reg ? FM.stockAt(FX, reg, asOf) : [])];
+}
 async function saveSetup(refs, cer, st) {
   const lgu = refs.lgu[st.lguId];
   const bad = (m) => { toast(m, 'bad'); return null; };
