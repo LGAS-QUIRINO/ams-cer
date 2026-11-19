@@ -1003,3 +1003,5 @@ table.af-reg.tr-month{min-width:0}
 .cyc-grp.cyc-brgy > summary { font-size: 14px }
 .cer-savebar { margin: 14px 0 4px }
 .cer-banknote { margin: 4px 2px 0 }
+.rm-findrow { display: flex; align-items: center; gap: 10px; margin: 8px 0 }
+.rm-findrow .input { max-width: 420px }

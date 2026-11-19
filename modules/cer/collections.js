@@ -92,7 +92,7 @@ const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, sameDay, ...rest } = x; return rest; };   // sameDay is worked out on loading, never saved
 const bad = (m) => { toast(m, 'bad'); return false; };
 const DEPSHOW = { v: 'all' };
-const REM = { key: '', i: -1, date: '', mode: 'type' };   // the typed remittance being edited (by report) and the last date typed
+const REM = { key: '', i: -1, date: '', mode: 'type', find: '' };   // the typed remittance being edited (by report) and the last date typed
 const KSEL = {};   // the report type shown per officer (SCD / RCD or SCR), remembered while the app is open
 const KIND_PICK = { SCD: 'SCD – Collections and Deposits', RCD: 'RCD – Collections and Deposits', SCR: 'SCR – Collections and Remittances' };   // deposits register: all of the officer, or the selected report
 const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? q.set(k, v) : q.delete(k))); location.hash = location.hash.split('?')[0] + '?' + q.toString(); };
@@ -431,9 +431,14 @@ export async function collectionsView(ctx) {
   // The LO's Collections tab: choose Type (a collector's report not in the app) or Tick (one already in the app), then
   // one list of this RCD: typed reports with their series and ticked ones (In the app), in report-number order.
   const mode = cur.pending ? 'type' : REM.mode;
+  // Waiting list: by date received, then by OR series; a search box narrows it (collector, report No., an OR number in the range, amount, date).
+  const serOf = (m) => { const t = String(m.series || (m.from ? `${m.from}-${m.to}` : '')); const out = []; t.replace(/(\d+)\s*[–-]\s*(\d+)|(\d+)/g, (_, a, z, one) => { out.push(one ? [+one, +one] : [+a, +z]); return ''; }); return out; };
+  const firstSer = (m) => { const r = serOf(m); return r.length ? Math.min(...r.map((x) => x[0])) : Infinity; };
+  const freeSorted = colFree.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || firstSer(a) - firstSer(b));
   const tickTbl = !colFree.length ? '<p class="dim" style="margin:6px 0">No collector\'s SCR / RCD in the app is waiting to be put in an RCD.</p>'
-    : `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th style="width:30px"></th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
-      <tbody>${colFree.map((m) => `<tr><td><input type="checkbox" data-colk="${esc(m.key)}" ${enc ? '' : 'disabled'} aria-label="Put in this RCD"></td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td></tr>`).join('')}</tbody></table></div>
+    : `<div class="rm-findrow"><label class="sr-only" for="rm-find">Search the waiting remittances</label><input class="input" id="rm-find" type="search" placeholder="Search: collector, report No., OR No., amount or date" value="${esc(REM.find)}" autocomplete="off"><span class="dim" id="rm-findn"></span></div>
+      <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th style="width:30px"></th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
+      <tbody>${freeSorted.map((m) => `<tr data-rmq="${esc([fmtDate(m.date), colName(f, refs, m.collectorId), m.reportNo || '', m.series || '', money(m.amount), String(m.amount ?? '')].join(' ').toLowerCase())}" data-rmrg="${esc(serOf(m).map(([a, z]) => a + '-' + z).join(';'))}"><td><input type="checkbox" data-colk="${esc(m.key)}" ${enc ? '' : 'disabled'} aria-label="Put in this RCD"></td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td></tr>`).join('')}</tbody></table></div>
       <p class="dim" style="margin:4px 0 0;font-size:12.5px">Tick those listed on the hard copy of this RCD: they move to the list below.</p>`;
   const typeLine = !enc ? '' : `<div class="rm-line" id="rm-form">
         <div class="field"><label for="rm-date">Date received</label><input class="input" type="date" id="rm-date" value="${esc(ed ? ed.date : REM.date || '')}"></div>
@@ -707,6 +712,13 @@ function wireAll(c) {
     emitChange('local'); toast(on ? 'Put in this RCD.' : 'Taken out of this RCD (the collector\'s report stays).', 'ok');
   };
   $$('[data-colk]').forEach((cb) => { cb.onchange = () => putCol(cb.dataset.colk, cb.checked); });
+  { const fi = $('#rm-find'); if (fi) { const run = () => { REM.find = fi.value; const q = fi.value.trim().toLowerCase(), n = +q.replace(/[^\d]/g, ''), num = /^[\d\s,.-]+$/.test(q) && n;
+      let shown = 0, all = 0;
+      $$('tr[data-rmq]').forEach((tr) => { all++; const ok = !q || q.split(/\s+/).every((w) => tr.dataset.rmq.includes(w))
+        || (num && String(n).length >= 4 && (tr.dataset.rmrg || '').split(';').some((r) => { const [a, z] = r.split('-').map(Number); return a <= n && n <= z; }));
+        tr.hidden = !ok; if (ok) shown++; });
+      $('#rm-findn').textContent = q ? `${shown} of ${all}` : ''; };
+    fi.oninput = run; run(); } }
   $$('[data-colrm]').forEach((b) => { b.onclick = () => putCol(b.dataset.colrm, false); });
   $$('[data-rmmode]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); REM.mode = a.dataset.rmmode; emitChange('local'); }; });
   // Typed remittances of this report (a collector whose SCR / RCD is not in the app): the entry line and the list.
