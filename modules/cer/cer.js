@@ -442,7 +442,7 @@ function listHtml(refs, cer) {
         <div class="cyc-brgys">${brgys.map((bg) => { const as = rows.filter((a) => a.lguId === bg.id);
           return `<details class="cyc-grp cyc-brgy"><summary><b>${esc(agencyName(refs, bg))}</b> ${sub(as)}</summary>${examRows(as)}</details>`; }).join('')}</div></details>` : ''}`;
   }).join('');
-  return `<div class="hello"><div><h1>Audit Setup</h1><p>One cash examination per auditee and count date. Each accountable officer has a separate exam record.</p></div>
+  return `<div class="hello"><div><h1>Audit Setup</h1><p>Officers of one auditee counted on the same date share one cash examination. Each accountable officer is examined once per count date.</p></div>
       <div class="btn-row"><button class="btn" type="button" id="cer-hol">Holidays</button>${canCyc ? '<button class="btn" type="button" id="cer-newcyc">Start New Cycle</button>' : ''}${canNew ? '<a class="btn primary" href="#/cer/setup?new=1">+ New Cash Examination</a>' : ''}</div></div>
     <div class="panel">
       <div class="panel-head"><h2>Cash Examinations</h2><span class="dim">${selC ? `· ${esc(selC.name)}${selC.id === CYC.current ? ' <span class="pill p-done">Current cycle</span>' : ''}` : '· All cycles'}</span><span class="pill">${rows.length}</span>${selC && canCyc ? ` <button type="button" class="bk-lnk" data-cycren="${esc(selC.id)}" title="Rename this cycle">Rename</button>` : ''}</div>
@@ -495,7 +495,7 @@ function setupHtml(refs, cer, q) {
   const tabs = base.exams.map((e) => ({ id: e.id, o: cer.officers.find((x) => x.id === e.officerId) }));
   const newTab = !base.exam;   // a new officer exam is being set up
   const h = heads(refs, cer, st), opens = openState(key, h);
-  return `<div class="hello"><div><h1>Audit Setup</h1><p>One cash examination per auditee and count date. Each accountable officer has a separate exam record.</p></div>
+  return `<div class="hello"><div><h1>Audit Setup</h1><p>Officers of one auditee counted on the same date share one cash examination. Each accountable officer is examined once per count date.</p></div>
       <div class="btn-row"><a class="btn" href="#/cer/setup">← All Cash Examinations</a><button class="btn" type="button" id="cer-hol">Holidays</button></div></div>
     ${locked ? '<div class="msg" style="margin-bottom:12px">This cash examination is marked <b>Ready for Reports</b>. Audit Setup is locked for Team Staff; an auditor reopens it in Verification to change it.</div>' : ''}
     ${edit || locked ? '' : '<div class="msg cer-ro">View only. The auditors and Team Staff (JO) of the team set up the cash examination.</div>'}
@@ -1020,10 +1020,18 @@ async function saveSetup(refs, cer, st) {
   if (!st.officerId) return bad('Choose the accountable officer.');
   if (!(st.functions || []).length) return bad('Tick at least one accountability function.');
   if (st.functions.includes('collecting') && !(st.forms || []).length) return bad('Tick the accountable forms used in collecting.');
+  // Officers of one auditee counted on the same date share one cash examination (same cut-off): a new one on that date joins it.
   const other = cer.audits.find((a) => a.id !== st.auditId && a.lguId === st.lguId && a.countDate === st.countDate);
-  if (other) return bad(`A cash examination of ${agencyName(refs, lgu)} on ${fmtDate(st.countDate)} already exists. Open it from the list and add the officer there.`);
-  const auditId = st.auditId || newId('cera');
-  if (cer.exams.some((e) => e.auditId === auditId && e.officerId === st.officerId && e.id !== st.examId)) return bad('This officer is already in this cash examination.');
+  if (other && st.auditId) return bad(`${agencyName(refs, lgu)} already has a cash examination on ${fmtDate(st.countDate)}. Add this officer there instead of moving this one to that date.`);
+  const auditId = st.auditId || (other ? other.id : newId('cera'));
+  // The duplicate to stop is the accountable officer: one cash examination per officer per count date (each cut-off is its own cycle).
+  const cycOf = (a) => (a ? (CYC.of[a.id] || a.cycleId || '') : '');
+  const dup = cer.exams.find((e) => e.id !== st.examId && e.officerId === st.officerId && (() => {
+    const a = cer.audits.find((x) => x.id === e.auditId); if (!a) return false;
+    return a.id === auditId || (a.lguId === st.lguId && a.countDate === st.countDate);
+  })());
+  if (dup) { const o = cer.officers.find((x) => x.id === st.officerId);
+    return bad(`${o ? o.name : 'This officer'} already has a cash examination on ${fmtDate(st.countDate)}. Open it from the list.`); }
   const prev = prevExam(cer, st.officerId, st.countDate, st.examId);
   const lastExamDate = prev ? prev.countDate : st.lastExamDate;
   if (!lastExamDate) return bad('Enter the last cash exam date.');
@@ -1044,7 +1052,7 @@ async function saveSetup(refs, cer, st) {
     }
   });
   const oldAudit = cer.audits.find((a) => a.id === auditId);
-  await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy, cycleId: st.cycleId || oldAudit?.cycleId || CYC.current || '' }, by(refs));
+  await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy, cycleId: (other && !st.auditId ? cycOf(other) : '') || st.cycleId || oldAudit?.cycleId || CYC.current || '' }, by(refs));
   const examId = st.examId || newId('cere');
   const oldExam = cer.exams.find((e) => e.id === examId);
   await store.save('cer_exams', examId, { auditId, officerId: st.officerId, functions: st.functions, forms: st.functions.includes('collecting') ? st.forms : [],
