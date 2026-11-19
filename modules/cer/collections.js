@@ -437,7 +437,7 @@ export async function collectionsView(ctx) {
   // Same date: by the SCR / RCD No. when both have one, else by the OR series.
   const repNo = (m) => String(m.colNo || String(m.reportNo || '').replace(/^\s*(SCR|RCD)\s*(No\.)?\s*/i, '')).trim();
   // The collector's SCR / RCD No., editable here (saved on the collector's report itself).
-  const noCell = (m) => (enc && m.colReportId ? `<span class="rm-noedit" data-noedit="${esc(m.colReportId)}" data-cur="${esc(m.colNo || '')}" tabindex="0" role="button" title="Click to type or change the ${esc(String(m.reportNo || 'SCR').split(' ')[0])} No.">${esc(m.reportNo || '')}</span>` : esc(m.reportNo || ''));
+  const noCell = (m) => (enc && m.colReportId ? `<span class="rm-noedit" data-noedit="${esc(m.colReportId)}" data-cur="${esc(m.colNo || '')}" data-ndate="${esc(m.date || '')}" data-namt="${esc(String(m.amount ?? ''))}" data-nfrom="${esc(m.from || '')}" data-nto="${esc(m.to || '')}" tabindex="0" role="button" title="Click to type or change the ${esc(String(m.reportNo || 'SCR').split(' ')[0])} No.">${esc(m.reportNo || '')}</span>` : esc(m.reportNo || ''));
   const freeSorted = colFree.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))
     || (repNo(a) && repNo(b) ? repNo(a).localeCompare(repNo(b), undefined, { numeric: true }) : 0) || firstSer(a) - firstSer(b));
   const tickTbl = !colFree.length ? '<p class="dim" style="margin:6px 0">No collector\'s SCR / RCD in the app is waiting to be put in an RCD.</p>'
@@ -727,10 +727,28 @@ function wireAll(c) {
     const save = async () => { if (done) return; const v = inp.value.trim(); if (v === was) return close(); done = true;
       const rec = await store.get('cer_reports', id); if (!rec || rec.deleted) { toast('That report is no longer in the app.', 'bad'); sp.innerHTML = html; return; }
       const r = rec.data, key = (x) => String(x || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-      if (v && f.reports.some((x) => x.id !== id && x.officerId === r.officerId && (x.kind || '') === (r.kind || '') && key(x.no) === key(v))) {
-        toast(`${colName(f, refs, r.officerId)} already has ${r.kind || 'a report'} No. ${v}.`, 'bad'); done = false; inp.focus(); return; }
-      await store.save('cer_reports', id, { ...r, no: v }, by(refs));
-      toast(`${r.kind || 'Report'} No. saved on ${colName(f, refs, r.officerId)}'s ${r.kind || 'report'}.`, 'ok'); emitChange('local'); };
+      const pend = id.startsWith('nyr|'), kind = r.kind || (pend ? id.split('|')[2] : ''), colId = r.officerId || (pend ? id.split('|')[1] : '');
+      if (v && f.reports.some((x) => x.id !== id && !x.pending && x.officerId === colId && (x.kind || '') === kind && key(x.no) === key(v))) {
+        toast(`${colName(f, refs, colId)} already has ${kind || 'a report'} No. ${v}.`, 'bad'); done = false; inp.focus(); return; }
+      if (!pend) { await store.save('cer_reports', id, { ...r, no: v }, by(refs)); }
+      else {
+        // Not yet in a report on the collector's side: the number makes it a report of its own (this remittance and its ORs).
+        if (!v) return close();
+        const date = sp.dataset.ndate, amt = r2(+sp.dataset.namt || 0), a = +sp.dataset.nfrom || 0, z = +(sp.dataset.nto || sp.dataset.nfrom) || 0, fund = id.split('|').slice(3).join('|');
+        const deps = r.deposits || [], k = deps.findIndex((d) => !d.fromLO && d.date === date && Math.abs(r2(+d.amount || 0) - amt) < 0.005);
+        if (k < 0) { toast('That remittance is no longer waiting on the collector\'s side.', 'bad'); sp.innerHTML = html; return; }
+        const d = deps[k], nid = newId('cerr');
+        await store.save('cer_reports', nid, { lguId: r.lguId, officerId: colId, kind, no: v, date, fund, ranges: a ? [[a, z]] : [], deposits: [d], remittances: [], begTyped: 0 }, by(refs), { quiet: true });
+        await store.save('cer_reports', id, { ...r, deposits: deps.filter((_, i) => i !== k) }, by(refs), { quiet: true });
+        // Already ticked into an RCD of the LO: the tick follows (the line's key names its report).
+        const ok0 = `${id}|${date}|${r2(+d.amount || 0)}`, nk = `${nid}|${date}|${r2(+d.amount || 0)}`;
+        for (const lr of f.reports.filter((y) => (y.colIn || []).includes(ok0) || (y.colOut || []).includes(ok0))) {
+          const sw = (l) => (l || []).map((x) => (x === ok0 ? nk : x));
+          await store.save('cer_reports', lr.id, { ...strip(lr), remittances: (lr.remittances || []).filter((m) => !m.fromCol), deposits: (lr.deposits || []).filter((dd) => !dd.fromLO), colIn: sw(lr.colIn), ...(lr.colOut ? { colOut: sw(lr.colOut) } : {}) }, by(refs), { quiet: true }); }
+        if (a) for (const x of f.ors.filter((y) => y.officerId === colId && !y.reportId && (y.fund || fund) === fund && +y.serial <= z && +(y.serialTo || y.serial) >= a)) {
+          await store.save('cer_ors', x.id, { ...strip(x), reportId: nid, fund }, by(refs), { quiet: true }); }
+      }
+      toast(`${kind || 'Report'} No. saved on ${colName(f, refs, colId)}'s ${kind || 'report'}.`, 'ok'); emitChange('local'); };
     inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } else if (e.key === 'Escape') { e.preventDefault(); close(); } };
     inp.onblur = () => { save(); };
   };
