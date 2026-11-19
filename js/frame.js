@@ -22,7 +22,9 @@ const icon = (k) => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"
 export function syncBox(st = syncState) {
   if (DEMO) return '<div class="syncbox" id="syncbox"><b><i class="warn"></i>Demo Mode</b><br>Saved in this browser only.</div>';
   const n = st.pending || 0;
-  const head = st.status === 'offline' ? 'Offline' : st.status === 'syncing' || st.status === 'retry' ? 'Saving…' : st.status === 'signin' ? 'Sign in again' : n ? `${n} change${n > 1 ? 's' : ''} waiting` : 'All changes saved';
+  const busy = st.status === 'syncing' || st.status === 'retry';
+  // While sending: how many changes are still waiting (goes down batch by batch); with none waiting, it is only receiving.
+  const head = st.status === 'offline' ? (n ? `Offline · ${n.toLocaleString('en-US')} waiting` : 'Offline') : busy ? (n ? `Saving… · ${n.toLocaleString('en-US')} change${n > 1 ? 's' : ''} waiting` : 'Checking for updates…') : st.status === 'signin' ? 'Sign in again' : n ? `${n} change${n > 1 ? 's' : ''} waiting` : 'All changes saved';
   const dot = st.status === 'offline' || st.status === 'signin' || st.status === 'error' ? 'warn' : '';
   const last = st.lastSync ? 'Last sync ' + new Date(st.lastSync).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '. ' : '';
   return `<div class="syncbox" id="syncbox"><b><i class="${dot}"></i>${head}</b><br>${last}Work saves on this device even without internet.</div>`;

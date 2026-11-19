@@ -18,7 +18,7 @@ export function syncPill(st = syncState) {
   if (DEMO) return '<span id="sync" class="sync demo">Demo Mode · saved in this browser only</span>';
   const n = st.pending || 0;
   const text = st.status === 'offline' ? (n ? `Offline · ${n} change${n > 1 ? 's' : ''} saved on this device` : 'Offline')
-    : st.status === 'syncing' || st.status === 'retry' ? 'Saving to database…'
+    : st.status === 'syncing' || st.status === 'retry' ? (n ? `Saving to database · ${n.toLocaleString('en-US')} change${n > 1 ? 's' : ''} waiting` : 'Checking for updates…')
     : st.status === 'signin' ? 'Sign in again to send changes'
     : n ? `${n} change${n > 1 ? 's' : ''} waiting to send` : 'All changes saved';
   const kind = st.status === 'offline' || st.status === 'signin' || st.status === 'error' ? 'warn' : n || st.status === 'syncing' ? '' : 'ok';
