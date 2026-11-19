@@ -1492,6 +1492,8 @@ export function cutoffChoices(f, officerId, countDate, examId = '') {
       && !entered.has(b.id) && rawUnused(b, countDate).length)
     .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
 }
+// A booklet's unused numbers as of a date (beginning, ORs encoded and checks in the CkDJ taken out): for the cut-off.
+export const unusedAt = (b, date) => rawUnused(b, date);
 export const bookletName = (b) => `${FORM_SHORT[b.form] || b.form} · ${b.noSerial ? `${b.qty} pcs (no serial)` : `${b.from}–${b.to}`}${b.form === 'chk' && b.fund ? ` · ${b.fund}` : ''}`;
 export function parseCutRanges(text, from, to) { return parseRanges(text, from, to); }
 

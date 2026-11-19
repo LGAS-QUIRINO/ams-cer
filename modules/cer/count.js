@@ -15,7 +15,7 @@ import { listT, liqOwners } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
-import { loadForms, unusedFormsOf, notPresentedOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges } from './forms.js';
+import { loadForms, unusedFormsOf, notPresentedOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges, unusedAt, subtractRanges } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, tagSameDay, ctcSplit, ctcBalance, ctcBegShare, isCtc, ctcAlloc, depPart } from './collections.js';
 import { accountsOf, caFund, restFund, fundOrder, carriedOpen } from './funds.js';
 
@@ -122,7 +122,14 @@ export async function countView(ctx) {
   const unliqTot = r2(open.reduce((n, a) => n + a.unliq, 0));
   const auditor = isAuditor(refs);
   const editSplit = DRAFT.editSplit || Object.values(d.split || {}).some((v) => v !== '' && v !== null && v !== undefined);
-  const choices = cutoffChoices(f, o.id, audit.countDate, exam.id);
+  // Booklets for the cut-off, each with its numbers still unused at the count: ORs encoded and, for checks, the checks in the
+  // CkDJ and the cash advance checks taken out. Only booklets with unused numbers are listed; choosing one fills them in.
+  const ckNo = (v) => +String(v ?? '').replace(/\D/g, '') || 0;
+  const choices = cutoffChoices(f, o.id, audit.countDate, exam.id).map((b) => {
+    let un = unusedAt(b, audit.countDate);
+    if (b.form === 'chk') { const used = advs.filter((a) => a.date && a.date <= audit.countDate).map((a) => ckNo(a.checkNo)).filter((n) => n >= b.from && n <= b.to).map((n) => [n, n]); if (used.length) un = subtractRanges(un, used); }
+    return { ...b, un };
+  }).filter((b) => b.noSerial || countRanges(b.un));
   const lgu = refs.lgu[audit.lguId];
   const otherForms = [...formsForLgu(lgu), ['chk', 'Checks']];
   const mv = forms.filter((x) => x.face), nomv = forms.filter((x) => !x.face);
@@ -142,7 +149,7 @@ export async function countView(ctx) {
     <section class="panel cd-pane" id="cd-pane-cut" role="tabpanel" ${OPEN.cut ? '' : 'hidden'}>
       <div class="cd-body">
         ${auditor ? `<div class="cut-entry">
-          <div class="field cut-bk"><label for="cut-bk">Booklet</label><select class="input" id="cut-bk"><option value="">— Choose the booklet —</option>${choices.map((b) => `<option value="${esc(b.id)}">${esc(bookletName(b))}</option>`).join('')}<option value="__other">Other (not in the list)…</option></select></div>
+          <div class="field cut-bk"><label for="cut-bk">Booklet</label><select class="input" id="cut-bk"><option value="">— Choose the booklet —</option>${choices.map((b) => `<option value="${esc(b.id)}">${esc(bookletName(b))}${b.noSerial ? '' : ` · ${countRanges(b.un)} unused`}</option>`).join('')}<option value="__other">Other (not in the list)…</option></select></div>
           <div class="field cut-oth" hidden><label for="cut-form">Form</label><select class="input" id="cut-form">${otherForms.map(([k, n]) => `<option value="${k}">${esc(n)}</option>`).join('')}</select></div>
           <div class="field cut-oth" hidden><label for="cut-from">Series From</label><input class="input mono r" id="cut-from" inputmode="numeric" autocomplete="off"></div>
           <div class="field cut-oth" hidden><label for="cut-to">Series To</label><input class="input mono r" id="cut-to" inputmode="numeric" autocomplete="off"></div>
@@ -414,7 +421,9 @@ function wireCut(c) {
     ur.placeholder = nsNow() ? 'pcs' : isOther() ? 'e.g. 101, 105-150' : bk() ? `e.g. ${bk().from}-${bk().to}` : 'e.g. 3764072, 3764075-3764100';
     const r = sel.value && ur.value.trim() ? read() : null; qty.textContent = r && r.line ? countRanges(r.line.ranges) : '0';
   };
-  sel.onchange = paint; ur.oninput = paint; if (npEl) npEl.onchange = paint; ['#cut-form', '#cut-from', '#cut-to'].forEach((k) => { const el = $(k); if (el) el.oninput = el.onchange = paint; });
+  // Choosing a booklet fills in its unused numbers as of the count (to check against what the officer presents).
+  sel.onchange = () => { const b = bk(); if (b && !b.noSerial && b.un) ur.value = b.un.map(([x, y]) => (x === y ? `${x}` : `${x}-${y}`)).join(', '); else if (!isOther()) ur.value = ''; paint(); };
+  ur.oninput = paint; if (npEl) npEl.onchange = paint; ['#cut-form', '#cut-from', '#cut-to'].forEach((k) => { const el = $(k); if (el) el.oninput = el.onchange = paint; });
   ur.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#cut-enter').click(); } };
   paint();
   const cur = () => { const r = cutoffOf(f, exam.id); return { examId: exam.id, officerId: o.id, lines: r ? [...(r.lines || [])] : [] }; };
