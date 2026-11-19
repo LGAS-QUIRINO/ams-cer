@@ -149,6 +149,7 @@ export async function banksView(ctx) {
   const top = (open = false) => `<div class="panel ${open ? 'cd-head' : 'cd-bar'} bk-bar">${open ? '<div class="cd-headrow">' : ''}
       <div class="field"><label for="bk-audit">Cash Examination</label><select class="input" id="bk-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>
       <div class="field"><label for="bk-acct">Bank Account</label><select class="input" id="bk-acct">${accounts.length ? accounts.map((x) => `<option value="${esc(x.id)}" ${acct && x.id === acct.id ? 'selected' : ''}>${esc(acctLabel(x))}</option>`).join('') : '<option value="">No bank account yet</option>'}</select></div>
+      <a class="btn sm bk-ckdj" href="#/src?l=${esc(audit.lguId)}${acct ? '&acct=' + esc(acct.id) : ''}" title="Check Disbursements Journal (Source Documents)">CkDJ</a>
       </div>`;
   const btnAccts = `<div class="btn-row"><button class="btn" type="button" id="bk-accts">Bank Accounts (${accounts.length})</button></div>`;
   const wireTop = () => {

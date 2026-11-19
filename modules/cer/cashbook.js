@@ -125,7 +125,6 @@ export async function cashbookView(ctx) {
       <div class="field"><label for="cb-audit">Cash Examination</label><select class="input" id="cb-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>
       <div class="field"><label for="cb-exam">Accountable Officer</label><select class="input" id="cb-exam">${exams.map((e) => `<option value="${esc(e.id)}" ${exam && e.id === exam.id ? 'selected' : ''}>${esc(e.o.name)}</option>`).join('') || '<option value="">No officer</option>'}</select></div>
       <div class="field"><label for="cb-acct">Bank Account</label><select class="input" id="cb-acct">${accounts.map((x) => `<option value="${esc(x.id)}" ${acct && x.id === acct.id ? 'selected' : ''}>${esc(acctLabel(x))}</option>`).join('') || '<option value="">No bank account yet</option>'}</select></div>
-      <a class="btn sm" href="#/src?l=${esc(audit.lguId)}${acct ? '&acct=' + esc(acct.id) : ''}" title="Check Disbursements Journal (Source Documents)">CkDJ</a>
       ${exam && acct ? '<button class="btn sm" type="button" id="cb-xls">Export to Excel</button>' : ''}</div>`;
   const wireTop = () => {
     $('#cb-audit').onchange = (e) => go({ a: e.target.value, e: '', acct: '' });
