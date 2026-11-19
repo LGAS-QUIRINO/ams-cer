@@ -434,7 +434,10 @@ export async function collectionsView(ctx) {
   // Waiting list: by date received, then by OR series; a search box narrows it (collector, report No., an OR number in the range, amount, date).
   const serOf = (m) => { const t = String(m.series || (m.from ? `${m.from}-${m.to}` : '')); const out = []; t.replace(/(\d+)\s*[–-]\s*(\d+)|(\d+)/g, (_, a, z, one) => { out.push(one ? [+one, +one] : [+a, +z]); return ''; }); return out; };
   const firstSer = (m) => { const r = serOf(m); return r.length ? Math.min(...r.map((x) => x[0])) : Infinity; };
-  const freeSorted = colFree.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || firstSer(a) - firstSer(b));
+  // Same date: by the SCR / RCD No. when both have one, else by the OR series.
+  const repNo = (m) => String(m.colNo || String(m.reportNo || '').replace(/^\s*(SCR|RCD)\s*(No\.)?\s*/i, '')).trim();
+  const freeSorted = colFree.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))
+    || (repNo(a) && repNo(b) ? repNo(a).localeCompare(repNo(b), undefined, { numeric: true }) : 0) || firstSer(a) - firstSer(b));
   const tickTbl = !colFree.length ? '<p class="dim" style="margin:6px 0">No collector\'s SCR / RCD in the app is waiting to be put in an RCD.</p>'
     : `<div class="rm-findrow"><label class="sr-only" for="rm-find">Search the waiting remittances</label><input class="input" id="rm-find" type="search" placeholder="Search: collector, report No., OR No., amount or date" value="${esc(REM.find)}" autocomplete="off"><span class="dim" id="rm-findn"></span></div>
       <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th style="width:30px"></th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
