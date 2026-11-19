@@ -85,7 +85,7 @@ function wireAcct(bg, p, f, lguId) {
     if (list.length > 1) { if (!list.some((a) => acctText(a) === h.value)) h.value = acctText(list[0]);
       v.innerHTML = `<select class="input" id="${p}-acctsel" aria-label="Bank account">${list.map((a) => `<option value="${esc(acctText(a))}" ${acctText(a) === h.value ? 'selected' : ''}>${esc(acctText(a))} · ${esc(a.fund)}</option>`).join('')}</select>`;
       $(`#${p}-acctsel`, bg).onchange = (e) => { h.value = e.target.value; }; return; }
-    h.value = typed; v.innerHTML = `<div class="input cd-ro warn-t">No bank account for this fund. Add it in Bank Accounts${typed ? ` (kept: ${esc(typed)})` : ''}.</div>`;
+    h.value = typed; v.innerHTML = `<div class="input cd-ro warn-t">No bank account for this fund. Add it in Bank Statements → Bank Accounts${typed ? ` (kept: ${esc(typed)})` : ''}.</div>`;
   };
   fundEl.addEventListener('change', paint); paint();
 }

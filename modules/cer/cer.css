@@ -1002,3 +1002,4 @@ table.af-reg.tr-month{min-width:0}
 .cyc-grp.cyc-brgy { border-top: 1px dashed var(--line); padding: 6px 0 }
 .cyc-grp.cyc-brgy > summary { font-size: 14px }
 .cer-savebar { margin: 14px 0 4px }
+.cer-banknote { margin: 4px 2px 0 }
