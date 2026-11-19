@@ -36,9 +36,10 @@ export async function render(ctx) {
   const { app, refs, q } = ctx;
   const me = refs.me ? refs.me.data : { name: ctx.session.name || ctx.session.email };
   const roleText = [refs.me?.data.position, roleLine(refs)].filter(Boolean).join(' · ');
-  const { body, wire } = await journalView(ctx);
-  app.innerHTML = moduleFrame({ title: 'Source<br>Documents', items: [{ key: 'ckdj', label: 'Check Disbursements', icon: 'book', href: '#/src' }, { section: true, label: 'OTHER MODULES' }, { key: 'cer', label: 'Cash Examination', icon: 'overview', href: '#/cer' }],
-    active: 'ckdj', crumb: 'Check Disbursements Journal', me, roleText, body });
+  const isRcd = (ctx.parts || [])[0] === 'rcd';
+  const { body, wire } = isRcd ? await (await import('./rcd.js')).rcdView(ctx) : await journalView(ctx);
+  app.innerHTML = moduleFrame({ title: 'Source<br>Documents', items: [{ key: 'ckdj', label: 'Check Disbursements', icon: 'book', href: '#/src' }, { key: 'rcd', label: 'RCD (LGU)', icon: 'book', href: '#/src/rcd' }, { section: true, label: 'OTHER MODULES' }, { key: 'cer', label: 'Cash Examination', icon: 'overview', href: '#/cer' }],
+    active: isRcd ? 'rcd' : 'ckdj', crumb: isRcd ? 'RCD (LGU) · Report of Collections and Deposits' : 'Check Disbursements Journal', me, roleText, body });
   if (wire) wire();
 }
 

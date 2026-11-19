@@ -20,6 +20,7 @@ import { loadForms, orIn, cutoffFindings, checkUsage, exportXlsx } from './forms
 import { figuresOf, fundsOf, kindOfForm, repName, tagSameDay, partOk, ctcBegShare, ctcAlloc, depPart, depsBeforeOrs, orInScope } from './collections.js';
 import { booksOf, compute } from './count.js';
 import { afterLast, prevSys } from './funds.js';
+import { rcdGroups } from '../src/rcd.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -157,6 +158,12 @@ export async function verifyView(ctx) {
   (count?.items || []).forEach((it, i) => { const a = num(it.allowed ?? it.presented) ?? 0; if ((+it.presented || 0) - a > 0.004) add(`dis|${i}|${it.particulars}`, 'Cash Count', `Cash item disallowed: ${it.particulars}, ₱${money(r2((+it.presented || 0) - a))}.`, '#/cer/count', 'dis', [esc(it.particulars), money(+it.presented || 0), money(a), money(r2((+it.presented || 0) - a))], r2((+it.presented || 0) - a)); });
   Object.values(fig.chains).forEach((c) => [...c.figs, c.pend].forEach((g) => g.issues.forEach((t, i) => (exam.records === 'cashbook' && t.startsWith('Series ')) || add(`rep|${g.id}|${i}|${t.slice(0, 40)}`, 'Collections', `${g.pending ? `Not yet reported (${g.kind})` : repName(g.rec, g.kind)}: ${t}`, '#/cer/collections', 'rep', [esc(g.pending ? `Not yet reported (${g.kind})` : repName(g.rec, g.kind)), esc(t)]))));
   const unrep = Object.values(fig.chains).map((c) => c.pend).filter((g) => g.nOrs);
+  // An RCD split between Liquidating Officers (Source Documents › RCD (LGU)): the parts against the whole total per hard copy.
+  if ((exam.functions || []).includes('liquidating') && refs.lgu[audit.lguId]?.data.kind !== 'barangay') {
+    const mine = new Set(Object.values(fig.chains).flatMap((c) => c.figs.map((g) => g.id)));
+    rcdGroups(refs, f, audit.lguId).filter((g) => g.diff !== null && Math.abs(g.diff) >= 0.005 && g.parts.some((p) => mine.has(p.id))).forEach((g) =>
+      add(`rcdw|${g.key}`, 'Collections', `RCD No. ${g.no}: the parts of the Liquidating Officers (${g.parts.map((p) => `${p.o.name} ₱${money(p.coll)}`).join(' + ')} = ₱${money(g.sum)}) are ${g.diff > 0 ? 'short of' : 'over'} the whole total per hard copy ₱${money(g.whole)} by ₱${money(Math.abs(g.diff))}.`, `#/src/rcd?l=${audit.lguId}`, '', null, g.diff));
+  }
   unrep.forEach((g) => add(`nyr|${g.id}`, 'Collections', `${g.nOrs} OR${g.nOrs > 1 ? 's' : ''} (₱${money(g.orsTotal)}) not yet in a submitted ${g.kind}, ${g.fund}.`, '#/cer/collections', 'nyr', [esc(g.range || '—'), String(g.nOrs), esc(g.from ? `${fmtDate(g.from)}${g.to && g.to !== g.from ? ` – ${fmtDate(g.to)}` : ''}` : '—'), esc(`${g.kind} · ${g.fund}`), money(g.orsTotal)], g.orsTotal));
   { const eb = depsBeforeOrs(f, o, fig).filter((x) => inScope(x.d.date) || (from && x.d.date < from));
     eb.forEach((x) => { const dts = `${fmtDate(x.first)}${x.last !== x.first ? ` – ${fmtDate(x.last)}` : ''}`, ahead = [days(x.d.date, x.first), days(x.d.date, x.last)].map((n) => Math.max(0, n));
