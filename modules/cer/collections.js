@@ -494,7 +494,9 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   if (LASTC.key !== ckey) Object.assign(LASTC, { key: ckey, form: '', bookletId: '', serial: '', focus: '', mode: cbook ? 'range' : 'one' });
   if (!cbMode) LASTC.mode = 'one';
   const form = forms.includes(LASTC.form) ? LASTC.form : forms[0] || '';
-  const bks = myBooklets(form);
+  // Only the booklets still in use (with unused numbers) are offered; a used-up booklet stays out of the list (its ORs remain
+  // in the records). The booklet chosen last stays listed so the entry line keeps it.
+  const bks = myBooklets(form).filter((b) => countRanges(bookletUnused(b)) > 0 || b.id === LASTC.bookletId);
   // Unused per the Forms Register: numbers used before the beginning (partly used) and ORs already encoded are both taken out.
   const unusedOfBk = (b) => countRanges(bookletUnused(b));
   const bk = LASTC.bookletId === '__none' ? null : bks.find((b) => b.id === LASTC.bookletId) || bks.find((b) => unusedOfBk(b) > 0 && b.status === 'issued') || bks[0] || null;
