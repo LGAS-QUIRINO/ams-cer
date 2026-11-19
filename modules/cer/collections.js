@@ -437,7 +437,9 @@ export async function collectionsView(ctx) {
   // Same date: by the SCR / RCD No. when both have one, else by the OR series.
   const repNo = (m) => String(m.colNo || String(m.reportNo || '').replace(/^\s*(SCR|RCD)\s*(No\.)?\s*/i, '')).trim();
   // The collector's SCR / RCD No., editable here (saved on the collector's report itself).
-  const noCell = (m) => (enc && m.colReportId ? `<span class="rm-noedit" data-noedit="${esc(m.colReportId)}" data-cur="${esc(m.colNo || '')}" data-ndate="${esc(m.date || '')}" data-namt="${esc(String(m.amount ?? ''))}" data-nfrom="${esc(m.from || '')}" data-nto="${esc(m.to || '')}" tabindex="0" role="button" title="Click to type or change the ${esc(String(m.reportNo || 'SCR').split(' ')[0])} No.">${esc(m.reportNo || '')}</span>` : esc(m.reportNo || ''));
+  // Their Report shows the number only (2026-0442); none yet: the report type (SCR / RCD).
+  const shortNo = (m) => { const t = String(m.reportNo || '').trim(); const n = t.replace(/^\s*(SCR|RCD|SCD)\s*(No\.?)?\s*/i, '').trim(); return n || (t.match(/^(SCR|RCD|SCD)/i)?.[0].toUpperCase() || t); };
+  const noCell = (m) => (enc && m.colReportId ? `<span class="rm-noedit" data-noedit="${esc(m.colReportId)}" data-cur="${esc(m.colNo || '')}" data-ndate="${esc(m.date || '')}" data-namt="${esc(String(m.amount ?? ''))}" data-nfrom="${esc(m.from || '')}" data-nto="${esc(m.to || '')}" tabindex="0" role="button" title="Click to type or change the ${esc(String(m.reportNo || 'SCR').split(' ')[0])} No.">${esc(shortNo(m))}</span>` : esc(shortNo(m)));
   const freeSorted = colFree.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))
     || (repNo(a) && repNo(b) ? repNo(a).localeCompare(repNo(b), undefined, { numeric: true }) : 0) || firstSer(a) - firstSer(b));
   const tickTbl = !colFree.length ? '<p class="dim" style="margin:6px 0">No collector\'s SCR / RCD in the app is waiting to be put in an RCD.</p>'
