@@ -411,27 +411,42 @@ async function renameCycle(refs, id) {
 /* ================= Cash Examinations list ================= */
 function listHtml(refs, cer) {
   DRAFT = null;
+  // The Cycle chosen at the top decides which cash examinations are listed; they are grouped by auditee: each LGU, then its
+  // barangays under BARANGAYS, one fold per barangay.
   const rows = cer.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && cycleOk(a))
-    .sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)) || agencyName(refs, refs.lgu[a.lguId]).localeCompare(agencyName(refs, refs.lgu[b.lguId])));
-  const groups = CYC.list.map((c) => ({ c, rows: rows.filter((a) => (CYC.of[a.id] || a.cycleId) === c.id) })).filter((g) => g.rows.length || g.c.id === CYC.current);
-  const cols = 'grid-template-columns:120px minmax(170px,1.1fr) minmax(220px,1.6fr) minmax(170px,1fr)';
+    .sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
+  const sel = getCycle(), selC = sel === 'all' ? null : CYC.list.find((c) => c.id === (sel === 'cur' ? CYC.current : sel)) || null;
+  const cols = 'grid-template-columns:120px minmax(240px,1.8fr) minmax(170px,1fr)';
   const canNew = isEncoder(refs), canCyc = isAuditor(refs);
+  const nOff = (as) => new Set(cer.exams.filter((e) => as.some((a) => a.id === e.auditId)).map((e) => e.officerId)).size;
+  const examRows = (as) => `<div class="t-head" style="${cols}"><span>Cash Count</span><span>Accountable Officers</span><span>Prepared by</span></div>
+    ${as.map((a) => { const offs = cer.exams.filter((e) => e.auditId === a.id).map((e) => cer.officers.find((o) => o.id === e.officerId)).filter(Boolean);
+      const cy = sel === 'all' ? CYC.list.find((c) => c.id === (CYC.of[a.id] || a.cycleId)) : null;
+      return `<a class="t-row click" style="${cols}" href="#/cer/setup?a=${esc(a.id)}">
+        <span><b>${esc(fmtDate(a.countDate))}</b>${cy ? `<small style="display:block">${esc(cy.name)}</small>` : ''}${READY.has(a.id) ? ' <span class="pill p-done">Ready</span>' : ''}</span>
+        <span>${offs.length ? offs.map((o) => `${esc(o.name)} <small>· ${esc(o.designation || '')}</small>`).join('<br>') : '<small>No officer yet</small>'}</span>
+        <span><small>${esc(refs.user[a.preparedBy]?.data.name || '')}</small></span></a>`; }).join('')}`;
+  const sub = (as) => `<span class="dim">· ${as.length} cash examination${as.length === 1 ? '' : 's'}${as.length ? ` · ${esc(fmtDate(as[0].countDate))}` : ''} · ${nOff(as)} officer${nOff(as) === 1 ? '' : 's'}</span>`;
+  // Auditees: the province and municipalities (LGU) with their barangays.
+  const lguOf = (a) => refs.lgu[a.lguId];
+  const munOf = (l) => (l && l.data.kind === 'barangay' ? refs.lgu[l.data.parentId] : l);
+  const muns = [...new Map(rows.map((a) => munOf(lguOf(a))).filter(Boolean).map((m) => [m.id, m])).values()]
+    .sort((x, y) => (x.data.kind === 'province' ? -1 : y.data.kind === 'province' ? 1 : x.data.name.localeCompare(y.data.name)));
+  const one = muns.length === 1;
+  const body = muns.map((m) => {
+    const own = rows.filter((a) => a.lguId === m.id);
+    const brgys = [...new Map(rows.filter((a) => lguOf(a)?.data.kind === 'barangay' && munOf(lguOf(a))?.id === m.id).map((a) => [a.lguId, lguOf(a)])).values()].sort((x, y) => x.data.name.localeCompare(y.data.name));
+    const nB = rows.filter((a) => brgys.some((b) => b.id === a.lguId)).length;
+    return `${own.length ? `<details class="cyc-grp" ${one ? 'open' : ''}><summary><b>${esc(agencyName(refs, m))}</b> ${sub(own)}</summary>${examRows(own)}</details>` : ''}
+      ${brgys.length ? `<details class="cyc-grp" ${one ? 'open' : ''}><summary><b>BARANGAYS</b>${one ? '' : ` <span class="dim">of ${esc(m.data.name)}</span>`} <span class="dim">· ${brgys.length} barangay${brgys.length === 1 ? '' : 's'} · ${nB} cash examination${nB === 1 ? '' : 's'}</span></summary>
+        <div class="cyc-brgys">${brgys.map((bg) => { const as = rows.filter((a) => a.lguId === bg.id);
+          return `<details class="cyc-grp cyc-brgy"><summary><b>${esc(agencyName(refs, bg))}</b> ${sub(as)}</summary>${examRows(as)}</details>`; }).join('')}</div></details>` : ''}`;
+  }).join('');
   return `<div class="hello"><div><h1>Audit Setup</h1><p>One cash examination per auditee and count date. Each accountable officer has a separate exam record.</p></div>
       <div class="btn-row"><button class="btn" type="button" id="cer-hol">Holidays</button>${canCyc ? '<button class="btn" type="button" id="cer-newcyc">Start New Cycle</button>' : ''}${canNew ? '<a class="btn primary" href="#/cer/setup?new=1">+ New Cash Examination</a>' : ''}</div></div>
     <div class="panel">
-      <div class="panel-head"><h2>Cash Examinations</h2><span class="pill">${rows.length}</span></div>
-      ${rows.length || groups.length ? groups.map((g) => `<details class="cyc-grp" ${g.c.id === CYC.current || groups.length === 1 ? 'open' : ''}><summary><b>${esc(g.c.name)}</b>${g.c.id === CYC.current ? ' <span class="pill p-done">Current cycle</span>' : ''}${canCyc ? ` <button type="button" class="bk-lnk" data-cycren="${esc(g.c.id)}" title="Rename this cycle">Rename</button>` : ''} <span class="dim">· ${g.rows.length} cash examination${g.rows.length === 1 ? '' : 's'} · ${((n) => `${n} officer${n === 1 ? '' : 's'}`)(new Set(g.rows.flatMap((a) => cer.exams.filter((e) => e.auditId === a.id).map((e) => e.officerId))).size)}</span></summary>
-        ${g.rows.length ? `<div class="t-head" style="${cols}"><span>Cash Count</span><span>Auditee</span><span>Accountable Officers</span><span>Prepared by</span></div>` : '<p class="af-note" style="margin:8px 0">No cash examination in this cycle yet: add one with <b>+ New Cash Examination</b>.</p>'}
-        ${g.rows.map((a) => {
-          const lgu = refs.lgu[a.lguId];
-          const offs = cer.exams.filter((e) => e.auditId === a.id).map((e) => cer.officers.find((o) => o.id === e.officerId)).filter(Boolean);
-          return `<a class="t-row click" style="${cols}" href="#/cer/setup?a=${esc(a.id)}">
-            <span><b>${esc(fmtDate(a.countDate))}</b></span>
-            <span>${esc(agencyName(refs, lgu))}<small style="display:block">${esc(addressOf(refs, lgu))}</small></span>
-            <span>${offs.length ? offs.map((o) => `${esc(o.name)} <small>· ${esc(o.designation || '')}</small>`).join('<br>') : '<small>No officer yet</small>'}</span>
-            <span><small>${esc(refs.user[a.preparedBy]?.data.name || '')}</small></span></a>`;
-        }).join('')}</details>`).join('')
-      : `<div class="empty"><b>No cash examinations yet.</b>${canNew ? 'Start one with <b>+ New Cash Examination</b>.' : 'The auditors set these up.'}</div>`}
+      <div class="panel-head"><h2>Cash Examinations</h2><span class="dim">${selC ? `· ${esc(selC.name)}${selC.id === CYC.current ? ' <span class="pill p-done">Current cycle</span>' : ''}` : '· All cycles'}</span><span class="pill">${rows.length}</span>${selC && canCyc ? ` <button type="button" class="bk-lnk" data-cycren="${esc(selC.id)}" title="Rename this cycle">Rename</button>` : ''}</div>
+      ${rows.length ? body : `<div class="empty"><b>No cash examination in ${selC ? 'this cycle' : 'any cycle'} yet.</b>${canNew ? 'Add one with <b>+ New Cash Examination</b>.' : 'The auditors set these up.'}</div>`}
     </div>`;
 }
 
