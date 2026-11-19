@@ -1051,7 +1051,12 @@ async function saveSetup(refs, cer, st) {
   const moving = !!(other && st.auditId && st.examId);
   if (other && st.auditId && !st.examId) return bad(`${agencyName(refs, lgu)} already has a cash examination on ${fmtDate(st.countDate)}. Open it from the list and add the officer there.`);
   const fromId = moving ? st.auditId : '';
-  const auditId = other ? other.id : st.auditId || newId('cera');
+  // The count date is the officer's own: a new date for one officer of a shared cash examination leaves the others on theirs.
+  const cur = st.auditId ? cer.audits.find((a) => a.id === st.auditId) : null;
+  const split = !other && !!cur && !!st.examId && cur.countDate !== st.countDate && cer.exams.some((e) => e.auditId === cur.id && e.id !== st.examId);
+  const auditId = other ? other.id : split ? newId('cera') : st.auditId || newId('cera');
+  // Its cycle as saved (a cash examination never put in a cycle stays so, grouped with the others by date).
+  const splitCyc = split ? ((await store.get('cer_audits', cur.id))?.data?.cycleId || '') : '';
   // The duplicate to stop is the accountable officer: one cash examination per officer per count date (each cut-off is its own cycle).
   const cycOf = (a) => (a ? (CYC.of[a.id] || a.cycleId || '') : '');
   const dup = cer.exams.find((e) => e.id !== st.examId && e.officerId === st.officerId && (() => {
@@ -1080,14 +1085,14 @@ async function saveSetup(refs, cer, st) {
     }
   });
   const oldAudit = cer.audits.find((a) => a.id === auditId);
-  if (!moving) await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy, cycleId: (other && !st.auditId ? cycOf(other) : '') || st.cycleId || oldAudit?.cycleId || CYC.current || '' }, by(refs));
+  if (!moving) await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy, cycleId: split ? splitCyc : (other && !st.auditId ? cycOf(other) : '') || st.cycleId || oldAudit?.cycleId || CYC.current || '' }, by(refs));
   const examId = st.examId || newId('cere');
   const oldExam = cer.exams.find((e) => e.id === examId);
   await store.save('cer_exams', examId, { auditId, officerId: st.officerId, functions: st.functions, forms: st.functions.includes('collecting') ? st.forms : [],
     bond, lastExamDate, lastExamSource: prev ? 'system' : 'typed', balances, depositRule: st.depositRule || 'next', caRestFund: st.caRestFund || '', remitToLO: !!st.remitToLO && (st.functions || []).includes('collecting') && !isBrgy(refs.lgu[st.lguId]), records: (st.functions || []).includes('collecting') && st.records === 'cashbook' ? 'cashbook' : 'complete', endBalances: oldExam ? (oldExam.endBalances || {}) : {} }, by(refs));
   if (moving) await leaveAudit(refs, cer, fromId, examId, auditId);
   DRAFT = null;
-  toast(moving ? `Moved to the cash examination of ${agencyName(refs, lgu)} on ${fmtDate(st.countDate)}.` : 'Audit Setup saved.', 'ok');
+  toast('Audit Setup saved.', 'ok');
   location.hash = `#/cer/setup?a=${auditId}&o=${examId}`;
   return true;
 }
