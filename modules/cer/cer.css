@@ -1024,3 +1024,10 @@ table.af-reg.tr-month{min-width:0}
 /* Audit Setup list: the officer being worked on */
 .t-row.sb-on { background: #e8f0fe; box-shadow: inset 4px 0 0 #1f5fd6 }
 .pill.sb-tag { background: #1f5fd6; color: #fff }
+/* Source Documents · RCD (LGU) */
+.sd-rcd td:first-child b, .sd-rcd td:nth-child(2), .sd-rcd td:nth-child(3) div { white-space: nowrap }
+.sd-rcd .sd-rcdw { width: 130px; padding: 5px 8px; font-size: 13px }
+.sd-rcd th { white-space: nowrap }
+.sd-rcd td:nth-child(6) .pill { margin: 1px 0 }
+.sd-rcd td:nth-child(6) { white-space: normal; min-width: 150px }
+.sd-rcd td:nth-child(6) .pill { display: inline-block }
