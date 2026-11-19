@@ -531,6 +531,30 @@ async function importStatement(c, save) {
           buttons: [{ label: 'Go back', value: false }, { label: 'Import anyway', cls: 'primary', value: true }] });
         if (!go) return;
       }
+      // Lines already here: add the new file's lines to them (a line already imported, same date, amounts and check No. /
+      // description, is skipped), or replace them with the file.
+      const had = (rec.lines || []).filter((l) => l && l.date);
+      let addMode = false, dupN = 0;
+      if (had.length) {
+        const k0 = (l) => `${l.date}|${r2(l.debit || 0)}|${r2(l.credit || 0)}|${chqKey(l.chq || '')}|${String(l.desc || '').toLowerCase().replace(/\s+/g, ' ').trim()}`;
+        const left = {}; had.forEach((l) => { left[k0(l)] = (left[k0(l)] || 0) + 1; });
+        const fresh = lines.filter((l) => { const k = k0(l); if (left[k]) { left[k]--; return false; } return true; });
+        dupN = lines.length - fresh.length;
+        const span = (xs) => `${fmtDate(xs[0].date)}–${fmtDate(xs[xs.length - 1].date)}`;
+        const hs = had.slice().sort((a, b) => a.date.localeCompare(b.date));
+        const how = await modal({ title: 'Lines already imported',
+          body: `<p style="margin-top:0">This bank account already has <b>${had.length}</b> lines (${esc(span(hs))}). The file has <b>${lines.length}</b> lines in the coverage: <b>${fresh.length}</b> new, <b>${dupN}</b> already here.</p>
+            <p class="hint">Add: the ${fresh.length} new lines are added and those already here are skipped. Replace: the lines here are replaced by the file.</p>`,
+          buttons: [{ label: 'Cancel', value: null }, { label: 'Replace', value: 'replace' }, { label: `Add ${fresh.length} new line${fresh.length === 1 ? '' : 's'}`, cls: 'primary', value: 'add' }] });
+        if (!how) return;
+        if (how === 'add') {
+          if (!fresh.length) return bad('Nothing new: every line of this file is already here.');
+          addMode = true;
+          let next = Math.max(0, ...had.map((l) => +l.i || 0)) + 1;
+          fresh.forEach((l) => { l.i = next++; });
+          lines.splice(0, lines.length, ...[...had.map((l) => ({ ...l })), ...fresh].sort((a, b) => a.date.localeCompare(b.date) || (+a.i - +b.i)));
+        }
+      }
       // Match: a check No. in the Cheque Number column (or the description) wins; otherwise deposits to credits and checks to debits
       // of the same amount, nearest date (bank on or after the book date: within 15 days for a deposit, a year for a check).
       // Matches typed by hand stay; the import's own matches are made again against the new lines.
@@ -542,12 +566,13 @@ async function importStatement(c, save) {
       // ending = the bank balance at the cash count (the last line in the coverage).
       const before = st.lines.filter((l) => from && l.date < from && l.bal !== null).pop();
       const first = lines[0];
-      const opening = before ? before.bal : first.bal !== null ? r2(first.bal - first.credit + first.debit) : st.opening;
+      let opening = before ? before.bal : first.bal !== null && first.bal !== undefined ? r2(first.bal - first.credit + first.debit) : st.opening;
+      if (addMode && rec.opening !== null && rec.opening !== undefined && !before) opening = rec.opening;   // added months: the opening already read stays
       const last = lines.filter((l) => l.bal !== null).pop();
       UI.manual = false; UI.edit = false; UI.only = false;
       const patch = { found, lineOf, lines, heads: st.heads, source: 'Soft copy (imported)', opening, account: st.account || '', covFrom: from, covTo: to, covStart: 'on', asOf: to, bankItems: [] };
       if (last) patch.ending = last.bal;
-      await save(patch, `${lines.length} lines in the coverage imported · ${used.size} matched${skipped ? ` · ${skipped} outside the coverage skipped` : ''}${last ? ' · ending balance read' : ''}.`);
+      await save(patch, `${addMode ? `${lines.length - had.length} new lines added (${dupN} already here skipped) · ${lines.length} lines in all` : `${lines.length} lines in the coverage imported`} · ${used.size} matched${skipped ? ` · ${skipped} outside the coverage skipped` : ''}${last ? ' · ending balance read' : ''}.`);
     } catch (e) { bad(e.message || String(e)); }
   };
   inp.click();
