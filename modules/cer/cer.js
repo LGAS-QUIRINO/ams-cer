@@ -590,9 +590,7 @@ function setupHtml(refs, cer, q) {
       <div class="cer-sec">
         <div class="cer-headrow"><h2 id="cer-h2" class="cer-h2">2. Accountable Officers Examined</h2>
           ${edit && audit && !newTab ? `<a class="btn" href="#/cer/setup?a=${esc(audit.id)}&o=new">+ Add Officer</a>` : ''}</div>
-        ${tabs.length || newTab ? `<div class="cer-tabs" role="tablist" aria-label="Officers">
-          ${tabs.map((t) => `<a role="tab" aria-selected="${t.id === st.examId}" class="${t.id === st.examId ? 'on' : ''}" href="#/cer/setup?a=${esc(audit.id)}&o=${esc(t.id)}">${esc(t.o ? t.o.name : 'Officer')}${t.o && t.o.designation ? ' · ' + esc(t.o.designation) : ''}</a>`).join('')}
-          ${newTab ? `<a role="tab" aria-selected="true" class="on" href="${esc(key)}">${tabs.length ? 'New officer' : 'Officer'}</a>` : ''}</div>` : ''}
+        ${newTab && tabs.length ? '<p class="hint" style="margin:0 0 8px">New officer for this cash examination.</p>' : ''}
         <div id="cer-off">${officerHtml(refs, cer, st, edit)}</div>
         ${edit && st.examId && isAuditor(refs) ? `<div class="cer-foot"><button class="btn sm" type="button" id="cer-remove">Remove this officer from the examination</button></div>` : ''}
       </div>
