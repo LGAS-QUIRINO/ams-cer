@@ -879,15 +879,20 @@ function wireAll(c) {
     const wireRow = (r) => {
       $('.rm-sx', r).onclick = () => { if (rows().length > 1) { r.remove(); total(); } };
       // Cash tickets: OR From / To optional (pre-numbered or not), the pieces counted from them or typed.
-      const kind = () => { const cash = $('.rm-sk', r).value === 'cash'; r.classList.toggle('rm-cash', cash); ['.rm-sf', '.rm-st'].forEach((k) => { $(k, r).placeholder = cash ? 'optional' : ''; }); };
+      // Other forms: the pieces are counted from OR From and To (shown, not typed); cash tickets: counted or typed.
+      const kind = () => { const cash = $('.rm-sk', r).value === 'cash'; r.classList.toggle('rm-cash', cash); ['.rm-sf', '.rm-st'].forEach((k) => { $(k, r).placeholder = cash ? 'optional' : ''; });
+        const sp = $('.rm-sp', r); sp.readOnly = !cash; sp.tabIndex = cash ? 0 : -1; sp.title = cash ? '' : 'Counted from OR From and OR To'; if (!cash) pcsFill(); };
       $('.rm-sk', r).onchange = () => { r.dataset.picked = '1'; kind(); };
-      const pcsFill = () => { const a = +$('.rm-sf', r).value.replace(/\D/g, ''), z = +$('.rm-st', r).value.replace(/\D/g, '') || a; if (r.classList.contains('rm-cash') && a && z >= a && (!$('.rm-sp', r).value || r.dataset.autopcs)) { $('.rm-sp', r).value = z - a + 1; r.dataset.autopcs = '1'; } };
+      function pcsFill() { const a = +$('.rm-sf', r).value.replace(/\D/g, ''), z = +$('.rm-st', r).value.replace(/\D/g, '') || a;
+        if (!r.classList.contains('rm-cash')) { $('.rm-sp', r).value = a && z >= a ? z - a + 1 : ''; return; }
+        if (a && z >= a && (!$('.rm-sp', r).value || r.dataset.autopcs)) { $('.rm-sp', r).value = z - a + 1; r.dataset.autopcs = '1'; } }
       $('.rm-sp', r).addEventListener('input', () => { delete r.dataset.autopcs; });
       // The form from the booklet the number is in (Accountable Forms), unless chosen by hand.
       $('.rm-sf', r).addEventListener('change', () => { const n = +$('.rm-sf', r).value.replace(/\D/g, ''); if (!n || r.dataset.picked) return pcsFill();
         const bk = f.booklets.find((x) => !x.noSerial && x.from <= n && n <= x.to && x.form !== 'chk');
         if (bk && REM_FORMS.some(([k]) => k === remForm(bk.form))) { $('.rm-sk', r).value = remForm(bk.form); kind(); } pcsFill(); });
       $('.rm-st', r).addEventListener('change', pcsFill);
+      ['.rm-sf', '.rm-st'].forEach((k) => $(k, r).addEventListener('input', () => { if (!r.classList.contains('rm-cash')) pcsFill(); }));
       $('.rm-sa', r).onblur = () => { const v = num($('.rm-sa', r).value); if (v !== null) $('.rm-sa', r).value = money(v); total(); };
       ['.rm-sf', '.rm-st', '.rm-sa'].forEach((k) => { $(k, r).oninput = total; });
     };
@@ -1243,7 +1248,7 @@ const REM_FORMS = [['af51', 'AF 51'], ['ctci', 'CTC – Ind.'], ['ctcc', 'CTC �
 const remForm = (k) => (k === 'af51b' ? 'af51' : k || 'af51');
 const remFormName = (k) => (REM_FORMS.find(([x]) => x === remForm(k)) || [, 'AF 51'])[1];
 const serRow = (m) => { const fk = remForm(m && m.form), cash = fk === 'cash';
-  return `<div class="rm-srow${cash ? ' rm-cash' : ''}"><select class="input rm-sk" aria-label="Form">${REM_FORMS.map(([k, l]) => `<option value="${k}" ${k === fk ? 'selected' : ''}>${l}</option>`).join('')}</select><input class="input mono rm-sf" inputmode="numeric" aria-label="OR From" placeholder="${cash ? 'optional' : ''}" value="${esc(m ? m.from || '' : '')}"><input class="input mono rm-st" inputmode="numeric" aria-label="OR To" placeholder="${cash ? 'optional' : ''}" value="${esc(m ? m.to || '' : '')}"><input class="input r rm-sp" inputmode="numeric" aria-label="Pieces" value="${esc(m && m.pcs ? m.pcs : '')}"><input class="input r rm-sa" inputmode="decimal" aria-label="Amount" value="${m ? esc(money(m.amount)) : ''}"><button class="btn sm rm-sx" type="button" aria-label="Remove this series" title="Remove this series">✕</button></div>`; };
+  return `<div class="rm-srow${cash ? ' rm-cash' : ''}"><select class="input rm-sk" aria-label="Form">${REM_FORMS.map(([k, l]) => `<option value="${k}" ${k === fk ? 'selected' : ''}>${l}</option>`).join('')}</select><input class="input mono rm-sf" inputmode="numeric" aria-label="OR From" placeholder="${cash ? 'optional' : ''}" value="${esc(m ? m.from || '' : '')}"><input class="input mono rm-st" inputmode="numeric" aria-label="OR To" placeholder="${cash ? 'optional' : ''}" value="${esc(m ? m.to || '' : '')}"><input class="input r rm-sp" inputmode="numeric" aria-label="Pieces" ${cash ? '' : 'readonly tabindex="-1" title="Counted from OR From and OR To"'} value="${esc(cash ? (m && m.pcs ? m.pcs : '') : (m && +m.from && +(m.to || m.from) >= +m.from ? +(m.to || m.from) - +m.from + 1 : ''))}"><input class="input r rm-sa" inputmode="decimal" aria-label="Amount" value="${m ? esc(money(m.amount)) : ''}"><button class="btn sm rm-sx" type="button" aria-label="Remove this series" title="Remove this series">✕</button></div>`; };
 // The series as listed: its form and range (every form named, AF 51 too); cash tickets with their pieces.
 const serText = (m) => { const fk = remForm(m.form), rg = m.from ? `${m.from}–${m.to || m.from}` : '';
   if (fk === 'cash') return `Cash tickets${rg ? ' · ' + rg : ''}${m.pcs ? ` · ${m.pcs} pcs` : ''}`;

@@ -964,7 +964,8 @@ table.af-reg.tr-month{min-width:0}
 .rm-line > .field{margin:0}
 .rm-line > .field label, .rm-shead label{display:block; font-size:13px; font-weight:700; margin-bottom:6px; height:18px}
 .rm-shead, .rm-srow{display:grid; grid-template-columns:118px 1fr 1fr 62px 1.1fr 30px; gap:8px; align-items:center}
-.rm-srow .rm-sp{visibility:hidden; padding-left:6px; padding-right:6px}
+.rm-srow .rm-sp{padding-left:6px; padding-right:6px}
+.rm-srow:not(.rm-cash) .rm-sp{background:transparent; border-color:transparent; color:var(--muted,#5b6b84); box-shadow:none; cursor:default}
 .rm-srow.rm-cash .rm-sp{visibility:visible}
 .rm-srow .rm-sk{padding-left:8px; padding-right:4px}
 .rm-srow{margin-bottom:6px}
