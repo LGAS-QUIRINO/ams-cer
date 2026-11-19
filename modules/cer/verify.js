@@ -19,6 +19,7 @@ import { bankFindings } from './banks.js';
 import { loadForms, orIn, cutoffFindings, checkUsage, exportXlsx } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, repName, tagSameDay, partOk, ctcBegShare, ctcAlloc, depPart, depsBeforeOrs, orInScope } from './collections.js';
 import { booksOf, compute } from './count.js';
+import { afterLast, prevSys } from './funds.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -70,7 +71,9 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
   const inScope = (d) => !!d && (!from || d >= from) && d <= to;   // from the last cash exam date (after its cut-off)
   const orOk = (x) => orInScope(f, x, from, to, exam);
   // A liquidation counts when dated within the scope, or when the auditor ticked "Count even if outside the scope".
-  const liqIn = (l) => inScope(l.date) || !!l.countAnyway;
+  // Cash advances and liquidations: after the last cash exam (a previous exam in the system keeps those dated on its count day).
+  const caIn = (d) => afterLast(exam, d) && d <= to;
+  const liqIn = (l) => caIn(l.date) || !!l.countAnyway;
   const bal = exam.balances || {};
   const fig = figuresOf(f, o, fundsOf(f, audit.lguId), to, lgu, exam);
   const books = booksOf(refs, f, o, exam, audit, advs, liqs);   // the columns, same as Cash Count
@@ -84,7 +87,7 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
     let beg = 0;
     if (b.key === 'ca') {
       beg = BEG_CA.reduce((n, k) => n + (+(bal[k]?.amount) || 0), 0);
-      advs.filter((a) => a.officerId === o.id && !a.beg && inScope(a.date)).forEach((a) => m.push({ date: a.date, debit: +a.amount || 0, credit: 0 }));
+      advs.filter((a) => a.officerId === o.id && !a.beg && caIn(a.date)).forEach((a) => m.push({ date: a.date, debit: +a.amount || 0, credit: 0 }));
       liqs.filter((l) => l.officerId === o.id && liqIn(l)).forEach((l) => m.push({ date: l.date, debit: 0, credit: +l.amount || 0 }));
     } else {
       const kind = b.kind, part = b.part || '', bs = ctcBegShare(bal);
@@ -116,7 +119,7 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
   const T = (k) => r2(st.reduce((n, x) => n + (x[k] || 0), 0));
   const totSh = inv ? T('sh') : null;
 
-  return { o, lgu, from, to, inScope, orOk, liqIn, bal, fig, books, count, inv, moves, st, T, totSh };
+  return { o, lgu, from, to, inScope, caIn, orOk, liqIn, bal, fig, books, count, inv, moves, st, T, totSh };
 }
 
 export async function verifyView(ctx) {
@@ -144,7 +147,7 @@ export async function verifyView(ctx) {
   };
   if (!exam) return { crumb, body: hello + top + '<div class="panel"><div class="empty"><b>No accountable officer in this cash examination.</b>Add the officers in Audit Setup.</div></div>', wire: wireTop };
 
-  const { o, inScope, orOk, liqIn, bal, fig, books, count, inv, moves, st, T, totSh } = accountability(refs, f, audit, exam, advs, liqs, counts0.map(flat));
+  const { o, inScope, caIn, orOk, liqIn, bal, fig, books, count, inv, moves, st, T, totSh } = accountability(refs, f, audit, exam, advs, liqs, counts0.map(flat));
   // Findings, each with a stable key so the auditor's decision stays with it.
   const findings = [];
   // g: the kind of finding (its own table in Findings in detail); cells: its facts as columns (one row, or several); amt: amount involved.
@@ -229,9 +232,10 @@ export async function verifyView(ctx) {
     if (lump && s > lump + 0.004) add(`beglump|${k}`, 'Audit Setup', `Beginning checks of the cash advance total ₱${money(s)}, more than the ₱${money(lump)} typed as the balance at the last cash exam.`, '#/cer/setup?a=' + audit.id); });
   // Refunds of cash advances: the OR No. should be an OR in Collections & Deposits with the same amount.
   // Liquidations / refunds outside the scope: counted when ticked; before the last cash exam and not ticked, not counted.
-  liqs.filter((l) => l.officerId === o.id && l.date && !inScope(l.date)).forEach((l) => {
-    const before = from && l.date < from;
-    if (!l.countAnyway && !before) return;   // after the count: a later liquidation, nothing to say
+  liqs.filter((l) => l.officerId === o.id && l.date && !caIn(l.date)).forEach((l) => {
+    const before = from && l.date <= from;
+    // After the count: a later liquidation, nothing to say. Before: the previous exam's own (a previous exam in the system), nothing to say.
+    if (!l.countAnyway && (!before || prevSys(exam))) return;
     const what = `${l.type === 'refund' ? (l.deposited ? 'Refund deposited, DS' : 'Refund OR') : 'Liquidation'} ${l.ref || ''}, ${fmtDate(l.date)}, ₱${money(l.amount)}`;
     add(`liqout|${l.id}|${l.countAnyway ? 1 : 0}`, 'Cash Advances', `${what}: ${before ? 'before the last cash exam' : 'after the cash count'}, ${l.countAnyway ? 'counted' : 'not counted'}.`, '#/cer/advances');
   });
@@ -255,7 +259,7 @@ export async function verifyView(ctx) {
   const myOrs = f.ors.filter((x) => x.officerId === o.id && orOk(x));
   const lastOr = myOrs.map((x) => x.date).sort().pop();
   const nRep = f.reports.filter((r) => r.officerId === o.id && !r.pending).length;
-  const myAdv = advs.filter((a) => a.officerId === o.id && !a.beg && inScope(a.date)), myLiq = liqs.filter((l) => l.officerId === o.id && liqIn(l));
+  const myAdv = advs.filter((a) => a.officerId === o.id && !a.beg && caIn(a.date)), myLiq = liqs.filter((l) => l.officerId === o.id && liqIn(l));
   const nCut = (f.cutoffs || []).find((c) => c.id === exam.id)?.lines?.length || 0;
   const progress = [`Cut-off: ${nCut ? `${nCut} line${nCut > 1 ? 's' : ''} of remaining forms` : 'not entered'}${count ? ', cash counted' : ', no cash count'}`,
     `Collections & Deposits: ${myOrs.length} OR${myOrs.length === 1 ? '' : 's'}${lastOr ? ` up to ${fmtDate(lastOr)}` : ''} · ${nRep} report${nRep === 1 ? '' : 's'}`,

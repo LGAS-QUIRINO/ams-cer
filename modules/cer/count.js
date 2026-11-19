@@ -17,7 +17,7 @@ import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
 import { loadForms, unusedFormsOf, notPresentedOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges, unusedAt, subtractRanges } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, tagSameDay, ctcSplit, ctcBalance, ctcBegShare, isCtc, ctcAlloc, depPart } from './collections.js';
-import { accountsOf, caFund, restFund, fundOrder, carriedOpen } from './funds.js';
+import { accountsOf, caFund, restFund, fundOrder, carriedOpen, afterLast, prevSys } from './funds.js';
 
 const canCount = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
 const BILLS = [1000, 500, 200, 100, 50, 20];
@@ -37,7 +37,7 @@ const OPEN = { cut: true, cash: false };   // which tab is shown; 1 Remaining Fo
 export const resetTabs = () => { OPEN.cut = true; OPEN.cash = false; };   // unsaved count survives a screen refresh; split boxes shown
 
 // A liquidation counts in the cash exam when dated from the last cash exam to the count, or ticked "count even if outside the scope".
-const liqCounts = (exam, audit) => { const from = exam.lastExamDate || '', to = audit.countDate; return (l) => (!!l.date && (!from || l.date >= from) && l.date <= to) || !!l.countAnyway; };
+const liqCounts = (exam, audit) => { const to = audit.countDate; return (l) => (!!l.date && afterLast(exam, l.date) && l.date <= to) || !!l.countAnyway; };
 // Balance per books of each accountability, as of the cash count.
 export function booksOf(refs, f, o, exam, audit, advs, liqs) {
   const out = [];
@@ -71,7 +71,7 @@ export function booksOf(refs, f, o, exam, audit, advs, liqs) {
     });
   }
   // As in Verification: the checks of this period (from the last cash exam to the count); earlier ones are in the beginning balance.
-  const mine = advs.filter((a) => a.officerId === o.id && !a.beg && a.date && (!exam.lastExamDate || a.date >= exam.lastExamDate) && a.date <= audit.countDate);
+  const mine = advs.filter((a) => a.officerId === o.id && !a.beg && a.date && afterLast(exam, a.date) && a.date <= audit.countDate);
   if (fns.some((k) => ['disbursing', 'special', 'pettycash'].includes(k)) || mine.length) {
     const beg = BEG_CA.reduce((n, k) => n + (+(exam.balances?.[k]?.amount) || 0), 0);
     const liqIn = liqCounts(exam, audit);   // as in Verification: dated within the scope, or "count even if outside the scope"
@@ -225,7 +225,7 @@ function openAdvances(f, o, exam, audit, advs, liqs) {
   // Carried from the previous cash exam: its open checks are the beginning (not listed again as checks of this period).
   const old = carriedOpen(exam, advs, liqs);
   const rest = r2(beg - [...begChecks, ...old].reduce((n, a) => n + (+a.amount || 0), 0));
-  const list = [...begChecks, ...old, ...advs.filter((a) => a.officerId === o.id && !a.beg && a.date && a.date <= cut && !(old.length && exam.lastExamDate && a.date < exam.lastExamDate))].map((a) => ({ ...a, fund: caFund(a, ctx), unliq: r2((+a.amount || 0) - liqOf(a.id)) }));
+  const list = [...begChecks, ...old, ...advs.filter((a) => a.officerId === o.id && !a.beg && a.date && a.date <= cut && (prevSys(exam) ? afterLast(exam, a.date) : !(old.length && exam.lastExamDate && a.date < exam.lastExamDate)))].map((a) => ({ ...a, fund: caFund(a, ctx), unliq: r2((+a.amount || 0) - liqOf(a.id)) }));
   if (rest > 0.004 || L.some((l) => l.advanceId === '__beg')) list.unshift({ id: '__beg', rest: true, checkNo: '', date: exam.lastExamDate || '', particulars: 'Beginning balance (not itemized)', amount: Math.max(rest, 0), fund: restFund(exam, ctx), unliq: r2(Math.max(rest, 0) - liqOf('__beg')) });
   const ord = fundOrder(ctx);
   return list.filter((a) => a.unliq > 0.004).sort((a, b) => ord(a.fund, b.fund) || (b.rest ? 1 : 0) - (a.rest ? 1 : 0) || String(a.date).localeCompare(String(b.date)));

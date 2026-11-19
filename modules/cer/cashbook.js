@@ -13,7 +13,7 @@ import { loadForms, orIn, FORM_SHORT } from './forms.js';
 import { listT, loadJournal, checkAmountOf, chkNo, transfersInto, typedTransfer, liqOwners } from '../src/journal.js';
 import { tagSameDay, depRefText, orInScope } from './collections.js';
 import { accountability } from './verify.js';
-import { accountsOf, caAcct, begByFund, restFund, sameFund, colFundOf } from './funds.js';
+import { accountsOf, caAcct, begByFund, restFund, sameFund, colFundOf, afterLast } from './funds.js';
 import { remOf, remAcctId, remText } from '../src/taxrem.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
@@ -62,14 +62,14 @@ export function cashbookOf({ refs, f, audit, exam, acct, advs, liqs, jr, cb }) {
       pc: r2(ls.filter((l) => l.code === PC_CODE).reduce((n, l) => n + (+l.gross || 0), 0)) });
   });
   // Cash advances typed in Cash Advances (not in the journal).
-  advs.filter((a) => a.officerId === o.id && !a.beg && !a.fromJournal && inS(a.date) && ofAcct(a)).forEach((a) => {
+  advs.filter((a) => a.officerId === o.id && !a.beg && !a.fromJournal && inS(a.date) && afterLast(exam, a.date) && ofAcct(a)).forEach((a) => {
     const inJr = jrNos.has(chkNo(a.checkNo));
     if (inJr) return;
     row(a.date, `Cash advance${a.particulars ? ' · ' + a.particulars : ''}`, a.checkNo ? String(a.checkNo) : '', { ca: +a.amount || 0, cibK: +a.amount || 0 });
   });
   // Liquidations and refunds.
   const liqOfAcct = (l) => { const a = advs.find((x) => x.id === l.advanceId); return a ? ofAcct(a) : restFund(exam, fx) === acct.fund; };
-  liqs.filter((l) => l.officerId === o.id && (inS(l.date) || l.countAnyway) && liqOfAcct(l)).forEach((l) => row(l.date, l.type === 'refund' ? 'Refund of cash advance' : `Liquidation${l.particulars && !/^liquidation$/i.test(l.particulars) ? ' · ' + l.particulars : ''}`, l.ref || '', { ca: -(+l.amount || 0) }));
+  liqs.filter((l) => l.officerId === o.id && ((inS(l.date) && afterLast(exam, l.date)) || l.countAnyway) && liqOfAcct(l)).forEach((l) => row(l.date, l.type === 'refund' ? 'Refund of cash advance' : `Liquidation${l.particulars && !/^liquidation$/i.test(l.particulars) ? ' · ' + l.particulars : ''}`, l.ref || '', { ca: -(+l.amount || 0) }));
   // Transfers into this account: checks of another account paid to this fund (e.g. the 5% BDRRM share from the General Fund).
   // One typed as a bank credit (same amount; names the check No. or within 15 days) is not doubled.
   const typedCr = (cb.other || []).filter((x) => x.type === 'bankCr');

@@ -38,13 +38,17 @@ export const restFund = (exam, ctx) => exam.caRestFund || ctx.accounts[0]?.fund 
 // The beginning cash advance balance by fund: the beginning checks by their fund, the rest in restFund.
 // A beginning carried from the officer's previous cash exam in the app: the checks of before that count still unliquidated
 // then make it up (each at its amount unliquidated at that count). Checks typed as beginning checks are not repeated.
+// A cash exam that follows another one in the system (or whose beginning is carried from it): records dated on or before the
+// last cash exam (the previous count date) belong to the previous exam; this one starts after it. Otherwise (first exam, the
+// last cash exam date typed) the scope starts on that date.
+export const prevSys = (exam) => !!exam && (exam.lastExamSource === 'system' || ['ca', 'sdo', 'pcf'].some((k) => exam.balances?.[k]?.source === 'carried'));
+export const afterLast = (exam, d) => { const from = exam?.lastExamDate; if (!from) return !!d; return !!d && (prevSys(exam) ? d > from : d >= from); };
+// The previous exam's cash advance checks still unliquidated at its count: this exam's beginning checks (unless itemized).
 export function carriedOpen(exam, advs, liqs) {
-  const bal = exam.balances || {};
-  if (!['ca', 'sdo', 'pcf'].some((k) => bal[k]?.source === 'carried') || !exam.lastExamDate) return [];
-  const from = exam.lastExamDate;
+  if (!prevSys(exam) || !exam.lastExamDate) return [];
   const typed = new Set(advs.filter((a) => a.officerId === exam.officerId && a.beg).map((a) => chkNo(a.checkNo)).filter(Boolean));
-  return advs.filter((a) => a.officerId === exam.officerId && !a.beg && a.date && a.date < from && !typed.has(chkNo(a.checkNo))).map((a) => {
-    const before = (liqs || []).filter((l) => l.advanceId === a.id && l.date && l.date < from).reduce((n, l) => n + (+l.amount || 0), 0);
+  return advs.filter((a) => a.officerId === exam.officerId && !a.beg && a.date && !afterLast(exam, a.date) && !typed.has(chkNo(a.checkNo))).map((a) => {
+    const before = (liqs || []).filter((l) => l.advanceId === a.id && l.date && !afterLast(exam, l.date)).reduce((n, l) => n + (+l.amount || 0), 0);
     const u0 = Math.round(((+a.amount || 0) - before) * 100) / 100;
     return u0 > 0.004 ? { ...a, amount: u0, carried: true } : null;
   }).filter(Boolean);

@@ -14,6 +14,7 @@ import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num } from './cer.js';
 import { exportXlsx, loadXlsx, excelDate } from './forms.js';
+import { prevSys, afterLast, carriedOpen } from './funds.js';
 import { emitChange } from '../../js/store.js';
 
 const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
@@ -65,19 +66,24 @@ export async function advancesView(ctx) {
 
   const o = exam.o;
   const allAdv = advs0.map(flat).filter((a) => a.officerId === o.id);
-  const advs = allAdv.filter((a) => !a.beg);   // cash advances during the period
+  // A cash exam following another one in the system: only this period's checks (after the last cash exam, up to the count);
+  // the previous exam's checks still unliquidated at its count come in as beginning checks; the others stay with it.
+  const sys = prevSys(exam);
+  const advs = allAdv.filter((a) => !a.beg && (!sys || (a.date && afterLast(exam, a.date) && a.date <= audit.countDate)));   // cash advances during the period
   // Beginning checks: entered in Audit Setup, unliquidated as of the last cash exam (amount = what was still unliquidated).
   const begChecks = allAdv.filter((a) => a.beg && a.begExamId === exam.id);
-  const liqs = liqOwners(liqs0.map(flat), advs0.map(flat)).filter((l) => l.officerId === o.id);
+  const liqsAll = liqOwners(liqs0.map(flat), advs0.map(flat)).filter((l) => l.officerId === o.id);
+  const liqs = sys ? liqsAll.filter((l) => (l.date && afterLast(exam, l.date) && l.date <= audit.countDate) || l.countAnyway) : liqsAll;
+  const old = sys ? carriedOpen(exam, advs0.map(flat), liqsAll).map((a) => ({ ...a, beg: true, carried: true })) : [];
   // Scope of this cash exam: from the last cash exam date (after its cut-off) up to the count date.
   const scope = { from: exam.lastExamDate || '', to: audit.countDate };
   const outOf = (d) => !!d && ((scope.from && d < scope.from) || d > scope.to);
   const beg = r2(BEG_KEYS.reduce((n, k) => n + (+(exam.balances?.[k]?.amount) || 0), 0));
-  const begSum = r2(begChecks.reduce((n, a) => n + (+a.amount || 0), 0));
+  const begSum = r2([...begChecks, ...old].reduce((n, a) => n + (+a.amount || 0), 0));
   const rest = r2(beg - begSum);
   // What is not itemized is listed as one row, like a cash advance, so liquidations of older advances can be put against it.
   const begRow = rest > 0.004 || liqs.some((l) => l.advanceId === '__beg') ? [{ id: '__beg', beg: true, rest: true, date: exam.lastExamDate || '', checkNo: 'Beginning', particulars: 'Beginning balance (not itemized)', amount: Math.max(rest, 0) }] : [];
-  const list = figures([...begRow, ...begChecks, ...advs], liqs);
+  const list = figures([...begRow, ...begChecks, ...old, ...advs], liqs);
   const totCa = r2(advs.reduce((n, a) => n + (+a.amount || 0), 0));
   const totLq = r2(liqs.reduce((n, l) => n + (+l.amount || 0), 0));
   const unliq = r2(beg + totCa - totLq);

@@ -157,6 +157,8 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   // cut-off shows them as Before the period, their amount in the beginning balance.
   const cutPrev = exam?.lastExamDate || carriedFrom;
   const reals = f.reports.filter((r) => r.officerId === o.id && !r.pending && !(cutPrev && r.date && r.date <= cutPrev));
+  const oldReps = cutPrev ? f.reports.filter((r) => r.officerId === o.id && !r.pending && r.date && r.date <= cutPrev) : [];
+  const oldIds = new Set(oldReps.map((r) => r.id));
   const allFunds = [...new Set([...funds, ...reals.map((r) => r.fund), ...ors.map((x) => x.fund).filter(Boolean)])];
   const begR = begRangesOf(exam);
   // An OR dated before the last cash exam is of the beginning (Before the period), tagged or not yet.
@@ -291,9 +293,10 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
     // ticked (colIn); else not yet in a report. Collector:
     // each line typed by the LO in its own report (reportId), else not yet in a report.
     const myColAll = kind === kinds[0] ? colLines.filter((m) => (m.fund || allFunds[0]) === fund) : [];
-    const colTgt = (m) => { const inc = list.find((r) => (r.colIn || []).includes(m.key)); return inc ? inc.id : pid; };   // only where ticked
+    // A line already in a report of the previous exam (ticked there, or typed in it) stays with that exam: not shown here.
+    const colTgt = (m) => { const inc = list.find((r) => (r.colIn || []).includes(m.key)); return inc ? inc.id : oldReps.some((r) => (r.colIn || []).includes(m.key)) ? null : pid; };   // only where ticked
     const myLoAll = loLines.filter((m) => loKind(m) === kind && ((reals.find((r) => r.id === m.reportId)?.fund) || m.fund || allFunds[0]) === fund);
-    const loTgt = (m) => (list.some((r) => r.id === m.reportId) ? m.reportId : pid);
+    const loTgt = (m) => (list.some((r) => r.id === m.reportId) ? m.reportId : oldIds.has(m.reportId) ? null : pid);
     const withSide = (r) => { const c0 = clean(r); const ds = myLoAll.filter((m) => loTgt(m) === r.id), rs = myColAll.filter((m) => colTgt(m) === r.id);
       return ds.length || rs.length ? { ...c0, deposits: [...c0.deposits, ...ds].sort((a, b) => String(a.date).localeCompare(String(b.date))), remittances: [...c0.remittances, ...rs].sort((a, b) => String(a.date).localeCompare(String(b.date))) } : c0; };
     const figs = list.map((r, i) => { const fg = build(r.id, withSide(r), ors.filter((x) => x.reportId === r.id), i === 0 ? start : beg, add[r.id] || 0); if (fg.begAdd) fg.begSer = serTxt; if (i === 0) markOpening(fg, op); beg = fg.end; return fg; });

@@ -81,6 +81,21 @@ async function saveRec(recId, data, who) {
 }
 const bad = (m) => { toast(m, 'bad'); return false; };
 // Coverage of the cash exam: the last cash exam date (after its cut-off) (earliest among its officers) up to the cash count date.
+// The previous cash exam of the auditee (the one counted before this one) and what its bank reconciliation found for this
+// account: its items stay there; one dated before this coverage counts here only if still outstanding at that exam.
+function prevBankOf(audit, audits, recsAll, acct) {
+  const pa = audits.filter((a) => a.lguId === audit.lguId && a.id !== audit.id && a.countDate && a.countDate < audit.countDate).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)))[0];
+  if (!pa) return null;
+  const r = recsAll.find((x) => x.id === `${pa.id}|${acct.id}` && !x.part);
+  return { date: pa.countDate, found: r ? new Set(Object.keys(r.found || {}).filter((k) => r.found[k])) : null };
+}
+const keepPrev = (x, cvF, prev) => {
+  const before = !!x.date && ((cvF && x.date < cvF) || (prev && x.date <= prev.date));
+  if (!before) return true;
+  if (prev && prev.found && prev.found.has(x.key)) return false;   // cleared within the previous exam
+  if (x.kind === 'dep') return !!(prev && prev.found);               // a deposit in transit at the previous exam's count
+  return true;                                                         // checks: as before (outstanding only when marked)
+};
 export const covOf = (audit, exams) => { const ds = exams.filter((e) => e.auditId === audit.id && e.lastExamDate).map((e) => e.lastExamDate).sort(); return { from: ds[0] || '', to: audit.countDate }; };
 // The imported lines within the coverage as it is now (it may have changed since the import); the beginning balance follows.
 export function inCov(rec, cov) {
@@ -163,7 +178,8 @@ export async function banksView(ctx) {
   (remOf(settings, audit.lguId).list || []).filter((r) => remAcctId(r, accounts) === acct.id).forEach((r) => items.push({ key: `tx|${r.id}`, kind: 'chk', cb: true, win: 3, label: 'Tax payment', date: r.date, ref: remText(r).replace('Remittance of taxes withheld · ', ''), amount: +r.amount || 0, from: 'Tax Remittances' }));
   // Matches kept in step with the books (a deposit edited or removed).
   const tidy = tidyFound(rec, items); rec.found = tidy.found; rec.lineOf = tidy.lineOf;
-  const list = items.filter((x) => x.date && x.date <= asOf && !foundElsewhere.has(x.key)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.kind.localeCompare(b.kind));
+  const prevB = prevBankOf(audit, audits0.map(flat), recs0.map(flat), acct);
+  const list = items.filter((x) => x.date && x.date <= asOf && !foundElsewhere.has(x.key) && keepPrev(x, cov.from, prevB)).sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.kind.localeCompare(b.kind));
   // Cut-off (Cash Count): the last check written in each checkbook at the count. A check numbered after it, in the same checkbook,
   // was issued after the cut-off: not an outstanding check of this examination.
   const examIds = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => e.id));
@@ -660,7 +676,7 @@ export async function accountsModal(refs, lguId, accounts, funds, enc) {
 
 /* ---------- for Verification: the bank accounts of the auditee, as findings ---------- */
 export async function bankFindings(audit, refs) {
-  const [settings0, reports0, advs0, recs0, exams0, books0, cut0, jr0, liq0] = await Promise.all(['cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj', 'cer_liquid'].map(listT));
+  const [settings0, reports0, advs0, recs0, exams0, books0, cut0, jr0, liq0, audits0] = await Promise.all(['cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj', 'cer_liquid', 'cer_audits'].map(listT));
   const accounts = (settings0.map(flat).find((x) => x.id === 'banks|' + audit.lguId) || {}).list || [];
   const examIds = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => e.id));
   const cuts = lastChecksOf({ cutoffs: cut0.map(flat), booklets: books0.map(flat) }, examIds);
@@ -688,7 +704,8 @@ export async function bankFindings(audit, refs) {
       transfersInto(jr0.map(flat), acct, audit.lguId).filter((c) => !cbCr.some((x) => typedTransfer(c, { date: x.date, amount: x.amount, text: x.ref })))
         .forEach((c) => items.push({ key: `tr|${c.id}`, kind: 'dep', date: c.date, ref: `Check No. ${c.checkNo}`, amount: checkAmountOf(c) })); }
     const tidy = tidyFound(rec, items); const found = tidy.found; rec.found = tidy.found; rec.lineOf = tidy.lineOf;
-    const list = items.filter((x) => x.date && x.date <= asOf);
+    const prevB = prevBankOf(audit, audits0.map(flat), recsAll, acct);
+    const list = items.filter((x) => x.date && x.date <= asOf && keepPrev(x, covOf(audit, exams0.map(flat)).from, prevB));
     const after = (x) => { const n = +chqKey(x.ref); return x.kind === 'chk' && !x.cb && !!n && cuts.some((c) => n >= c.from && n <= c.to && n > c.last); };
     const cvF = covOf(audit, exams0.map(flat)).from;
     const dits = list.filter((x) => x.kind === 'dep' && !found[x.key]), ocs = list.filter((x) => x.kind === 'chk' && !found[x.key] && !after(x) && !preCheck(x, cvF, rec));
