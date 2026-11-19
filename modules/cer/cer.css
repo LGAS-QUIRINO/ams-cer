@@ -1005,3 +1005,6 @@ table.af-reg.tr-month{min-width:0}
 .cer-banknote { margin: 4px 2px 0 }
 .rm-findrow { display: flex; align-items: center; gap: 10px; margin: 8px 0 }
 .rm-findrow .input { max-width: 420px }
+.rm-noedit { cursor: pointer; border-bottom: 1px dashed var(--line); padding-bottom: 1px }
+.rm-noedit:hover, .rm-noedit:focus { border-bottom-color: currentColor; outline: none }
+.rm-noin { width: 130px; padding: 4px 6px; font-size: 13px }

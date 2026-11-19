@@ -436,12 +436,14 @@ export async function collectionsView(ctx) {
   const firstSer = (m) => { const r = serOf(m); return r.length ? Math.min(...r.map((x) => x[0])) : Infinity; };
   // Same date: by the SCR / RCD No. when both have one, else by the OR series.
   const repNo = (m) => String(m.colNo || String(m.reportNo || '').replace(/^\s*(SCR|RCD)\s*(No\.)?\s*/i, '')).trim();
+  // The collector's SCR / RCD No., editable here (saved on the collector's report itself).
+  const noCell = (m) => (enc && m.colReportId ? `<span class="rm-noedit" data-noedit="${esc(m.colReportId)}" data-cur="${esc(m.colNo || '')}" tabindex="0" role="button" title="Click to type or change the ${esc(String(m.reportNo || 'SCR').split(' ')[0])} No.">${esc(m.reportNo || '')}</span>` : esc(m.reportNo || ''));
   const freeSorted = colFree.slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || ''))
     || (repNo(a) && repNo(b) ? repNo(a).localeCompare(repNo(b), undefined, { numeric: true }) : 0) || firstSer(a) - firstSer(b));
   const tickTbl = !colFree.length ? '<p class="dim" style="margin:6px 0">No collector\'s SCR / RCD in the app is waiting to be put in an RCD.</p>'
     : `<div class="rm-findrow"><label class="sr-only" for="rm-find">Search the waiting remittances</label><input class="input" id="rm-find" type="search" placeholder="Search: collector, report No., OR No., amount or date" value="${esc(REM.find)}" autocomplete="off"><span class="dim" id="rm-findn"></span></div>
       <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th style="width:30px"></th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
-      <tbody>${freeSorted.map((m) => `<tr data-rmq="${esc([fmtDate(m.date), colName(f, refs, m.collectorId), m.reportNo || '', m.series || '', money(m.amount), String(m.amount ?? '')].join(' ').toLowerCase())}" data-rmrg="${esc(serOf(m).map(([a, z]) => a + '-' + z).join(';'))}"><td><input type="checkbox" data-colk="${esc(m.key)}" ${enc ? '' : 'disabled'} aria-label="Put in this RCD"></td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td></tr>`).join('')}</tbody></table></div>
+      <tbody>${freeSorted.map((m) => `<tr data-rmq="${esc([fmtDate(m.date), colName(f, refs, m.collectorId), m.reportNo || '', m.series || '', money(m.amount), String(m.amount ?? '')].join(' ').toLowerCase())}" data-rmrg="${esc(serOf(m).map(([a, z]) => a + '-' + z).join(';'))}"><td><input type="checkbox" data-colk="${esc(m.key)}" ${enc ? '' : 'disabled'} aria-label="Put in this RCD"></td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${noCell(m)}</td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td></tr>`).join('')}</tbody></table></div>
       <p class="dim" style="margin:4px 0 0;font-size:12.5px">Tick those listed on the hard copy of this RCD: they move to the list below.</p>`;
   const typeLine = !enc ? '' : `<div class="rm-line" id="rm-form">
         <div class="field"><label for="rm-date">Date received</label><input class="input" type="date" id="rm-date" value="${esc(ed ? ed.date : REM.date || '')}"></div>
@@ -460,7 +462,7 @@ export async function collectionsView(ctx) {
     .sort((a, b) => { const x = a.grp ? a.grp[0].m : a.tick, y = b.grp ? b.grp[0].m : b.tick; return (x.reportNo ? 0 : 1) - (y.reportNo ? 0 : 1) || nat(x).localeCompare(nat(y)) || String(x.date).localeCompare(String(y.date)); });
   const listRows = items.map((it, gi) => {
     if (it.tick) { const m = it.tick;
-      return `<tr class="rm-first"><td>${gi + 1}</td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${esc(m.reportNo || '')} <span class="pill p-part">In the app</span></td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td class="rm-act"><button class="btn sm" type="button" data-colrm="${esc(m.key)}" title="Take it out of this RCD (the collector's report stays)">Remove</button></td>` : ''}</tr>`; }
+      return `<tr class="rm-first"><td>${gi + 1}</td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${noCell(m)} <span class="pill p-part">In the app</span></td><td class="mono">${esc(m.series || (m.from ? `${m.from}–${m.to}` : '—'))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td class="rm-act"><button class="btn sm" type="button" data-colrm="${esc(m.key)}" title="Take it out of this RCD (the collector's report stays)">Remove</button></td>` : ''}</tr>`; }
     const grp = it.grp;
     return grp.map(({ m, i }, k) => `<tr class="${edGrp && edGrp.some((x) => x.i === i) ? 'cd-on' : ''} ${k ? 'rm-ser' : 'rm-first'}"><td>${k ? '' : gi + 1}</td><td>${!k || m.date !== grp[0].m.date ? esc(fmtDate(m.date)) : ''}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${k ? '' : esc(colName(f, refs, m.collectorId))}</td><td>${k ? '' : esc(m.reportNo || '')}</td><td class="mono">${esc(serText(m))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td class="rm-act">${k ? '' : `<button class="btn sm" type="button" data-rmedit="${i}">Edit</button> `}<button class="btn sm" type="button" data-rmdel="${i}" aria-label="Remove${grp.length > 1 ? ' this series' : ''}" title="${grp.length > 1 ? 'Remove this series' : 'Remove'}">✕</button></td>` : ''}</tr>`).join('')
       + (grp.length > 1 ? `<tr class="rm-sub"><td></td><td></td><td></td><td></td><td><b>${grp.length} series</b></td><td class="r"><b>${money(r2(grp.reduce((n, x) => n + (+x.m.amount || 0), 0)))}</b></td><td></td>${enc ? '<td></td>' : ''}</tr>` : '');
@@ -715,6 +717,24 @@ function wireAll(c) {
     emitChange('local'); toast(on ? 'Put in this RCD.' : 'Taken out of this RCD (the collector\'s report stays).', 'ok');
   };
   $$('[data-colk]').forEach((cb) => { cb.onchange = () => putCol(cb.dataset.colk, cb.checked); });
+  $$('[data-noedit]').forEach((sp) => { const open = () => {
+    if (sp.querySelector('input')) return;
+    const id = sp.dataset.noedit, was = sp.dataset.cur || '', html = sp.innerHTML;
+    sp.innerHTML = `<input class="input mono rm-noin" value="${esc(was)}" placeholder="No." aria-label="Their report No.">`;
+    const inp = sp.querySelector('input'); inp.focus(); inp.select();
+    let done = false;
+    const close = () => { if (!done) { done = true; sp.innerHTML = html; } };
+    const save = async () => { if (done) return; const v = inp.value.trim(); if (v === was) return close(); done = true;
+      const rec = await store.get('cer_reports', id); if (!rec || rec.deleted) { toast('That report is no longer in the app.', 'bad'); sp.innerHTML = html; return; }
+      const r = rec.data, key = (x) => String(x || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (v && f.reports.some((x) => x.id !== id && x.officerId === r.officerId && (x.kind || '') === (r.kind || '') && key(x.no) === key(v))) {
+        toast(`${colName(f, refs, r.officerId)} already has ${r.kind || 'a report'} No. ${v}.`, 'bad'); done = false; inp.focus(); return; }
+      await store.save('cer_reports', id, { ...r, no: v }, by(refs));
+      toast(`${r.kind || 'Report'} No. saved on ${colName(f, refs, r.officerId)}'s ${r.kind || 'report'}.`, 'ok'); emitChange('local'); };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } else if (e.key === 'Escape') { e.preventDefault(); close(); } };
+    inp.onblur = () => { save(); };
+  };
+    sp.onclick = (e) => { e.preventDefault(); open(); }; sp.onkeydown = (e) => { if ((e.key === 'Enter' || e.key === ' ') && !sp.querySelector('input')) { e.preventDefault(); open(); } }; });
   { const fi = $('#rm-find'); if (fi) { const run = () => { REM.find = fi.value; const q = fi.value.trim().toLowerCase(), n = +q.replace(/[^\d]/g, ''), num = /^[\d\s,.-]+$/.test(q) && n;
       let shown = 0, all = 0;
       $$('tr[data-rmq]').forEach((tr) => { all++; const ok = !q || q.split(/\s+/).every((w) => tr.dataset.rmq.includes(w))
