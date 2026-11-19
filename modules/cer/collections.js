@@ -152,7 +152,11 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const ors = f.ors.filter((x) => x.officerId === o.id);
   // A beginning carried from the officer's previous cash exam: the reports up to that count belong to it.
   const carriedFrom = exam && exam.lastExamDate && Object.entries(exam.balances || {}).some(([k, v]) => (k.startsWith('col-') || k === 'liq') && v?.source === 'carried') ? exam.lastExamDate : '';
-  const reals = f.reports.filter((r) => r.officerId === o.id && !r.pending && !(carriedFrom && r.date && r.date <= carriedFrom));
+  // A report belongs to the cash exam its date falls in: those dated on or before the last cash exam are the previous exam's
+  // (its ending is this exam's beginning) and do not count here. A report dated after it that still holds ORs of before the
+  // cut-off shows them as Before the period, their amount in the beginning balance.
+  const cutPrev = exam?.lastExamDate || carriedFrom;
+  const reals = f.reports.filter((r) => r.officerId === o.id && !r.pending && !(cutPrev && r.date && r.date <= cutPrev));
   const allFunds = [...new Set([...funds, ...reals.map((r) => r.fund), ...ors.map((x) => x.fund).filter(Boolean)])];
   const begR = begRangesOf(exam);
   // An OR dated before the last cash exam is of the beginning (Before the period), tagged or not yet.
