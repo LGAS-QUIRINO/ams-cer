@@ -577,6 +577,7 @@ function officerHtml(refs, cer, st, edit) {
   if (!lgu) return '<p class="cer-wait">Choose the auditee first. Its accountable officers are listed here.</p>';
   const dis = edit ? '' : 'disabled';
   const bankAccts = (FX && FX.settings && FX.settings['banks|' + st.lguId]?.list) || [];
+  const onlyCust = (st.functions || []).length === 1 && st.functions[0] === 'custodian';   // forms custodian only: no bank account
   const offs = cer.officers.filter((o) => o.lguId === st.lguId).sort((a, b) => a.name.localeCompare(b.name));
   const o = cer.officers.find((x) => x.id === st.officerId);
   const prev = prevExam(cer, st.officerId, st.countDate, st.examId);
@@ -662,7 +663,7 @@ function officerHtml(refs, cer, st, edit) {
       ${(st.functions || []).includes('custodian') && rows.length ? '<span class="hint">Custodian accountability is kept in Accountable Forms by quantity, not in pesos.</span>' : ''}`, opens.has('bal'))}
 
     ${acc('forms', 'Beginning Inventory of Accountable Forms', h.forms, begBody, opens.has('forms'))}
-    ${acc('banks', 'Bank Accounts', [bankAccts.length ? `${bankAccts.length} account${bankAccts.length > 1 ? 's' : ''}: ${bankAccts.map((x) => x.fund).join(', ')}` : st.remitToLO && !(st.functions || []).some((k) => ['disbursing', 'special', 'pettycash', 'liquidating'].includes(k)) ? 'Not needed: remitted to the Liquidating Officer' : 'None yet', bankAccts.length || (st.remitToLO && !(st.functions || []).some((k) => ['disbursing', 'special', 'pettycash', 'liquidating'].includes(k))) ? 'ok' : 'need'], `
+    ${acc('banks', 'Bank Accounts', [onlyCust ? 'Not needed: Accountable Forms Custodian' : bankAccts.length ? `${bankAccts.length} account${bankAccts.length > 1 ? 's' : ''}: ${bankAccts.map((x) => x.fund).join(', ')}` : st.remitToLO && !(st.functions || []).some((k) => ['disbursing', 'special', 'pettycash', 'liquidating'].includes(k)) ? 'Not needed: remitted to the Liquidating Officer' : 'None yet', onlyCust || bankAccts.length || (st.remitToLO && !(st.functions || []).some((k) => ['disbursing', 'special', 'pettycash', 'liquidating'].includes(k))) ? 'ok' : 'need'], `
       ${bankAccts.length ? `<div class="cer-tbl"><table class="cer-bal"><thead><tr><th scope="col">Bank</th><th scope="col">Account No.</th><th scope="col">Fund</th></tr></thead>
         <tbody>${bankAccts.map((x) => `<tr><td>${esc(x.bank || '')}</td><td class="mono">${esc(x.accountNo || '')}</td><td>${esc(x.fund || '')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="cer-wait">No bank account yet.</p>'}
       <div class="btn-row"><button class="btn sm" type="button" id="cer-banks" ${st.lguId ? '' : 'disabled'}>${edit ? 'Edit Bank Accounts' : 'View Bank Accounts'}</button></div>
