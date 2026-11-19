@@ -1021,6 +1021,20 @@ function begFormsOf(o, st, asOf) {
   const reg = FM.stockRegOf(FX, o, { functions: st.functions || [] });
   return [...FM.beginningFormsOf(FX, o.id, asOf), ...(reg ? FM.stockAt(FX, reg, asOf) : [])];
 }
+// After an officer moved to another cash examination: the old one, left with no officer, is removed; its bank statements
+// go along to the new one for the accounts that have none there yet.
+async function leaveAudit(refs, cer, fromId, examId, toId) {
+  if (cer.exams.some((e) => e.auditId === fromId && e.id !== examId)) return;
+  const who = by(refs), recs = (await store.list('cer_bankrec')).filter((r) => !r.deleted);
+  const has = new Set(recs.filter((r) => r.id.startsWith(toId + '|')).map((r) => r.id.slice(toId.length + 1).split('#')[0]));
+  for (const r of recs.filter((x) => x.id.startsWith(fromId + '|'))) {
+    const rest = r.id.slice(fromId.length + 1), acct = rest.split('#')[0];
+    if (!has.has(acct)) { const d = { ...r.data }; if (d.auditId) d.auditId = toId; if (d.recId) d.recId = `${toId}|${d.recId.slice(fromId.length + 1)}`; await store.save('cer_bankrec', `${toId}|${rest}`, d, who, { quiet: true }); }
+    await store.save('cer_bankrec', r.id, r.data, who, { quiet: true, deleted: true });
+  }
+  const a = cer.audits.find((x) => x.id === fromId);
+  if (a) { const { id, ...rest } = a; await store.save('cer_audits', fromId, rest, who, { deleted: true }); }
+}
 async function saveSetup(refs, cer, st) {
   const lgu = refs.lgu[st.lguId];
   const bad = (m) => { toast(m, 'bad'); return null; };
@@ -1033,8 +1047,11 @@ async function saveSetup(refs, cer, st) {
   if (st.functions.includes('collecting') && !(st.forms || []).length) return bad('Tick the accountable forms used in collecting.');
   // Officers of one auditee counted on the same date share one cash examination (same cut-off): a new one on that date joins it.
   const other = cer.audits.find((a) => a.id !== st.auditId && a.lguId === st.lguId && a.countDate === st.countDate);
-  if (other && st.auditId) return bad(`${agencyName(refs, lgu)} already has a cash examination on ${fmtDate(st.countDate)}. Add this officer there instead of moving this one to that date.`);
-  const auditId = st.auditId || (other ? other.id : newId('cera'));
+  // An existing one moved to a date that already has a cash examination: this officer moves into it (its other officers stay).
+  const moving = !!(other && st.auditId && st.examId);
+  if (other && st.auditId && !st.examId) return bad(`${agencyName(refs, lgu)} already has a cash examination on ${fmtDate(st.countDate)}. Open it from the list and add the officer there.`);
+  const fromId = moving ? st.auditId : '';
+  const auditId = other ? other.id : st.auditId || newId('cera');
   // The duplicate to stop is the accountable officer: one cash examination per officer per count date (each cut-off is its own cycle).
   const cycOf = (a) => (a ? (CYC.of[a.id] || a.cycleId || '') : '');
   const dup = cer.exams.find((e) => e.id !== st.examId && e.officerId === st.officerId && (() => {
@@ -1063,13 +1080,14 @@ async function saveSetup(refs, cer, st) {
     }
   });
   const oldAudit = cer.audits.find((a) => a.id === auditId);
-  await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy, cycleId: (other && !st.auditId ? cycOf(other) : '') || st.cycleId || oldAudit?.cycleId || CYC.current || '' }, by(refs));
+  if (!moving) await store.save('cer_audits', auditId, { lguId: st.lguId, countDate: st.countDate, preparedBy: st.preparedBy, reviewedBy: st.reviewedBy, cycleId: (other && !st.auditId ? cycOf(other) : '') || st.cycleId || oldAudit?.cycleId || CYC.current || '' }, by(refs));
   const examId = st.examId || newId('cere');
   const oldExam = cer.exams.find((e) => e.id === examId);
   await store.save('cer_exams', examId, { auditId, officerId: st.officerId, functions: st.functions, forms: st.functions.includes('collecting') ? st.forms : [],
     bond, lastExamDate, lastExamSource: prev ? 'system' : 'typed', balances, depositRule: st.depositRule || 'next', caRestFund: st.caRestFund || '', remitToLO: !!st.remitToLO && (st.functions || []).includes('collecting') && !isBrgy(refs.lgu[st.lguId]), records: (st.functions || []).includes('collecting') && st.records === 'cashbook' ? 'cashbook' : 'complete', endBalances: oldExam ? (oldExam.endBalances || {}) : {} }, by(refs));
+  if (moving) await leaveAudit(refs, cer, fromId, examId, auditId);
   DRAFT = null;
-  toast('Audit Setup saved.', 'ok');
+  toast(moving ? `Moved to the cash examination of ${agencyName(refs, lgu)} on ${fmtDate(st.countDate)}.` : 'Audit Setup saved.', 'ok');
   location.hash = `#/cer/setup?a=${auditId}&o=${examId}`;
   return true;
 }
