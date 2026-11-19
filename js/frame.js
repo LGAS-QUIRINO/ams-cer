@@ -32,7 +32,7 @@ export function syncBox(st = syncState) {
 window.addEventListener('sync-status', (e) => { const el = document.getElementById('syncbox'); if (el) el.outerHTML = syncBox(e.detail); });
 
 // items: [{ key, label, icon, href, soon?, count?, section? }]  (section: true → a heading row)
-export function moduleFrame({ title, items, active, crumb, me, roleText, body }) {
+export function moduleFrame({ title, items, active, crumb, me, roleText, body, sub }) {
   const name = me ? me.name : '';
   const ini = String(name).split(/\s+/).filter((w) => /^[A-Z]/i.test(w)).slice(0, 2).map((w) => w[0]).join('').toUpperCase();
   return `<div class="mshell">
@@ -47,7 +47,7 @@ export function moduleFrame({ title, items, active, crumb, me, roleText, body })
       <header class="mtop"><span class="crumb">${esc(crumb)}</span>${scopeSelect('m-scope', 'in-top')}${/^#\/cer\//.test(location.hash) ? cycleSelect('m-cycle', 'in-top') : ''}
         <div class="mwho"><div class="av">${esc(ini)}</div><div><b>${esc(name)}</b><small>${esc(roleText)}</small></div>
           <button class="btn" type="button" id="m-signout">Sign Out</button></div></header>
-      ${/^#\/cer\/(?!setup($|\?(?!a=)))/.test(location.hash) && pickChip() ? `<div class="cer-pickbar">${pickChip()}</div>` : ''}
+      ${sub !== undefined ? (sub ? `<div class="cer-selbar">${sub}</div>` : '') : /^#\/cer\/(?!setup($|\?(?!a=)))/.test(location.hash) && pickChip() ? `<div class="cer-pickbar">${pickChip()}</div>` : ''}
       <div class="mcontent">${body}</div>
     </div>
   </div>`;

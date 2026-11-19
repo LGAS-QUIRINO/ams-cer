@@ -175,7 +175,7 @@ export function bondChecks(st) {
 }
 
 /* ---------- page frame ---------- */
-function navItems() {
+function navItems(noCashbook = false) {
   return [
     { key: 'setup', label: 'Audit Setup', icon: 'pen', href: '#/cer/setup' },
     { key: 'count', label: 'Cash Count (Cut-off)', icon: 'grid', href: '#/cer/count' },
@@ -184,7 +184,7 @@ function navItems() {
     { key: 'collections', label: 'Collections & Deposits', icon: 'inbox', href: '#/cer/collections' },
     { key: 'advances', label: 'Cash Advances', icon: 'swap', href: '#/cer/advances' },
     { key: 'banks', label: 'Bank Statements', icon: 'building', href: '#/cer/banks' },
-    { key: 'cashbook', label: 'Cashbook', icon: 'book', href: '#/cer/cashbook' },
+    ...(noCashbook ? [] : [{ key: 'cashbook', label: 'Cashbook', icon: 'book', href: '#/cer/cashbook' }]),   // barangays only
     { section: true, label: 'EXAMINATION' },
     { key: 'verify', label: 'Verification', icon: 'book', href: '#/cer/verify' },
     { key: 'reports', label: 'Reports', icon: 'overview', href: '#/cer/reports' }];
@@ -269,6 +269,68 @@ function installGuard() {
   window.addEventListener('beforeunload', (e) => { if (DRAFT && DRAFT.dirty) { e.preventDefault(); e.returnValue = ''; } });
 }
 
+/* ---------- The selection bar (under the header, every CER screen) ----------
+   Working on (the LGU with its barangays) → Auditee: the LGU itself or Barangay → the barangay → the accountable officer.
+   The choice is the cash examination and officer every screen opens on (ams.cerpick), within the Cycle shown. */
+let SEL = null;
+function selData(refs, cer) {
+  const audits = cer.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && cycleOk(a)).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
+  const munOf = (l) => (l && l.data.kind === 'barangay' ? refs.lgu[l.data.parentId] : l);
+  const exOf = (a) => cer.exams.filter((e) => e.auditId === a.id).map((e) => ({ id: e.id, a: a.id, date: a.countDate, o: cer.officers.find((x) => x.id === e.officerId) }))
+    .filter((x) => x.o).sort((x, y) => x.o.name.localeCompare(y.o.name));
+  const muns = new Map();
+  audits.forEach((a) => { const l = refs.lgu[a.lguId], m = munOf(l); if (!l || !m) return;
+    const g = muns.get(m.id) || { m, own: [], brgys: new Map() }; muns.set(m.id, g);
+    if (l.data.kind === 'barangay') { const b = g.brgys.get(l.id) || { l, ex: [] }; g.brgys.set(l.id, b); b.ex.push(...exOf(a)); } else g.own.push(...exOf(a)); });
+  const list = [...muns.values()].sort((x, y) => (x.m.data.kind === 'province' ? -1 : y.m.data.kind === 'province' ? 1 : x.m.data.name.localeCompare(y.m.data.name)));
+  list.forEach((g) => { g.brgys = [...g.brgys.values()].sort((x, y) => x.l.data.name.localeCompare(y.l.data.name)); });
+  return { list, audits };
+}
+function selBar(refs, cer) {
+  const d = selData(refs, cer); SEL = d;
+  if (!d.list.length) return '';
+  const p = getPick(), all = d.list.flatMap((g) => [...g.own, ...g.brgys.flatMap((b) => b.ex)]);
+  const cur = all.find((x) => x.id === p.e && x.a === p.a) || all.find((x) => x.a === p.a) || null;
+  const g = cur ? d.list.find((y) => y.own.includes(cur) || y.brgys.some((b) => b.ex.includes(cur))) : d.list[0];
+  const bg = cur ? g.brgys.find((b) => b.ex.includes(cur)) : null;
+  const kind = cur ? (bg ? 'brgy' : 'lgu') : g.own.length ? 'lgu' : 'brgy';
+  const opt = (v, t, on) => `<option value="${esc(v)}" ${on ? 'selected' : ''}>${esc(t)}</option>`;
+  const box = (id, label, inner, w) => `<label class="sb-f" style="min-width:${w}px"><span>${label}</span><select class="input" id="${id}">${inner}</select></label>`;
+  const mun = d.list.length > 1 ? box('sb-mun', 'LGU', d.list.map((y) => opt(y.m.id, agencyName(refs, y.m), y === g)).join(''), 200) : '';
+  const self = g.m.data.kind === 'province' ? 'the PLGU itself' : 'the LGU itself';
+  const kinds = [...(g.own.length ? [['lgu', `${agencyName(refs, g.m)} (${self})`]] : []), ...(g.brgys.length ? [['brgy', 'Barangay']] : [])];
+  const kindBox = box('sb-kind', 'Auditee', kinds.map(([v, t]) => opt(v, t, v === kind)).join(''), 230);
+  const brgyList = kind === 'brgy' ? (bg ? [bg] : g.brgys) : [];
+  const brgyBox = kind === 'brgy' ? box('sb-brgy', 'Barangay', `${bg ? '' : '<option value="">— Choose the barangay —</option>'}${g.brgys.map((b) => opt(b.l.id, agencyName(refs, b.l), b === bg)).join('')}`, 190) : '';
+  const offs = kind === 'lgu' ? g.own : bg ? bg.ex : [];
+  const dates = new Set(offs.map((x) => x.date));
+  const offBox = kind === 'brgy' && !bg ? '' : box('sb-off', 'Accountable Officer', `${cur ? '' : '<option value="">— Choose the officer —</option>'}${offs.map((x) => opt(`${x.a}|${x.id}`, `${x.o.name}${x.o.designation ? ' · ' + x.o.designation : ''}${dates.size > 1 ? ' · ' + fmtDate(x.date) : ''}`, x === cur)).join('')}`, 300);
+  return `${mun}${kindBox}${brgyBox}${offBox}${cur ? `<span class="sb-date">Cash count <b>${esc(fmtDate(cur.date))}</b></span>` : ''}`;
+}
+// Whether the officer chosen is of the LGU itself (no Cashbook, which is for barangays).
+function pickIsLgu(refs, cer) { const a = cer.audits.find((x) => x.id === getPick().a); const l = a && refs.lgu[a.lguId]; return !!l && l.data.kind !== 'barangay'; }
+function wireSelBar(refs, cer) {
+  if (!SEL) return;
+  const goTo = (x) => {
+    if (!x) return;
+    const a = cer.audits.find((y) => y.id === x.a); if (!a) return;
+    remember(refs, a, { id: x.id, o: x.o });
+    const route = (location.hash.split('?')[0] || '').replace(/^#\/cer\/?/, '');
+    const q = new URLSearchParams(location.hash.split('?')[1] || '');
+    const to = route === '' || route === 'setup' ? (q.get('a') ? `#/cer/setup?a=${x.a}&o=${x.id}` : location.hash)
+      : route.startsWith('forms') ? location.hash : `#/cer/${route}?a=${x.a}&e=${x.id}`;
+    if (to === location.hash) window.dispatchEvent(new HashChangeEvent('hashchange')); else location.hash = to;
+  };
+  const grp = (id) => SEL.list.find((y) => y.m.id === id);
+  const curG = () => grp($('#sb-mun')?.value) || SEL.list.find((y) => [...y.own, ...y.brgys.flatMap((b) => b.ex)].some((x) => x.a === getPick().a)) || SEL.list[0];
+  const firstOf = (g, kind) => (kind === 'lgu' ? g.own[0] : g.brgys[0]?.ex[0]);
+  { const el = $('#sb-mun'); if (el) el.onchange = () => { const g = grp(el.value); if (g) goTo(g.own[0] || g.brgys[0]?.ex[0]); }; }
+  { const el = $('#sb-kind'); if (el) el.onchange = () => { const g = curG();
+    goTo(firstOf(g, el.value)); }; }   // Barangay: the first barangay; then choose the barangay
+  { const el = $('#sb-brgy'); if (el) el.onchange = () => { const g = curG(); const b = g.brgys.find((y) => y.l.id === el.value); if (b) goTo(b.ex[0]); }; }
+  { const el = $('#sb-off'); if (el) el.onchange = () => { const [a, e] = el.value.split('|'); const all = SEL.list.flatMap((y) => [...y.own, ...y.brgys.flatMap((b) => b.ex)]); goTo(all.find((x) => x.a === a && x.id === e)); }; }
+}
+
 export async function render(ctx) {
   const { app, refs, q, parts } = ctx;
   installGuard();
@@ -285,8 +347,10 @@ export async function render(ctx) {
     LASTPART = parts[0];
     const { body, crumb, wire } = parts[0] === 'forms' ? await (await import('./forms.js')).formsView(ctx)
       : parts[0] === 'collections' ? await (await import('./collections.js')).collectionsView(ctx) : parts[0] === 'advances' ? await (await import('./advances.js')).advancesView(ctx) : parts[0] === 'banks' ? await (await import('./banks.js')).banksView(ctx) : parts[0] === 'count' ? await (await import('./count.js')).countView(ctx) : parts[0] === 'verify' ? await (await import('./verify.js')).verifyView(ctx) : parts[0] === 'cashbook' ? await (await import('./cashbook.js')).cashbookView(ctx) : await (await import('./reports.js')).reportsView(ctx);
-    app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: parts[0], crumb, me, roleText, body });
-    tidyTop();
+    const cer0 = await loadCer();
+    const sub = selBar(refs, cer0);
+    app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(pickIsLgu(refs, cer0)), active: parts[0], crumb, me, roleText, body, sub });
+    tidyTop(); wireSelBar(refs, cer0);
     $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
     if (wire) wire();
     return;
@@ -299,8 +363,9 @@ export async function render(ctx) {
   // Beginning Inventory of Accountable Forms reads the same booklet records as Accountable Forms.
   if (open) { FM = await import('./forms.js'); FX = await FM.loadForms(); CA = (await (await import('../src/journal.js')).listAdvances()).map((r) => ({ id: r.id, ...r.data })); }
   const body = open ? setupHtml(refs, cer, q) : listHtml(refs, cer);
-  app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(), active: view, crumb: open ? 'Audit Setup' : 'Audit Setup · Cash Examinations', me, roleText, body });
-  tidyTop();
+  const sub = selBar(refs, cer);
+  app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(pickIsLgu(refs, cer)), active: view, crumb: open ? 'Audit Setup' : 'Audit Setup · Cash Examinations', me, roleText, body, sub });
+  tidyTop(); wireSelBar(refs, cer);
   $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
   { const hb = $('#cer-hol'); if (hb) hb.onclick = () => holidaysModal(refs, isEncoder(refs)); }
   { const nc = $('#cer-newcyc'); if (nc) nc.onclick = () => newCycle(refs); }
@@ -420,13 +485,15 @@ function listHtml(refs, cer) {
   const canNew = isEncoder(refs), canCyc = isAuditor(refs);
   const nOff = (as) => new Set(cer.exams.filter((e) => as.some((a) => a.id === e.auditId)).map((e) => e.officerId)).size;
   // One row per accountable officer (each officer's exam), latest count first; a cash examination with no officer yet keeps one row.
+  const pk = getPick();
   const examRows = (as) => `<div class="t-head" style="${cols}"><span>Cash Count</span><span>Accountable Officer</span><span>Prepared by</span></div>
     ${as.flatMap((a) => { const exs = cer.exams.filter((e) => e.auditId === a.id).map((e) => ({ e, o: cer.officers.find((o) => o.id === e.officerId) }))
         .sort((x, y) => String(x.o?.name || '').localeCompare(String(y.o?.name || '')));
       const cy = sel === 'all' ? CYC.list.find((c) => c.id === (CYC.of[a.id] || a.cycleId)) : null;
-      const row = (x) => `<a class="t-row click" style="${cols}" href="#/cer/setup?a=${esc(a.id)}${x ? `&o=${esc(x.e.id)}` : ''}">
+      const on = (x) => !!x && x.e.id === pk.e && a.id === pk.a;
+      const row = (x) => `<a class="t-row click ${on(x) ? 'sb-on' : ''}" style="${cols}" href="#/cer/setup?a=${esc(a.id)}${x ? `&o=${esc(x.e.id)}` : ''}">
         <span><b>${esc(fmtDate(a.countDate))}</b>${cy ? `<small style="display:block">${esc(cy.name)}</small>` : ''}${READY.has(a.id) ? ' <span class="pill p-done">Ready</span>' : ''}</span>
-        <span>${x ? `${esc(x.o ? x.o.name : 'Officer')} <small>· ${esc(x.o?.designation || '')}</small>` : '<small>No officer yet</small>'}</span>
+        <span>${x ? `${esc(x.o ? x.o.name : 'Officer')} <small>· ${esc(x.o?.designation || '')}</small>${on(x) ? ' <span class="pill sb-tag">Working on</span>' : ''}` : '<small>No officer yet</small>'}</span>
         <span><small>${esc(refs.user[a.preparedBy]?.data.name || '')}</small></span></a>`;
       return exs.length ? exs.map(row) : [row(null)]; }).join('')}`;
   const sub = (as) => `<span class="dim">· ${as.length} cash examination${as.length === 1 ? '' : 's'}${as.length ? ` · ${esc(fmtDate(as[0].countDate))}` : ''} · ${nOff(as)} officer${nOff(as) === 1 ? '' : 's'}</span>`;
@@ -440,8 +507,8 @@ function listHtml(refs, cer) {
     const own = rows.filter((a) => a.lguId === m.id);
     const brgys = [...new Map(rows.filter((a) => lguOf(a)?.data.kind === 'barangay' && munOf(lguOf(a))?.id === m.id).map((a) => [a.lguId, lguOf(a)])).values()].sort((x, y) => x.data.name.localeCompare(y.data.name));
     const nB = rows.filter((a) => brgys.some((b) => b.id === a.lguId)).length;
-    return `${own.length ? `<details class="cyc-grp" ${one ? 'open' : ''}><summary><b>${esc(agencyName(refs, m))}</b> ${sub(own)}</summary>${examRows(own)}</details>` : ''}
-      ${brgys.length ? `<details class="cyc-grp" ${one ? 'open' : ''}><summary><b>BARANGAYS</b>${one ? '' : ` <span class="dim">of ${esc(m.data.name)}</span>`} <span class="dim">· ${brgys.length} barangay${brgys.length === 1 ? '' : 's'} · ${nB} cash examination${nB === 1 ? '' : 's'}</span></summary>
+    return `${own.length ? `<details class="cyc-grp"><summary><b>${esc(agencyName(refs, m))}</b> ${sub(own)}</summary>${examRows(own)}</details>` : ''}
+      ${brgys.length ? `<details class="cyc-grp"><summary><b>BARANGAYS</b>${one ? '' : ` <span class="dim">of ${esc(m.data.name)}</span>`} <span class="dim">· ${brgys.length} barangay${brgys.length === 1 ? '' : 's'} · ${nB} cash examination${nB === 1 ? '' : 's'}</span></summary>
         <div class="cyc-brgys">${brgys.map((bg) => { const as = rows.filter((a) => a.lguId === bg.id);
           return `<details class="cyc-grp cyc-brgy"><summary><b>${esc(agencyName(refs, bg))}</b> ${sub(as)}</summary>${examRows(as)}</details>`; }).join('')}</div></details>` : ''}`;
   }).join('');

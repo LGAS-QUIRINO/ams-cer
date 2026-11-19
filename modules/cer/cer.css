@@ -1008,3 +1008,19 @@ table.af-reg.tr-month{min-width:0}
 .rm-noedit { cursor: pointer; border-bottom: 1px dashed var(--line); padding-bottom: 1px }
 .rm-noedit:hover, .rm-noedit:focus { border-bottom-color: currentColor; outline: none }
 .rm-noin { width: 130px; padding: 4px 6px; font-size: 13px }
+/* The selection bar under the header: Auditee → Barangay → Accountable Officer (replaces each screen's own pickers) */
+.cer-selbar { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; padding: 10px 28px 12px; background: #fff; border-bottom: 1px solid var(--line, #dbe3ef) }
+.cer-selbar .sb-f { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; font-weight: 700; color: var(--muted, #5b6b84); text-transform: uppercase; letter-spacing: .04em }
+.cer-selbar .sb-f .input { padding: 6px 10px; font-size: 14px; text-transform: none; letter-spacing: 0; font-weight: 500 }
+.cer-selbar .sb-date { font-size: 13.5px; color: var(--muted, #5b6b84); padding-bottom: 8px }
+.cer-selbar .sb-date b { color: var(--navy, #16325c) }
+@media print { .cer-selbar { display: none } }
+@media (max-width: 700px) { .cer-selbar { padding: 10px 16px } .cer-selbar .sb-f { min-width: 0 !important; flex: 1 1 100% } }
+/* Each screen's own Cash Examination / Accountable Officer pickers: the selection bar decides */
+.mshell:has(.cer-selbar) .field:has(> #cd-audit), .mshell:has(.cer-selbar) .field:has(> #cd-exam),
+.mshell:has(.cer-selbar) .field:has(> #bk-audit), .mshell:has(.cer-selbar) .field:has(> #cb-audit), .mshell:has(.cer-selbar) .field:has(> #cb-exam),
+.mshell:has(.cer-selbar) .field:has(> #cc-audit), .mshell:has(.cer-selbar) .field:has(> #cc-exam), .mshell:has(.cer-selbar) .field:has(> #rp-audit),
+.mshell:has(.cer-selbar) .field:has(> #rp-exam), .mshell:has(.cer-selbar) .field:has(> #vf-audit), .mshell:has(.cer-selbar) .field:has(> #vf-exam) { display: none }
+/* Audit Setup list: the officer being worked on */
+.t-row.sb-on { background: #e8f0fe; box-shadow: inset 4px 0 0 #1f5fd6 }
+.pill.sb-tag { background: #1f5fd6; color: #fff }
