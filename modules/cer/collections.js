@@ -505,7 +505,10 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const show = q.get('show') === 'nyr' && !cur.pending ? 'nyr' : q.get('show') === 'sel' ? 'sel' : q.get('show') === 'all' || cur.pending ? 'all' : 'sel';
   // Not yet in a report: the ORs of the officer not in any submitted report of the type shown.
   const nyrOrs = () => Object.values(fig.chains).filter((ch) => usedKinds.includes(ch.kind)).flatMap((ch) => ch.pend.ors);
-  const listOrs = (show === 'all' ? f.ors.filter((x) => x.officerId === o.id) : show === 'nyr' ? nyrOrs() : cur.ors).slice().sort((a, b) => String(a.form).localeCompare(String(b.form)) || a.serial - b.serial);
+  // All of this officer: this cash exam's ORs; those in a report of the previous exam (dated on or before the last cash exam)
+  // stay with that exam and are not listed here.
+  const prevRep = new Set(exam.lastExamDate ? f.reports.filter((r) => r.officerId === o.id && !r.pending && r.date && r.date <= exam.lastExamDate).map((r) => r.id) : []);
+  const listOrs = (show === 'all' ? f.ors.filter((x) => x.officerId === o.id && !prevRep.has(x.reportId)) : show === 'nyr' ? nyrOrs() : cur.ors).slice().sort((a, b) => String(a.form).localeCompare(String(b.form)) || a.serial - b.serial);
   const repPill = (x) => { if (!x.reportId) return `<span class="pill p-part">Not yet in an ${K}</span>`; const r = f.reports.find((y) => y.id === x.reportId); return `<span class="pill p-stock">${esc(r ? (r.no ? `${K} ${r.no}` : repName(r, K)) : '—')}</span>`; };
   // The first line also carries the Date of Collection (one date per OR); the other lines leave that column empty.
   const dateCell = `<div class="cd-dcell"><label class="sr-only" for="cd-ordate">Date of Collection</label><input class="input" type="date" id="cd-ordate" value="${esc(LASTC.date)}"></div>`;
