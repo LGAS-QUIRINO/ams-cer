@@ -419,13 +419,16 @@ function listHtml(refs, cer) {
   const cols = 'grid-template-columns:120px minmax(240px,1.8fr) minmax(170px,1fr)';
   const canNew = isEncoder(refs), canCyc = isAuditor(refs);
   const nOff = (as) => new Set(cer.exams.filter((e) => as.some((a) => a.id === e.auditId)).map((e) => e.officerId)).size;
-  const examRows = (as) => `<div class="t-head" style="${cols}"><span>Cash Count</span><span>Accountable Officers</span><span>Prepared by</span></div>
-    ${as.map((a) => { const offs = cer.exams.filter((e) => e.auditId === a.id).map((e) => cer.officers.find((o) => o.id === e.officerId)).filter(Boolean);
+  // One row per accountable officer (each officer's exam), latest count first; a cash examination with no officer yet keeps one row.
+  const examRows = (as) => `<div class="t-head" style="${cols}"><span>Cash Count</span><span>Accountable Officer</span><span>Prepared by</span></div>
+    ${as.flatMap((a) => { const exs = cer.exams.filter((e) => e.auditId === a.id).map((e) => ({ e, o: cer.officers.find((o) => o.id === e.officerId) }))
+        .sort((x, y) => String(x.o?.name || '').localeCompare(String(y.o?.name || '')));
       const cy = sel === 'all' ? CYC.list.find((c) => c.id === (CYC.of[a.id] || a.cycleId)) : null;
-      return `<a class="t-row click" style="${cols}" href="#/cer/setup?a=${esc(a.id)}">
+      const row = (x) => `<a class="t-row click" style="${cols}" href="#/cer/setup?a=${esc(a.id)}${x ? `&o=${esc(x.e.id)}` : ''}">
         <span><b>${esc(fmtDate(a.countDate))}</b>${cy ? `<small style="display:block">${esc(cy.name)}</small>` : ''}${READY.has(a.id) ? ' <span class="pill p-done">Ready</span>' : ''}</span>
-        <span>${offs.length ? offs.map((o) => `${esc(o.name)} <small>· ${esc(o.designation || '')}</small>`).join('<br>') : '<small>No officer yet</small>'}</span>
-        <span><small>${esc(refs.user[a.preparedBy]?.data.name || '')}</small></span></a>`; }).join('')}`;
+        <span>${x ? `${esc(x.o ? x.o.name : 'Officer')} <small>· ${esc(x.o?.designation || '')}</small>` : '<small>No officer yet</small>'}</span>
+        <span><small>${esc(refs.user[a.preparedBy]?.data.name || '')}</small></span></a>`;
+      return exs.length ? exs.map(row) : [row(null)]; }).join('')}`;
   const sub = (as) => `<span class="dim">· ${as.length} cash examination${as.length === 1 ? '' : 's'}${as.length ? ` · ${esc(fmtDate(as[0].countDate))}` : ''} · ${nOff(as)} officer${nOff(as) === 1 ? '' : 's'}</span>`;
   // Auditees: the province and municipalities (LGU) with their barangays.
   const lguOf = (a) => refs.lgu[a.lguId];
