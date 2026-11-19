@@ -387,7 +387,7 @@ const result = (kind, title, text) => `<div class="af-r ${kind}"><b>${esc(title)
 const MOVES = [['receive', 'Receive'], ['issue', 'Issue'], ['starting', 'Starting Inventory']];
 // The last form, date and choices stay filled in for the next entry (the screen refreshes after each save).
 const ENC = { open: false };   // the Encode panel: folded to one line until a movement is chosen
-const LAST = { form: 'af51', date: '', src: RECEIVED_FROM[0], off: '', per: PER_BOOKLET, rby: 'custodian', held: 'custodian' };
+const LAST = { form: 'af51', date: '', src: RECEIVED_FROM[0], off: '', per: PER_BOOKLET, rby: 'custodian', held: 'custodian', rdate: '', rfrom: '' };
 // The "Partly used" box: one tick, Unused or Used numbers, one text box (used in Starting Inventory and Edit).
 const partBox = (pre, { on = false, mode = 'unused', text = '', note = '' } = {}) => `
   <div class="af-part">
@@ -434,11 +434,14 @@ function encodeHtml(refs, offs, q) {
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>`;
   if (mv === 'starting') {
     const offHeld = LAST.held !== 'custodian' && offs.some((o) => o.id === LAST.held);
-    fields = `<div class="af-enc g7s">${formSel}${range}${per}
+    fields = `<div class="af-enc g9s">${formSel}${range}${per}
       <div class="field"><label for="e-date">As of</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
+      <div class="field"><label for="e-rdate" title="Optional">Date Received</label><input class="input" type="date" id="e-rdate" value="${esc(LAST.rdate)}"></div>
+      <div class="field"><label for="e-rfrom" title="Optional">Received From</label><select class="input" id="e-rfrom">${srcOptions(offs.f, offs.lguId, { extra: [['', '—']], cur: LAST.rfrom })}</select></div>
       <div class="field"><label for="e-held">Held By</label><select class="input" id="e-held"><option value="custodian">${custL} · in stock</option>
         <optgroup label="Accountable Officer">${offs.filter((o) => o.id !== custId).map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.held)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>
+    <div class="af-startset"><button class="btn sm" type="button" id="e-setrcv">Set Date Received for a range</button><span class="dim">for starting inventory already entered</span></div>
     <div class="af-offrow one" id="e-offrow" ${offHeld ? '' : 'hidden'}>
       ${partBox('e')}
     </div>`;
@@ -513,6 +516,8 @@ function wireRegister(ctx, f, lguId, offs) {
   ['#e-from', '#e-to', '#e-per'].forEach((s) => { const el = $(s); if (el) el.oninput = preview; });
   // Cash tickets without serial numbers: only the quantity is typed.
   wireSrcSelect($('#e-src'), refs, f, lguId);
+  wireSrcSelect($('#e-rfrom'), refs, f, lguId);
+  { const b = $('#e-setrcv'); if (b) b.onclick = () => setReceivedModal(refs, f, lguId); }
   const nsBox = $('#e-nsbox'), nsTick = $('#e-ns');
   const syncNs = () => { if (!nsBox) return; const cash = $('#e-form').value === 'cash'; nsBox.hidden = !cash; if (!cash) nsTick.checked = false;
     const on = isNs(); $('#e-from').closest('.field').hidden = on; if (per) per.closest('.field').hidden = on;
@@ -526,7 +531,7 @@ function wireRegister(ctx, f, lguId, offs) {
     enter.disabled = true;
     Object.assign(LAST, { form: $('#e-form').value, date: $('#e-date').value, per: int(per?.value) || LAST.per,
       src: $('#e-src') ? $('#e-src').value : LAST.src, off: $('#e-off') ? $('#e-off').value : LAST.off, rby: $('#e-rby') ? $('#e-rby').value : LAST.rby,
-      held: heldSel ? heldSel.value : LAST.held });
+      held: heldSel ? heldSel.value : LAST.held, rdate: $('#e-rdate') ? $('#e-rdate').value : LAST.rdate, rfrom: $('#e-rfrom') ? $('#e-rfrom').value : LAST.rfrom });
     try {
       const ok = mv === 'receive' ? await doReceive(refs, f, lguId) : mv === 'issue' ? await doIssue(refs, f, lguId) : await doStarting(refs, f, lguId);
       if (ok) {
@@ -708,6 +713,8 @@ async function doStarting(refs, f, lguId) {
   const plan = startPlan();
   if (plan.error) return bad(plan.error);
   if (!date) return bad('Enter the as-of date.');
+  const rdate = $('#e-rdate')?.value || '', rfrom = ($('#e-rfrom')?.value || '').replace(ADD_SRC, '');
+  if (rdate && rdate > date) return bad(`The Date Received (${fmtDate(rdate)}) must be on or before the As of date (${fmtDate(date)}).`);
   const officer = plan.held !== 'custodian' ? f.officers.find((o) => o.id === plan.held) : null;
   if (plan.held !== 'custodian' && !officer) return bad('Choose who holds the booklets.');
   if (!plan.ns) {
@@ -717,7 +724,7 @@ async function doStarting(refs, f, lguId) {
   const shift = plan.ns ? nsBase() - 1 : 0;
   for (const s0 of plan.parts) {
     const s = { x: s0.x + shift, y: s0.y + shift, unused: s0.unused ? s0.unused.map(([a, z]) => [a + shift, z + shift]) : null };
-    const base = { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, receivedDate: '', receivedFrom: '', reference: '', source: 'starting', ...(plan.ns ? { noSerial: true } : {}) };
+    const base = { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, receivedDate: rdate, receivedFrom: rfrom, reference: '', source: 'starting', ...(plan.ns ? { noSerial: true } : {}) };
     await store.save('cer_booklets', newId('cerb'), officer
       ? { ...base, status: 'issued', officerId: officer.id, issuedDate: date, issuedAsOf: true, beginAs: 'ao', beginDate: date, unusedAtStart: s.unused,
           history: [hist(refs, 'starting', date, { officerId: officer.id, note: s.unused ? `In the officer's hands on the start date, partly used: ${countRanges(s.unused)} unused` : 'In the officer\'s hands on the start date' })] }
@@ -729,6 +736,35 @@ async function doStarting(refs, f, lguId) {
   return true;
 }
 const strip = (b) => { const { id, orNos, ...rest } = b; return rest; };   // orNos is worked out on loading, never saved
+// Starting inventory already entered: the Date Received and Received From set (replaced) for every booklet in a range.
+async function setReceivedModal(refs, f, lguId) {
+  const isStart = (b) => !!beginOf(b);
+  const inRange = (form, a, z) => f.booklets.filter((b) => b.lguId === lguId && b.form === form && isStart(b) && !b.noSerial && b.from <= z && b.to >= a);
+  let plan = null;
+  const read = (bg) => { const form = $('#sr-form', bg).value, a = int($('#sr-from', bg).value), z = int($('#sr-to', bg).value) || a, d = $('#sr-date', bg).value, src = $('#sr-src', bg).value.replace(ADD_SRC, '');
+    if (!a || z < a) return { error: 'Enter the serial range (From must not be after To).' };
+    const list = inRange(form, a, z);
+    if (!list.length) return { error: `No starting inventory of ${FORM_SHORT[form] || form} in ${rangeText(a, z)}.` };
+    const late = d ? list.filter((b) => b.beginDate && d > b.beginDate) : [];
+    if (late.length) return { error: `The Date Received is after the As of date of ${late.length} booklet${late.length > 1 ? 's' : ''} (${fmtDate(late[0].beginDate)}).` };
+    return { form, a, z, d, src, list }; };
+  const prev = (bg) => { const r = read(bg); $('#sr-prev', bg).innerHTML = r.error ? (int($('#sr-from', bg).value) ? `<b class="warn-t">${esc(r.error)}</b>` : '')
+    : `<b>${r.list.length} booklet${r.list.length > 1 ? 's' : ''}</b> of starting inventory (${esc(rangesText(mergeRanges(r.list.map((b) => [b.from, b.to]))))}) will get this Date Received and Received From${r.list.some((b) => b.receivedDate || b.receivedFrom) ? '; those already filled are replaced' : ''}.`; };
+  await modal({ title: 'Set Date Received for a range',
+    body: `<div class="cd-g2"><div class="field"><label for="sr-form">Form</label><select class="input" id="sr-form">${formsFor(f, lguId).map(([k, l]) => `<option value="${esc(k)}" ${k === LAST.form ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div><div></div>
+      <div class="field"><label for="sr-from">Serial From</label><input class="input mono" id="sr-from" inputmode="numeric"></div>
+      <div class="field"><label for="sr-to">Serial To</label><input class="input mono" id="sr-to" inputmode="numeric"></div>
+      <div class="field"><label for="sr-date">Date Received</label><input class="input" type="date" id="sr-date" value="${esc(LAST.rdate)}"></div>
+      <div class="field"><label for="sr-src">Received From</label><select class="input" id="sr-src">${srcOptions(f, lguId, { extra: [['', '—']], cur: LAST.rfrom })}</select></div></div>
+      <p class="af-note" id="sr-prev"></p>`,
+    onOpen: (bg) => { wireSrcSelect($('#sr-src', bg), refs, f, lguId, () => prev(bg)); ['#sr-form', '#sr-from', '#sr-to', '#sr-date'].forEach((k) => { $(k, bg).oninput = () => prev(bg); $(k, bg).onchange = () => prev(bg); }); },
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Apply', cls: 'primary', value: 'ok', check: (bg) => { const r = read(bg); if (r.error) return bad(r.error); plan = r; return true; } }] });
+  if (!plan) return;
+  for (const b of plan.list) await store.save('cer_booklets', b.id, { ...strip(b), receivedDate: plan.d, receivedFrom: plan.src }, by(refs), { quiet: true });
+  Object.assign(LAST, { rdate: plan.d, rfrom: plan.src });
+  emitChange('local');
+  toast(`Date Received set on ${plan.list.length} booklet${plan.list.length > 1 ? 's' : ''}.`, 'ok');
+}
 
 /* ---------- one booklet: history and moves ---------- */
 const ACTION = { received: 'Received by the custodian', issued: 'Issued', transferred: 'Transferred', returned: 'Returned to the custodian', lost: 'Reported lost / destroyed',
