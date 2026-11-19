@@ -84,17 +84,28 @@ const bad = (m) => { toast(m, 'bad'); return false; };
 // The previous cash exam of the auditee (the one counted before this one) and what its bank reconciliation found for this
 // account: its items stay there; one dated before this coverage counts here only if still outstanding at that exam.
 function prevBankOf(audit, audits, recsAll, acct) {
-  const pa = audits.filter((a) => a.lguId === audit.lguId && a.id !== audit.id && a.countDate && a.countDate < audit.countDate).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)))[0];
-  if (!pa) return null;
-  const r = recsAll.find((x) => x.id === `${pa.id}|${acct.id}` && !x.part);
-  return { date: pa.countDate, found: r ? new Set(Object.keys(r.found || {}).filter((k) => r.found[k])) : null };
+  const earlier = audits.filter((a) => a.lguId === audit.lguId && a.id !== audit.id && a.countDate && a.countDate < audit.countDate);
+  if (!earlier.length) return null;
+  const date = earlier.map((a) => a.countDate).sort().pop();
+  // Every earlier reconciliation of this account: what it found, and up to when its statement went.
+  const ids = new Set(earlier.map((a) => `${a.id}|${acct.id}`));
+  const recs = recsAll.filter((x) => ids.has(x.id) && !x.part);
+  const found = new Set(recs.flatMap((r) => Object.keys(r.found || {}).filter((k) => r.found[k])));
+  const lastLine = recsAll.filter((x) => x.part && ids.has(x.recId)).flatMap((x) => x.lines || []).map((l) => l.date).filter(Boolean).sort().pop() || '';
+  const covered = [lastLine, ...recs.map((r) => (r.lines || []).map((l) => l.date).filter(Boolean).sort().pop() || '')].filter(Boolean).sort().pop() || '';
+  return { date, found, covered };
 }
+// An item dated in a previous cash exam's coverage stays with that exam, unless it was still outstanding there: a check not
+// cleared (as before: when marked), a deposit made after the last line of that exam's statement (in transit at its count).
 const keepPrev = (x, cvF, prev) => {
   const before = !!x.date && ((cvF && x.date < cvF) || (prev && x.date <= prev.date));
   if (!before) return true;
-  if (prev && prev.found && prev.found.has(x.key)) return false;   // cleared within the previous exam
-  if (x.kind === 'dep') return !!(prev && prev.found);               // a deposit in transit at the previous exam's count
-  return true;                                                         // checks: as before (outstanding only when marked)
+  if (!prev) return x.kind !== 'dep';                                   // no earlier exam: old deposits stay out; checks as before
+  if (prev.found.has(x.key) || (x.old && prev.found.has(x.old))) return false;   // cleared within a previous exam
+  // A deposit in transit at the previous count: dated after the last line of that exam's statement (the bank had not shown it yet).
+  // One the statement already reached but never matched is the previous exam's finding: it stays there.
+  if (x.kind === 'dep') return !!prev.covered && x.date > prev.covered;
+  return true;
 };
 export const covOf = (audit, exams) => { const ds = exams.filter((e) => e.auditId === audit.id && e.lastExamDate).map((e) => e.lastExamDate).sort(); return { from: ds[0] || '', to: audit.countDate }; };
 // The imported lines within the coverage as it is now (it may have changed since the import); the beginning balance follows.
