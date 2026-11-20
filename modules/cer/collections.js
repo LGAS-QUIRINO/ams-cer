@@ -542,7 +542,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
     const n = firstMiss.miss[0], b0 = holdBk(firstMiss.fk, n);
     Object.assign(LASTC, { form: firstMiss.fk, bookletId: b0 ? b0.id : '__none', serial: n, goMiss: false });
   }
-  const rToGo = rMiss.reduce((t, r) => t + r.miss.length, 0);
+  const rToGo = rMiss.reduce((t, r) => t + r.miss.length, 0), rDone = rMode && !rToGo;
   const rProg = rMode ? `<div class="cd-rprog"><span>${rMiss.map((r) => `${esc(remFormName(r.fk))} · ${r.a}–${r.z}: <b>${r.n - r.miss.length} of ${r.n}</b>`).join(' &nbsp;·&nbsp; ')}</span>
       ${rToGo ? `<a href="#" class="cd-link" id="cd-gomiss" title="${esc(rMiss.filter((r) => r.miss.length).map((r) => `${remFormName(r.fk)}: ${rangesText(mergeRanges(r.miss.map((n) => [n, n])))}`).join('\n'))}"><b>${rToGo} to go</b> · next ${firstMiss.miss[0]}</a>` : '<b class="ok-t">All ORs of the range encoded</b>'}</div>` : '';
   const form = forms.includes(LASTC.form) ? LASTC.form : forms[0] || '';
@@ -574,7 +574,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <label class="sr-only" for="cd-a${i}">Amount ${i + 1}</label><input class="input r cd-a" id="cd-a${i}" inputmode="decimal" value="${p.amt ? esc(money(p.amt)) : ''}" placeholder="0.00" autocomplete="off">
       <button class="btn sm cd-x" type="button" aria-label="Remove particular">✕</button>${i ? '<span></span>' : '<button class="btn primary" type="button" id="cd-enter">Enter</button>'}</div>`;
   const colBody = !forms.length ? `<div class="cd-info">This officer has no accountable forms ticked in Audit Setup${isLO ? '. A Liquidating Officer who issues ORs himself needs Collecting and the forms ticked there' : ''}. ${isLO ? 'Remittances and deposits are entered in parts 1 and 3.' : ''}</div>`
-    : `${rProg}${enc ? `<div class="cd-set">
+    : `${rProg}${rDone ? `<div class="cd-info cd-rdone">All ORs of ${esc(repName(cur.rec, K))} are encoded (${esc(rangesShow(rRec))}). To encode ORs of another report, choose it in tab 1, or "Not yet in an ${K}" in Show below.</div>` : ''}${enc ? `<div class="cd-set" ${rDone ? 'hidden' : ''}>
         <div class="field"><label for="cd-form">Form Type</label><select class="input" id="cd-form">${forms.map((k) => `<option value="${esc(k)}" ${k === form ? 'selected' : ''}>${esc(FORMS.find(([x]) => x === k)?.[1] || k)}</option>`).join('')}</select></div>
         <div class="field"><label for="cd-bk">Booklet</label><select class="input" id="cd-bk">${bks.map((b) => `<option value="${esc(b.id)}" ${bk && b.id === bk.id ? 'selected' : ''}>${b.from} – ${b.to} · ${unusedOfBk(b)} unused</option>`).join('')}<option value="" ${bk ? '' : 'selected'}>Not in the Forms Register</option></select></div>
         <span class="cd-goes">Goes to: <b>${esc(cur.pending ? `the ${K} whose OR Range has its number` : repName(cur.rec, K))} · ${esc(curFund)}</b> <span class="crumb-i" title="Enter moves along: Date → Particulars → Amount → saves the OR, then back to Date for the next OR (Alt + Enter in Amount adds another particular). The fund follows the ${K}. Cancelled ORs have no particulars and a zero amount.">ⓘ</span></span>
@@ -589,7 +589,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="rg-enter">Enter</button></div></div>
         <p class="af-note">From a cashbook when the ${K} is not available: one line per day, its OR range and total. The whole range counts as used.${exam.lastExamDate ? ` A line dated before ${esc(fmtDate(exam.lastExamDate))} (the last cash exam) is tagged "Before the period": its ORs are used, its amount is in the beginning balance.` : ''}</p>
         <label class="cer-tick cd-rga"><input type="checkbox" id="rg-a" ${f.settings?.['orrange|' + o.id]?.noA ? '' : 'checked'}> ORs of a booklet before the first range of the period were used before the last cash exam (not flagged as missing)</label>` : ''}
-      <div class="cd-entry cd-one" ${LASTC.mode === 'range' ? 'hidden' : ''}>
+      <div class="cd-entry cd-one" ${LASTC.mode === 'range' || rDone ? 'hidden' : ''}>
         <div class="cd-parts cd-entryt ${LASTC.status === 'cancelled' ? 'cd-cxl' : ''}" id="cd-partsbox">
           <div class="cd-phead"><span>OR No.</span><span></span><span>Status</span><span>Date of Collection</span><span>Particulars</span><span class="r">Amount (₱)</span><span></span><span></span></div>
           <div id="cd-prows">${partRow({}, 0)}</div>
