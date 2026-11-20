@@ -643,9 +643,13 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const earlyPill = (d) => { const x = early.get(d); return x ? ` <span class="pill p-flag" title="${esc(`${toLO ? 'Remitted' : 'Deposited'} ${fmtDate(d.date)}; its ORs are dated ${fmtDate(x.first)}${x.last !== x.first ? `–${fmtDate(x.last)}` : ''}. ORs should be issued upon receipt of the collection.`)}">Before its ORs</span>` : ''; };
   // Remitted to the LO, an RCD with its OR Range: one remittance per range row (its form and series listed, not typed); the
   // amount starts at that series' collections, corrected when the hard copy differs; each line checked against its ORs.
-  const lgSer = toLO && !cur.pending && hasRange(cur) && !cbook;
+  // The series as encoded: the LO's lines when she recorded them with their series, else the RCD's OR Range.
+  const loSer = (cur.rec?.deposits || []).filter((d) => d.fromLO && d.from).map((d) => [+d.from, +(d.to || d.from), d.form || bkFormAt(+d.from, o.id)]);
+  const lgSer = toLO && !cur.pending && (hasRange(cur) || loSer.length > 0) && !cbook;
   const serRec = lgSer ? { ...cur.rec, officerId: o.id } : null;
-  const sers = lgSer ? cur.rec.ranges.map(([a, z], i) => { const fk = rangeFormAt(serRec, i);
+
+  const serSrc = loSer.length ? [...new Map(loSer.map((x) => [`${x[0]}|${x[1]}`, x])).values()].sort((x, y) => x[0] - y[0]) : (lgSer && hasRange(cur) ? cur.rec.ranges.map(([a, z], i) => [a, z, rangeFormAt(serRec, i)]) : []);
+  const sers = lgSer ? serSrc.map(([a, z, fk0], i) => { const fk = fk0;
     const tot = r2(f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && sameF(fk, x.form) && +x.serial >= a && maxSer(x) <= z).reduce((n, x) => n + rawAmt(x), 0));
     return { i, a, z, fk, tot, label: `${fk ? remFormName(fk) + ' · ' : ''}${a === z ? a : `${a}–${z}`}` }; }) : [];
   const serOfDep = (d) => sers.find((x) => d.from && +d.from === x.a && sameF(d.form || x.fk, x.fk)) || sers.find((x) => d.from && +d.from >= x.a && +d.from <= x.z) || null;
@@ -659,6 +663,15 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       ${remish ? '' : `<td><input class="input mono" data-k="no" value="${esc(d.no || '')}" placeholder="Optional" aria-label="Deposit slip No." ${enc ? '' : 'disabled'}></td>`}
       ${sCell(d)}${serCell(d)}<td><input class="input r" data-k="amount" inputmode="decimal" value="${d.amount !== undefined && d.amount !== '' ? esc(money(d.amount)) : ''}" aria-label="Amount" ${enc ? '' : 'disabled'}></td>${serChk(d)}
       <td>${enc ? '<button class="btn sm cd-x" type="button" aria-label="Remove deposit">✕</button>' : ''}</td></tr>`;
+  // Remittances recorded by the LO in her RCD: in the same table, one row per date (its total), locked; the details are in
+  // Series of the RCD. Changed only in the LO's RCD (the tag opens it).
+  const loGrp = []; (cur.rec?.deposits || []).filter((d) => d.fromLO).forEach((d) => { const k = `${d.date}|${d.ref}|${d.loReportId || ''}`; const g = loGrp.find((x) => x.k === k);
+    if (g) g.amount = r2(g.amount + (+d.amount || 0)); else loGrp.push({ k, date: d.date, ref: d.ref, amount: +d.amount || 0, loReportNo: d.loReportNo || '', loReportId: d.loReportId || '' }); });
+  const loHref = (g) => { const rr = g.loReportId && f.reports.find((r) => r.id === g.loReportId); const ex = rr && (f.exams || []).filter((e) => e.officerId === rr.officerId).sort((a, b) => (a.auditId === audit.id ? -1 : b.auditId === audit.id ? 1 : 0))[0];
+    return ex ? `#/cer/collections?a=${ex.auditId}&e=${ex.id}&r=${rr.id}` : ''; };
+  const loRow = (g) => `<tr class="cd-dep cd-lolock"><td><input class="input" type="date" value="${esc(g.date || '')}" disabled aria-label="Date remitted"></td>
+      <td><input class="input" value="${esc(g.ref || '')}" disabled aria-label="Liquidating Officer">${g.loReportNo ? `<div class="cd-lotag">${loHref(g) ? `<a href="${esc(loHref(g))}">from RCD No. ${esc(g.loReportNo)}</a>` : `from RCD No. ${esc(g.loReportNo)}`} <span class="dim">· changed in the LO's RCD</span></div>` : ''}</td>
+      ${remish ? '' : '<td></td>'}${cbook ? '<td></td><td></td>' : ''}${lgSer && perSer.length ? '<td></td>' : ''}<td><input class="input r" value="${esc(money(g.amount))}" disabled aria-label="Amount"></td>${lgSer && perSer.length ? '<td></td>' : ''}<td></td></tr>`;
   // Nothing remitted yet for this RCD: one line per series, filled in (date of the RCD, the last LO, the series' collections).
   const depRows0 = (() => { const saved = (cur.rec?.deposits || []).filter((d) => !d.fromLO);
     if (saved.length || !lgSer || !enc || (cur.rec?.deposits || []).some((d) => d.fromLO)) return saved;   // the LO already recorded it: nothing to type here
@@ -692,13 +705,10 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <tfoot><tr class="cd-foot"><td colspan="2">Total</td><td class="r">${money(r2(shownDeps.reduce((n, d) => n + (+d.amount || 0), 0)))}</td>${dSplit ? `<td class="r">${money(r2(shownDeps.reduce((n, d) => n + (+d.amount || 0) - dCtc(d), 0)))}</td><td class="r">${money(r2(shownDeps.reduce((n, d) => n + dCtc(d), 0)))}</td>` : ''}${dHasSer ? '<td></td>' : ''}<td colspan="2"></td></tr></tfoot></table></div>`
       : `<div class="empty"><b>No ${remish ? 'remittance' : 'deposit'} encoded yet.</b></div>`}</div>`;
   const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : toLO ? 'Date Remitted to LO' : 'Deposit Date'}</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th>${remish ? '' : '<th scope="col">No.</th>'}${cbook ? '<th scope="col">OR From</th><th scope="col">OR To</th>' : ''}${lgSer && perSer.length ? '<th scope="col">OR Series</th>' : ''}<th scope="col" class="r">Amount (₱)</th>${lgSer && perSer.length ? '<th scope="col">Check</th>' : ''}<th scope="col"></th></tr></thead>
-      <tbody id="cd-deps" data-next="${lastTo ? lastTo + 1 : isFinite(firstOr) ? firstOr : ''}" ${lgSer ? `data-sers="${esc(JSON.stringify(sers.map((x) => [x.a, x.z, x.fk, x.tot, x.label])))}" data-lastlo="${esc(lastLO)}" data-rdate="${esc(cur.rec.date || '')}"` : ''}>${depRows0.map(depRow).join('')}</tbody></table></div>
+      <tbody id="cd-deps" data-next="${lastTo ? lastTo + 1 : isFinite(firstOr) ? firstOr : ''}" ${lgSer ? `data-sers="${esc(JSON.stringify(sers.map((x) => [x.a, x.z, x.fk, x.tot, x.label])))}" data-lastlo="${esc(lastLO)}" data-rdate="${esc(cur.rec.date || '')}"` : ''}>${loGrp.map(loRow).join('')}${depRows0.map(depRow).join('')}</tbody></table></div>
       ${lgSer && !(cur.rec?.deposits || []).some((d) => !d.fromLO) && enc ? '<p class="af-note">One remittance for the RCD, filled in from its total collections. Correct the amount where the hard copy differs, then Save.</p>' : ''}
       ${serBreak}
-    ${(cur.rec?.deposits || []).some((d) => d.fromLO) ? `<div class="cd-block"><h3 class="cer-h3">Remitted to the Liquidating Officer <small class="dim">(recorded in the LO's RCD; not typed again here)</small></h3>
-      <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th>Date</th><th>Liquidating Officer</th><th>OR Range</th><th class="r">Amount (₱)</th></tr></thead>
-      <tbody>${cur.rec.deposits.filter((d) => d.fromLO).map((d) => `<tr><td>${esc(fmtDate(d.date))}</td><td>${esc(d.ref)}${d.loReportNo ? ` <span class="pill">RCD No. ${esc(d.loReportNo)}</span>` : ''}</td><td class="mono">${d.from ? `${esc(d.from)}–${esc(d.to || d.from)}` : ''}</td><td class="r">${money(d.amount)}</td></tr>`).join('')}</tbody></table></div>
-      <p class="af-note">Entered in the Liquidating Officer's Collections (remittances received). They count as this officer's remittances; not typed again here.</p></div>` : ''}
+    
     <datalist id="cd-reflist">${(remish ? loNames(refs, f, lgu) : depRefs(f, audit.lguId)).map((v) => `<option value="${esc(v)}">`).join('')}</datalist>
     ${enc ? `<div class="cd-actions"><button class="btn sm" type="button" id="cd-adddep">+ Add ${DEP}</button><button class="btn primary" type="button" id="cd-savedep">Save ${DEPS}</button></div>` : ''}
     <div class="cd-sum">
@@ -947,8 +957,11 @@ function wireAll(c) {
       // One range per series with its form (AF 56 · …, AF 51 · …), as on the LO's lines.
       const mine = list.filter((m) => m.reportId === id && m.from).map((m) => [+m.from, +(m.to || m.from), remForm(formOfSer(m))]);
       const old = (sh.ranges || []).map(([a, z], i) => [a, z, rangeFormAt(sh, i)]);
-      const want = mergeF(f.ors.some((x) => x.reportId === id) ? [...old, ...mine] : mine);
-      const have = mergeF(old);
+      // As encoded: one range per series (not merged), duplicates dropped.
+      const asIs = (l) => { const seen = new Set(), out = l.filter(([a, z, fk]) => { const k = `${a}|${z}|${remForm(fk || '')}`; if (seen.has(k)) return false; seen.add(k); return true; }).sort((x, y) => x[0] - y[0]);
+        return { ranges: out.map(([a, z]) => [a, z]), rangeForms: out.map((x) => x[2] || '') }; };
+      const want = asIs(f.ors.some((x) => x.reportId === id) ? [...old, ...mine] : mine);
+      const have = asIs(old);
       if (JSON.stringify(want) !== JSON.stringify(have) || JSON.stringify(sh.rangeForms || []) !== JSON.stringify(want.rangeForms)) { Object.assign(sh, want); await store.save('cer_reports', sh.id, { ...strip(sh), ...want }, by(refs), { quiet: true }); }
     }
   };
@@ -1179,7 +1192,7 @@ function wireAll(c) {
     if (!depBox.children.length) $('#cd-adddep').click();
     $('#cd-savedep').onclick = async () => {
       const list = [];
-      for (const tr of $$('tr', depBox)) {
+      for (const tr of $$('tr', depBox).filter((x) => !x.classList.contains('cd-lolock'))) {
         const g = (k) => { const el = $(`[data-k="${k}"]`, tr); return el ? el.value.trim() : ''; };
         if (!g('date') && !g('amount') && !g('ref') && !g('no')) continue;
         if (!g('date')) return bad('Enter the date of each deposit.');

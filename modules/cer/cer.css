@@ -1046,3 +1046,5 @@ table.af-reg.tr-month{min-width:0}
 .cd-serbd { margin: 12px 0 4px; max-width: 560px }
 .cd-serbdh { font-size: 13.5px; margin-bottom: 6px }
 .cd-serbdc { margin: 8px 0 }
+.cd-lolock .input[disabled] { background: #f3f6fb; color: var(--ink, #1c2a44) }
+.cd-lotag { font-size: 12px; margin-top: 3px }
