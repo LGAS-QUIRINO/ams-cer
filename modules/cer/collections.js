@@ -205,7 +205,7 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   // Also the SCR remittances (barangay CTC) whose receiver is this officer by name: the series of the line, else of the SCR.
   const rgTxt = (rs) => (rs || []).map(([a, z]) => (a === z ? `${a}` : `${a}–${z}`)).join('; ');
   const rk = (r) => r.kind || (r.pending && String(r.id || '').startsWith('nyr|') ? String(r.id).split('|')[2] : '');
-  const colLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.deposits || []).filter((d) => !d.fromLO && d.date && nm(d.ref) && nm(d.ref) === nm(o.name) && ((d.toLO && d.from) || rk(r) === 'SCR'))
+  const colLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.deposits || []).filter((d) => !d.fromLO && d.date && nm(d.ref) && nm(d.ref) === nm(o.name) && (d.toLO || rk(r) === 'SCR'))
     .map((d) => { const rs = Array.isArray(r.ranges) ? r.ranges : [], from = d.from || (rs[0] ? String(rs[0][0]) : ''), to = d.from ? d.to || d.from : rs.length ? String(rs[rs.length - 1][1]) : '';
       return { key: `${r.id}|${d.date}|${r2(+d.amount || 0)}`, date: d.date, collectorId: r.officerId, colReportId: r.id, colNo: r.no || '', reportNo: rk(r) === 'SCR' ? `SCR${r.no ? ' No. ' + r.no : ''}` : `RCD${r.no ? ' No. ' + r.no : ''}`, amount: +d.amount || 0, from, to, series: d.from ? `${d.from}–${d.to || d.from}` : rgTxt(rs), fromCol: true, fund: r.fund || '',
         ...(lx && d.date < lx ? { beg: true } : {}) }; }))
@@ -1362,7 +1362,10 @@ function remCheck(f, m) {
   if (!m.from) return remForm(m.form) === 'cash' ? '<span class="dim">Cash tickets: no serials</span>' : '<span class="dim">no range</span>';
   const off = rangeOff(m.from, m.to); if (off) return `<span class="pill p-bad" title="${esc(off)}">Check the OR range · ${esc(off)}</span>`;
   const a = +m.from, z = +(m.to || m.from);
-  const xs = f.ors.filter((x) => x.officerId === m.collectorId && x.status !== 'cancelled' && +x.serial >= a && maxSer(x) <= z);
+  // From the collector's own report: its ORs; else the ORs of the collector in the range.
+  const rr = m.colReportId ? f.reports.find((r) => r.id === m.colReportId) : null, one = !!rr && (rr.deposits || []).filter((d) => !d.fromLO).length === 1;
+  const xs = one && f.ors.some((x) => x.reportId === m.colReportId) ? f.ors.filter((x) => x.reportId === m.colReportId && x.status !== 'cancelled')
+    : f.ors.filter((x) => x.officerId === m.collectorId && x.status !== 'cancelled' && +x.serial >= a && maxSer(x) <= z);
   if (!xs.length) return '<span class="pill p-flag">Collections not yet encoded</span>';
   const t = r2(xs.reduce((n, x) => n + rawAmt(x), 0)), d = r2((+m.amount || 0) - t);
   return Math.abs(d) < 0.005 ? '<span class="pill p-done">ORs agree</span>' : `<span class="pill p-flag" title="ORs encoded in ${a}–${z}: ₱${money(t)}">₱${money(Math.abs(d))} ${d > 0 ? 'not found in the ORs' : 'more in the ORs'}</span>`;
