@@ -207,7 +207,7 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const rk = (r) => r.kind || (r.pending && String(r.id || '').startsWith('nyr|') ? String(r.id).split('|')[2] : '');
   const colLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.deposits || []).filter((d) => !d.fromLO && d.date && nm(d.ref) && nm(d.ref) === nm(o.name) && (d.toLO || rk(r) === 'SCR'))
     .map((d) => { const rs = Array.isArray(r.ranges) ? r.ranges : [], from = d.from || (rs[0] ? String(rs[0][0]) : ''), to = d.from ? d.to || d.from : rs.length ? String(rs[rs.length - 1][1]) : '';
-      return { key: `${r.id}|${d.date}|${r2(+d.amount || 0)}`, date: d.date, collectorId: r.officerId, colReportId: r.id, colNo: r.no || '', reportNo: rk(r) === 'SCR' ? `SCR${r.no ? ' No. ' + r.no : ''}` : `RCD${r.no ? ' No. ' + r.no : ''}`, amount: +d.amount || 0, from, to, series: d.from ? `${d.from}–${d.to || d.from}` : rgTxt(rs), fromCol: true, fund: r.fund || '',
+      return { key: `${r.id}|${d.date}|${r2(+d.amount || 0)}`, date: d.date, collectorId: r.officerId, colReportId: r.id, colNo: r.no || '', reportNo: rk(r) === 'SCR' ? `SCR${r.no ? ' No. ' + r.no : ''}` : `RCD${r.no ? ' No. ' + r.no : ''}`, amount: +d.amount || 0, from, to, series: d.from ? `${d.from}–${d.to || d.from}` : rgTxt(rs), ...(d.form ? { form: d.form } : {}), fromCol: true, fund: r.fund || '',
         ...(lx && d.date < lx ? { beg: true } : {}) }; }))
     // Typed by this LO too (same collector and the same OR range, report No. or date and amount): counted once, as typed.
     .filter((m) => !typedRems.some((t) => sameRem(t, m)));
@@ -626,11 +626,28 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const sCell = (d) => (cbook ? `<td><input class="input mono" data-k="from" inputmode="numeric" value="${esc(d.from || '')}" aria-label="OR From" ${enc ? '' : 'disabled'}></td><td><input class="input mono" data-k="to" inputmode="numeric" value="${esc(d.to || '')}" aria-label="OR To" ${enc ? '' : 'disabled'}></td>` : '');
   const early = new Map(depsBeforeOrs(f, o, fig).map((x) => [x.d, x]));
   const earlyPill = (d) => { const x = early.get(d); return x ? ` <span class="pill p-flag" title="${esc(`${toLO ? 'Remitted' : 'Deposited'} ${fmtDate(d.date)}; its ORs are dated ${fmtDate(x.first)}${x.last !== x.first ? `–${fmtDate(x.last)}` : ''}. ORs should be issued upon receipt of the collection.`)}">Before its ORs</span>` : ''; };
-  const depRow = (d = {}) => `<tr class="cd-dep"><td><input class="input" type="date" data-k="date" value="${esc(d.date || '')}" aria-label="${toLO ? 'Date remitted' : 'Deposit date'}" ${enc ? '' : 'disabled'}>${earlyPill(d) ? `<br>${earlyPill(d)}` : ''}</td>
+  // Remitted to the LO, an RCD with its OR Range: one remittance per range row (its form and series listed, not typed); the
+  // amount starts at that series' collections, corrected when the hard copy differs; each line checked against its ORs.
+  const lgSer = toLO && !cur.pending && hasRange(cur) && !cbook;
+  const serRec = lgSer ? { ...cur.rec, officerId: o.id } : null;
+  const sers = lgSer ? cur.rec.ranges.map(([a, z], i) => { const fk = rangeFormAt(serRec, i);
+    const tot = r2(f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && sameF(fk, x.form) && +x.serial >= a && maxSer(x) <= z).reduce((n, x) => n + rawAmt(x), 0));
+    return { i, a, z, fk, tot, label: `${fk ? remFormName(fk) + ' · ' : ''}${a === z ? a : `${a}–${z}`}` }; }) : [];
+  const serOfDep = (d) => sers.find((x) => d.from && +d.from === x.a && sameF(d.form || x.fk, x.fk)) || sers.find((x) => d.from && +d.from >= x.a && +d.from <= x.z) || null;
+  const serCell = (d) => { if (!lgSer) return ''; const sx = serOfDep(d);
+    return `<td><select class="input mono" data-k="ser" aria-label="OR Series" ${enc ? '' : 'disabled'}><option value="">— Series —</option>${sers.map((x) => `<option value="${x.i}" data-tot="${x.tot}" ${sx === x ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select></td>`; };
+  const serChk = (d) => (lgSer ? `<td class="cd-serchk2">${(() => { const sx = serOfDep(d); if (!sx || d.amount === undefined || d.amount === '') return '';
+    const df = r2((+d.amount || 0) - sx.tot); return Math.abs(df) < 0.005 ? '<span class="pill p-done">Agrees</span>' : `<span class="pill p-flag" title="Collections in the series ₱${money(sx.tot)}">₱${money(Math.abs(df))} ${df > 0 ? 'more than the ORs' : 'less than the ORs'}</span>`; })()}</td>` : '');
+  const lastLO = lgSer ? ([...f.reports.filter((r) => r.officerId === o.id).flatMap((r) => (r.deposits || []).filter((d) => d.toLO && !d.fromLO && d.ref))].sort((a, b) => String(b.date).localeCompare(String(a.date)))[0]?.ref || '') : '';
+  const depRow = (d = {}) => `<tr class="cd-dep"><td><input class="input" type="date" data-k="date" value="${esc(d.date || '')}" aria-label="${toLO ? 'Date remitted' : 'Deposit date'}" ${enc ? '' : 'disabled'}>${earlyPill(d) ? `<br>${earlyPill(d)}` : ''}</td><td><input class="input" type="date" data-k="date" value="${esc(d.date || '')}" aria-label="${toLO ? 'Date remitted' : 'Deposit date'}" ${enc ? '' : 'disabled'}>${earlyPill(d) ? `<br>${earlyPill(d)}` : ''}</td>
       <td><input class="input" data-k="ref" value="${esc(d.ref || '')}" list="cd-reflist" placeholder="${remish ? 'Choose or type the name' : 'Choose or type'}" aria-label="${remish ? 'Liquidating Officer' : 'Reference'}" ${enc ? '' : 'disabled'}></td>
       ${remish ? '' : `<td><input class="input mono" data-k="no" value="${esc(d.no || '')}" placeholder="Optional" aria-label="Deposit slip No." ${enc ? '' : 'disabled'}></td>`}
-      ${sCell(d)}<td><input class="input r" data-k="amount" inputmode="decimal" value="${d.amount !== undefined && d.amount !== '' ? esc(money(d.amount)) : ''}" aria-label="Amount" ${enc ? '' : 'disabled'}></td>
+      ${sCell(d)}${serCell(d)}<td><input class="input r" data-k="amount" inputmode="decimal" value="${d.amount !== undefined && d.amount !== '' ? esc(money(d.amount)) : ''}" aria-label="Amount" ${enc ? '' : 'disabled'}></td>${serChk(d)}
       <td>${enc ? '<button class="btn sm cd-x" type="button" aria-label="Remove deposit">✕</button>' : ''}</td></tr>`;
+  // Nothing remitted yet for this RCD: one line per series, filled in (date of the RCD, the last LO, the series' collections).
+  const depRows0 = (() => { const saved = (cur.rec?.deposits || []).filter((d) => !d.fromLO);
+    if (saved.length || !lgSer || !enc) return saved;
+    return sers.map((x) => ({ date: cur.rec.date || '', ref: lastLO, from: String(x.a), to: String(x.z), form: x.fk, amount: x.tot || '' })); })();
   const agree = !cur.pending && cur.rec.hardTotal !== null && cur.rec.hardTotal !== undefined && cur.rec.hardTotal !== '' ? (Math.abs(+cur.rec.hardTotal - r2(cur.coll + cur.begRaw)) < 0.005 ? '<span class="pill p-done">Agrees with hard copy</span>' : `<span class="pill p-stock">Hard copy ₱${money(cur.rec.hardTotal)}</span>`) : '';
   const lo = isLO ? loDays(f, o, fig.chains, audit.countDate) : [];
   // Deposits register (SCD / RCD) and Remittances register (SCR), kept apart: those of the kind shown, oldest first; a row opens its report.
@@ -652,8 +669,9 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <tbody>${shownDeps.map((d) => `<tr data-pickdep="${esc(d.g.id)}" tabindex="0" class="${d.g.id === selId ? 'cd-on' : ''}"><td>${esc(fmtDate(d.date))}${earlyPill(d.src)}</td><td class="mono">${esc(depRefText(d, d.kind === 'SCR'))}</td><td class="r">${money(+d.amount || 0)}</td>${dSplit ? `<td class="r">${money(r2((+d.amount || 0) - dCtc(d)))}</td><td class="r">${money(dCtc(d))}</td>` : ''}${dHasSer ? `<td>${dChk(d)}</td>` : ''}<td>${esc(d.g.pending ? `Not yet in an ${d.kind}` : repName(d.g.rec, d.kind))}</td><td>${esc(d.fund)}</td></tr>`).join('')}</tbody>
       <tfoot><tr class="cd-foot"><td colspan="2">Total</td><td class="r">${money(r2(shownDeps.reduce((n, d) => n + (+d.amount || 0), 0)))}</td>${dSplit ? `<td class="r">${money(r2(shownDeps.reduce((n, d) => n + (+d.amount || 0) - dCtc(d), 0)))}</td><td class="r">${money(r2(shownDeps.reduce((n, d) => n + dCtc(d), 0)))}</td>` : ''}${dHasSer ? '<td></td>' : ''}<td colspan="2"></td></tr></tfoot></table></div>`
       : `<div class="empty"><b>No ${remish ? 'remittance' : 'deposit'} encoded yet.</b></div>`}</div>`;
-  const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : toLO ? 'Date Remitted to LO' : 'Deposit Date'}</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th>${remish ? '' : '<th scope="col">No.</th>'}${cbook ? '<th scope="col">OR From</th><th scope="col">OR To</th>' : ''}<th scope="col" class="r">Amount (₱)</th><th scope="col"></th></tr></thead>
-      <tbody id="cd-deps" data-next="${lastTo ? lastTo + 1 : isFinite(firstOr) ? firstOr : ''}">${(cur.rec?.deposits || []).filter((d) => !d.fromLO).map(depRow).join('')}</tbody></table></div>
+  const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : toLO ? 'Date Remitted to LO' : 'Deposit Date'}</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th>${remish ? '' : '<th scope="col">No.</th>'}${cbook ? '<th scope="col">OR From</th><th scope="col">OR To</th>' : ''}${lgSer ? '<th scope="col">OR Series (from the RCD)</th>' : ''}<th scope="col" class="r">Amount (₱)</th>${lgSer ? '<th scope="col">Check</th>' : ''}<th scope="col"></th></tr></thead>
+      <tbody id="cd-deps" data-next="${lastTo ? lastTo + 1 : isFinite(firstOr) ? firstOr : ''}" ${lgSer ? `data-sers="${esc(JSON.stringify(sers.map((x) => [x.a, x.z, x.fk, x.tot, x.label])))}" data-lastlo="${esc(lastLO)}" data-rdate="${esc(cur.rec.date || '')}"` : ''}>${depRows0.map(depRow).join('')}</tbody></table></div>
+      ${lgSer && !(cur.rec?.deposits || []).some((d) => !d.fromLO) && enc ? '<p class="af-note">One line per OR series of the RCD, filled in from the collections. Correct the amount where the hard copy differs, then Save.</p>' : ''}
     ${(cur.rec?.deposits || []).some((d) => d.fromLO) ? `<div class="cd-block"><h3 class="cer-h3">Remitted to the Liquidating Officer <small class="dim">(recorded in the LO's RCD; not typed again here)</small></h3>
       <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th>Date</th><th>Liquidating Officer</th><th>OR Range</th><th class="r">Amount (₱)</th></tr></thead>
       <tbody>${cur.rec.deposits.filter((d) => d.fromLO).map((d) => `<tr><td>${esc(fmtDate(d.date))}</td><td>${esc(d.ref)}${d.loReportNo ? ` <span class="pill">RCD No. ${esc(d.loReportNo)}</span>` : ''}</td><td class="mono">${d.from ? `${esc(d.from)}–${esc(d.to || d.from)}` : ''}</td><td class="r">${money(d.amount)}</td></tr>`).join('')}</tbody></table></div>
@@ -1098,7 +1116,15 @@ function wireAll(c) {
   });
   if (depBox) {
     wireRows(depBox); if (c.cbook) wireSeries(depBox);
-    $('#cd-adddep').onclick = () => { const t = document.createElement('tbody'); t.innerHTML = depRowHtml(c.K === 'SCR' || c.toLO, c.toLO, c.cbook);
+    const SERS = depBox.dataset.sers ? JSON.parse(depBox.dataset.sers) : null;
+    // A line's check: its amount against the collections of its series.
+    const serPaint = (tr) => { if (!SERS) return; const sel = $('[data-k="ser"]', tr), cell = $('.cd-serchk2', tr), am = num($('[data-k="amount"]', tr).value);
+      if (!sel || !cell) return; const x = SERS[+sel.value]; if (sel.value === '' || !x || am === null) { cell.innerHTML = ''; return; }
+      const df = r2(am - x[3]); cell.innerHTML = Math.abs(df) < 0.005 ? '<span class="pill p-done">Agrees</span>' : `<span class="pill p-flag" title="Collections in the series ₱${money(x[3])}">₱${money(Math.abs(df))} ${df > 0 ? 'more than the ORs' : 'less than the ORs'}</span>`; };
+    if (SERS) $$('tr', depBox).forEach((tr) => { ['[data-k="ser"]', '[data-k="amount"]'].forEach((k) => { const el = $(k, tr); if (el) { el.addEventListener('input', () => serPaint(tr)); el.addEventListener('change', () => serPaint(tr)); } }); });
+    $('#cd-adddep').onclick = () => { const t = document.createElement('tbody'); t.innerHTML = depRowHtml(c.K === 'SCR' || c.toLO, c.toLO, c.cbook, SERS);
+      if (SERS) { const tr0 = t.firstElementChild; $('[data-k="date"]', tr0).value = depBox.dataset.rdate || ''; $('[data-k="ref"]', tr0).value = depBox.dataset.lastlo || '';
+        ['[data-k="ser"]', '[data-k="amount"]'].forEach((k) => { const el = $(k, tr0); el.addEventListener('input', () => serPaint(tr0)); el.addEventListener('change', () => serPaint(tr0)); }); }
       if (c.cbook) { const tos = $$('[data-k="to"]', depBox).map((i) => +i.value || 0); const nx = Math.max(+depBox.dataset.next || 0, ...tos.map((v) => (v ? v + 1 : 0))); const fi = $('[data-k="from"]', t.firstElementChild); if (fi && nx) fi.value = nx; } const tr = t.firstElementChild; depBox.appendChild(tr); wireRows(depBox); if (c.cbook) wireSeries(tbodyOf(tr)); $('input', tr).focus(); };
     if (!depBox.children.length) $('#cd-adddep').click();
     $('#cd-savedep').onclick = async () => {
@@ -1108,9 +1134,10 @@ function wireAll(c) {
         if (!g('date') && !g('amount') && !g('ref') && !g('no')) continue;
         if (!g('date')) return bad('Enter the date of each deposit.');
         const amt = num(g('amount')); if (!amt) return bad('Enter the amount of each deposit.');
-        const sf = g('from').replace(/\D/g, ''), stt = g('to').replace(/\D/g, '') || sf;
+        let sf = g('from').replace(/\D/g, ''), stt = g('to').replace(/\D/g, '') || sf, fk = '';
+        if (SERS) { const x = SERS[+g('ser')]; if (g('ser') === '' || !x) return bad('Choose the OR series of each remittance.'); sf = String(x[0]); stt = String(x[1]); fk = x[2] || ''; }
         if (sf && +stt < +sf) return bad('OR To must not be before OR From.');
-        list.push({ date: g('date'), ref: K === 'SCR' || c.toLO ? loCanon(refs, f, c.lgu, g('ref')) : g('ref'), ...(g('no') ? { no: g('no') } : {}), amount: amt, ...(c.toLO ? { toLO: true } : {}), ...(sf ? { from: sf, to: stt } : {}) });
+        list.push({ date: g('date'), ref: K === 'SCR' || c.toLO ? loCanon(refs, f, c.lgu, g('ref')) : g('ref'), ...(g('no') ? { no: g('no') } : {}), amount: amt, ...(c.toLO ? { toLO: true } : {}), ...(sf ? { from: sf, to: stt } : {}), ...(fk ? { form: fk } : {}) });
       }
       list.sort((a, b) => a.date.localeCompare(b.date));
       // Not typed twice: a remittance the Liquidating Officer already recorded (shown from the LO's RCD) is not saved again.
@@ -1370,12 +1397,13 @@ function remCheck(f, m) {
   const t = r2(xs.reduce((n, x) => n + rawAmt(x), 0)), d = r2((+m.amount || 0) - t);
   return Math.abs(d) < 0.005 ? '<span class="pill p-done">ORs agree</span>' : `<span class="pill p-flag" title="ORs encoded in ${a}–${z}: ₱${money(t)}">₱${money(Math.abs(d))} ${d > 0 ? 'not found in the ORs' : 'more in the ORs'}</span>`;
 }
-function depRowHtml(rem, toLO = false, series = false) {
+function depRowHtml(rem, toLO = false, series = false, sers = null) {
   return `<tr class="cd-dep"><td><input class="input" type="date" data-k="date" aria-label="${toLO ? 'Date remitted to LO' : rem ? 'Date received by MTO' : 'Deposit date'}"></td>
     <td><input class="input" data-k="ref" list="cd-reflist" placeholder="${rem ? 'Choose or type the name' : 'Choose or type'}" aria-label="${rem ? 'Liquidating Officer' : 'Reference'}"></td>
     ${rem ? '' : '<td><input class="input mono" data-k="no" placeholder="Optional" aria-label="Deposit slip No."></td>'}
     ${series ? '<td><input class="input mono" data-k="from" inputmode="numeric" aria-label="OR From"></td><td><input class="input mono" data-k="to" inputmode="numeric" aria-label="OR To"></td>' : ''}
-    <td><input class="input r" data-k="amount" inputmode="decimal" aria-label="Amount"></td>
+    ${sers ? `<td><select class="input mono" data-k="ser" aria-label="OR Series"><option value="">— Series —</option>${sers.map((x, i) => `<option value="${i}">${esc(x[4])}</option>`).join('')}</select></td>` : ''}
+    <td><input class="input r" data-k="amount" inputmode="decimal" aria-label="Amount"></td>${sers ? '<td class="cd-serchk2"></td>' : ''}
     <td><button class="btn sm cd-x" type="button" aria-label="Remove deposit">✕</button></td></tr>`;
 }
 // Reference choices for deposits: the usual slips, plus every reference already typed in this LGU (a new one joins the list once saved).
