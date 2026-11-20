@@ -670,7 +670,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const loHref = (g) => { const rr = g.loReportId && f.reports.find((r) => r.id === g.loReportId); const ex = rr && (f.exams || []).filter((e) => e.officerId === rr.officerId).sort((a, b) => (a.auditId === audit.id ? -1 : b.auditId === audit.id ? 1 : 0))[0];
     return ex ? `#/cer/collections?a=${ex.auditId}&e=${ex.id}&r=${rr.id}` : ''; };
   const loRow = (g) => `<tr class="cd-dep cd-lolock"><td><input class="input" type="date" value="${esc(g.date || '')}" disabled aria-label="Date remitted"></td>
-      <td><input class="input" value="${esc(g.ref || '')}" disabled aria-label="Liquidating Officer">${g.loReportNo ? `<div class="cd-lotag">${loHref(g) ? `<a href="${esc(loHref(g))}">from RCD No. ${esc(g.loReportNo)}</a>` : `from RCD No. ${esc(g.loReportNo)}`} <span class="dim">· changed in the LO's RCD</span></div>` : ''}</td>
+      <td><input class="input" value="${esc(g.ref || '')}" disabled aria-label="Liquidating Officer"></td>
       ${remish ? '' : '<td></td>'}${cbook ? '<td></td><td></td>' : ''}${lgSer && perSer.length ? '<td></td>' : ''}<td><input class="input r" value="${esc(money(g.amount))}" disabled aria-label="Amount"></td>${lgSer && perSer.length ? '<td></td>' : ''}<td></td></tr>`;
   // Nothing remitted yet for this RCD: one line per series, filled in (date of the RCD, the last LO, the series' collections).
   const depRows0 = (() => { const saved = (cur.rec?.deposits || []).filter((d) => !d.fromLO);
@@ -706,7 +706,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       : `<div class="empty"><b>No ${remish ? 'remittance' : 'deposit'} encoded yet.</b></div>`}</div>`;
   const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : toLO ? 'Date Remitted to LO' : 'Deposit Date'}</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th>${remish ? '' : '<th scope="col">No.</th>'}${cbook ? '<th scope="col">OR From</th><th scope="col">OR To</th>' : ''}${lgSer && perSer.length ? '<th scope="col">OR Series</th>' : ''}<th scope="col" class="r">Amount (₱)</th>${lgSer && perSer.length ? '<th scope="col">Check</th>' : ''}<th scope="col"></th></tr></thead>
       <tbody id="cd-deps" data-next="${lastTo ? lastTo + 1 : isFinite(firstOr) ? firstOr : ''}" ${lgSer ? `data-sers="${esc(JSON.stringify(sers.map((x) => [x.a, x.z, x.fk, x.tot, x.label])))}" data-lastlo="${esc(lastLO)}" data-rdate="${esc(cur.rec.date || '')}"` : ''}>${loGrp.map(loRow).join('')}${depRows0.map(depRow).join('')}</tbody></table></div>
-      ${lgSer && !(cur.rec?.deposits || []).some((d) => !d.fromLO) && enc ? '<p class="af-note">One remittance for the RCD, filled in from its total collections. Correct the amount where the hard copy differs, then Save.</p>' : ''}
+      ${loGrp.filter((g) => g.loReportNo).length ? `<p class="af-note cd-lotag">${[...new Map(loGrp.filter((g) => g.loReportNo).map((g) => [g.loReportNo, g])).values()].map((g) => `${loHref(g) ? `<a href="${esc(loHref(g))}">From RCD No. ${esc(g.loReportNo)}</a>` : `From RCD No. ${esc(g.loReportNo)}`} of ${esc(g.ref)}`).join('; ')} · changed in the LO's RCD.</p>` : ''}
       ${serBreak}
     
     <datalist id="cd-reflist">${(remish ? loNames(refs, f, lgu) : depRefs(f, audit.lguId)).map((v) => `<option value="${esc(v)}">`).join('')}</datalist>
