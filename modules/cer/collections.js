@@ -152,6 +152,7 @@ function rangeByForm(list) {
 // exam (optional): its Audit Setup beginning balances open the first report of each report type (General Fund), unless the
 // first report has its own "undeposited per last report" typed; the beginning ORs in it stay at nil (Before the period).
 export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
+  if (f.booklets) BKS = f.booklets;
   const kinds = kindsOf(lgu);
   const ors = f.ors.filter((x) => x.officerId === o.id);
   // A beginning carried from the officer's previous cash exam: the reports up to that count belong to it.
@@ -236,9 +237,9 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
     // OR Range typed from the hard copy: how many of its numbers are encoded; the hard-copy total is checked against them.
     const rs = rec && !rec.pending && Array.isArray(rec.ranges) ? rec.ranges : [];
     if (rs.length) {
-      const mine = new Set(ors.flatMap(serialsOf));
+      const encF = (fk) => new Set(ors.filter((x) => sameF(fk, x.form)).flatMap(serialsOf));
       fig.rangeN = rs.reduce((n, [a, z]) => n + z - a + 1, 0);
-      const miss = []; rs.forEach(([a, z]) => { if (z - a < 5000) for (let n = a; n <= z; n++) if (!mine.has(n)) miss.push([n, n]); });
+      const miss = []; rs.forEach(([a, z], i) => { const mine = encF(rangeFormAt({ ...rec, officerId: o.id }, i)); if (z - a < 5000) for (let n = a; n <= z; n++) if (!mine.has(n)) miss.push([n, n]); });
       fig.rangeIn = fig.rangeN - miss.length;
       if (miss.length) fig.issues.push(`${miss.length} OR${miss.length > 1 ? 's' : ''} of the range not yet encoded: ${rangesText(mergeRanges(miss))}.`);
     }
@@ -501,7 +502,7 @@ export async function collectionsView(ctx) {
   const covOf = (g) => coveredOf(f, refs, g.rec);
   const sumTable = (pick) => realFigs.length ? `<div class="af-tbl"><table class="af-reg cd-sumtbl"><thead><tr><th scope="col">${KS0}</th><th scope="col">Fund</th><th scope="col">Date</th><th scope="col">Period</th><th scope="col">${pureLO ? 'Covered SCR / RCD' : 'OR Range'}</th><th scope="col" class="r">${pureLO ? 'Reports' : 'ORs'}</th><th scope="col" class="r">Collections</th><th scope="col" class="r">${isRem ? 'Remitted' : 'Deposited'}</th><th scope="col" class="r">${isRem ? 'Unremitted' : 'Undeposited'}</th>${pick && enc ? '<th scope="col"></th>' : ''}</tr></thead>
       <tbody>${realFigs.map((g) => `<tr ${pick ? `data-pick="${esc(g.id)}" tabindex="0"` : ''} class="${g.id === selId ? 'cd-on' : ''}"><td><b>${esc(repName({ ...g.rec, sameDay: false, dupe: 0 }, g.kind))}</b>${chkPill(g)}${g.rec.madeFrom ? ` <span class="crumb-i" title="${esc(`From ${g.rec.madeFrom.name || 'the LO'}'s RCD${g.rec.madeFrom.no ? ' ' + g.rec.madeFrom.no : ''} (made from the Liquidating Officer's records)`)}" aria-label="From the Liquidating Officer's RCD">ⓘ</span>` : ''}${g.rec.madeFrom && !g.nOrs ? ` <span class="pill p-flag">Remitted ₱${money(g.dep)} · collections not yet encoded</span>` : ''}</td><td>${esc(g.rec.fund)}</td><td>${esc(fmtDate(g.rec.date))}</td>
-        <td>${g.from ? esc(`${fmtDate(g.from)}–${fmtDate(g.to)}`) : '<span class="dim">—</span>'}</td>${pureLO ? (() => { const cv = covOf(g); return `<td class="cd-rng"><span class="cd-rngt" title="${esc(cv.title)}">${cv.text ? esc(cv.text) : '<span class="dim">—</span>'}</span></td><td class="r">${cv.n}</td>`; })() : `<td class="cd-rng">${hasRange(g) ? `<span class="cd-rngt" title="${esc(rangesTyped(g.rec.ranges).replace(/-/g, ' – '))}">${esc(rangesTyped(g.rec.ranges).replace(/-/g, ' – '))}</span> <small class="dim">· ${g.rangeIn} of ${g.rangeN}</small>` : `<span class="cd-rngt">${esc(g.range.replace(/Accountable Form 51 – (Barangay|LGU) /g, 'AF 51 ')) || '—'}</span> <small class="dim">· no range</small>`}</td><td class="r">${g.nOrs}${g.nCancelled ? ` <span class="dim">(${g.nCancelled} cancelled)</span>` : ''}</td>`}
+        <td>${g.from ? esc(`${fmtDate(g.from)}–${fmtDate(g.to)}`) : '<span class="dim">—</span>'}</td>${pureLO ? (() => { const cv = covOf(g); return `<td class="cd-rng"><span class="cd-rngt" title="${esc(cv.title)}">${cv.text ? esc(cv.text) : '<span class="dim">—</span>'}</span></td><td class="r">${cv.n}</td>`; })() : `<td class="cd-rng">${hasRange(g) ? `<span class="cd-rngt" title="${esc(rangesShow({ ...g.rec, officerId: o.id }))}">${esc(rangesShow({ ...g.rec, officerId: o.id }))}</span> <small class="dim">· ${g.rangeIn} of ${g.rangeN}</small>` : `<span class="cd-rngt">${esc(g.range.replace(/Accountable Form 51 – (Barangay|LGU) /g, 'AF 51 ')) || '—'}</span> <small class="dim">· no range</small>`}</td><td class="r">${g.nOrs}${g.nCancelled ? ` <span class="dim">(${g.nCancelled} cancelled)</span>` : ''}</td>`}
         <td class="r">${money(g.coll)}</td><td class="r">${money(g.dep)}</td><td class="r">${money(g.end)}</td>
 ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.id)}">Edit</button></td>` : ''}</tr>`).join('')}</tbody>
       <tfoot><tr><td colspan="5">Total, all ${KS0}</td><td class="r">${realFigs.reduce((n, g) => n + (pureLO ? covOf(g).n : g.nOrs), 0)}</td><td class="r">${money(r2(realFigs.reduce((n, g) => n + g.coll, 0)))}</td><td class="r">${money(r2(realFigs.reduce((n, g) => n + g.dep, 0)))}</td><td></td>${pick && enc ? '<td></td>' : ''}</tr></tfoot></table></div>`
@@ -838,9 +839,12 @@ function wireAll(c) {
     const ids = new Set(list.map((m) => m.reportId).filter(Boolean));
     for (const id of ids) {
       const sh = f.reports.find((r) => r.id === id && r.madeFrom && r.madeFrom.officerId === o.id); if (!sh) continue;
-      const mine = mergeRanges(list.filter((m) => m.reportId === id && m.from).map((m) => [+m.from, +(m.to || m.from)]));
-      const want = f.ors.some((x) => x.reportId === id) ? mergeRanges([...(sh.ranges || []), ...mine]) : mine;
-      if (JSON.stringify(want) !== JSON.stringify(mergeRanges(sh.ranges || []))) { sh.ranges = want; await store.save('cer_reports', sh.id, { ...strip(sh), ranges: want }, by(refs), { quiet: true }); }
+      // One range per series with its form (AF 56 · …, AF 51 · …), as on the LO's lines.
+      const mine = list.filter((m) => m.reportId === id && m.from).map((m) => [+m.from, +(m.to || m.from), remForm(formOfSer(m))]);
+      const old = (sh.ranges || []).map(([a, z], i) => [a, z, rangeFormAt(sh, i)]);
+      const want = mergeF(f.ors.some((x) => x.reportId === id) ? [...old, ...mine] : mine);
+      const have = mergeF(old);
+      if (JSON.stringify(want) !== JSON.stringify(have) || JSON.stringify(sh.rangeForms || []) !== JSON.stringify(want.rangeForms)) { Object.assign(sh, want); await store.save('cer_reports', sh.id, { ...strip(sh), ...want }, by(refs), { quiet: true }); }
     }
   };
   const saveRems = async (list, quiet) => {
@@ -859,7 +863,7 @@ function wireAll(c) {
       if (hit) { m.reportId = hit.id; continue; }
       const nid = newId('cerr');
       const rec = { lguId: col.lguId, officerId: col.id, kind: ckind, no: m.reportNo, date: m.date, fund: cl && isBrgy(cl) ? 'General Fund' : curFund, hardTotal: null,
-        ranges: m.from ? [[+m.from, +(m.to || m.from)]] : [], deposits: [], remittances: [], begTyped: 0, madeFrom: { officerId: o.id, name: o.name, no: cur.pending ? '' : cur.rec.no || '', reportId: cur.pending ? '' : cur.id } };
+        ranges: m.from ? [[+m.from, +(m.to || m.from)]] : [], rangeForms: m.from ? [remForm(formOfSer(m))] : [], deposits: [], remittances: [], begTyped: 0, madeFrom: { officerId: o.id, name: o.name, no: cur.pending ? '' : cur.rec.no || '', reportId: cur.pending ? '' : cur.id } };
       await store.save('cer_reports', nid, rec, by(refs), { quiet: true });
       m.reportId = nid;
       // The other series of the same report (same save) find it, not a second copy.
@@ -1122,7 +1126,7 @@ function wireAll(c) {
       const bk = c.bks.find((b) => b.from <= a && a <= b.to) || f.booklets.find((b) => b.form === form && b.officerId === o.id && b.from <= a && a <= b.to) || null;
       const beg = begOr(f, { date, serial: a, bookletId: bk ? bk.id : '', officerId: o.id, form, range: true, serialTo: z }, c.exam.lastExamDate, begRangesOf(c.exam));
       const rec = { lguId: audit.lguId, officerId: o.id, form, bookletId: bk ? bk.id : '', serial: a, serialTo: z, range: true, date, status: 'issued', items: [{ p: 'Collections (by OR range)', amt: r2(tot) }], amount: r2(tot), fund: c.curFund,
-        reportId: c.cur.pending || hasRange(c.cur) ? placeIn(c.fig.chains[c.curKey], date, a) : c.selId, ...(cx.length ? { cancelledNos: cx } : {}), ...(beg ? { beg: true } : {}) };
+        reportId: c.cur.pending || hasRange(c.cur) ? placeIn(c.fig.chains[c.curKey], date, a, form) : c.selId, ...(cx.length ? { cancelledNos: cx } : {}), ...(beg ? { beg: true } : {}) };
       Object.assign(LASTC, { date, rgNext: String(z + 1) });
       await store.save('cer_ors', newId('ceror'), rec, by(refs));
       toast(`${a}–${z} saved${beg ? ' (before the period: in the beginning balance)' : ''}.`, 'ok');
@@ -1225,7 +1229,7 @@ function wireAll(c) {
   if (LASTC.focus) { const el = LASTC.focus === 'or' ? orIn : dateIn; if (el) el.focus(); LASTC.focus = ''; }
 }
 const orData = (c, b, serial, date, status, items) => ({ lguId: c.audit.lguId, officerId: c.o.id, form: $('#cd-form') ? $('#cd-form').value : (b ? b.form : ''), bookletId: b ? b.id : '', serial, date, status,
-  items, amount: status === 'cancelled' ? 0 : r2(items.reduce((n, i) => n + i.amt, 0)), fund: c.curFund, reportId: c.cur.pending || hasRange(c.cur) ? placeIn(c.fig.chains[c.curKey], date, serial) : c.selId,
+  items, amount: status === 'cancelled' ? 0 : r2(items.reduce((n, i) => n + i.amt, 0)), fund: c.curFund, reportId: c.cur.pending || hasRange(c.cur) ? placeIn(c.fig.chains[c.curKey], date, serial, $('#cd-form') ? $('#cd-form').value : (b ? b.form : '')) : c.selId,
   ...(begOr(c.f, { date, serial, bookletId: b ? b.id : '', officerId: c.o.id, form: $('#cd-form') ? $('#cd-form').value : (b ? b.form : '') }, c.exam.lastExamDate, begRangesOf(c.exam)) ? { beg: true } : {}) });   // before the period: its amount is in the beginning balance
 function partRowHtml(i) {
   return `<div class="cd-prow"><label class="sr-only" for="cd-p${i}">Particular ${i + 1}</label><input class="input cd-p" id="cd-p${i}" list="cd-parts" placeholder="Type to search or add a new particular…" autocomplete="off">
@@ -1262,6 +1266,17 @@ const formOfSer = (m) => { if (!m) return remForm(''); const fk = remForm(m.form
   if (!n || fk === 'cash') return fk;
   const hold = BKS.filter((b) => !b.noSerial && b.form !== 'chk' && b.from <= n && n <= b.to), b = hold.find((x) => x.officerId === m.collectorId) || hold[0];
   return b && REM_FORMS.some(([k]) => k === remForm(b.form)) ? remForm(b.form) : fk; };
+// A report's OR Range with the form of each range (rangeForms[i], as typed or from the LO's series; else the form of the
+// booklet holding its first number). ORs go into a range by number and form, so AF 56 and AF 51 numbers are never mixed.
+const bkFormAt = (n, officerId) => { const hold = BKS.filter((b) => !b.noSerial && b.form !== 'chk' && b.from <= n && n <= b.to); const b = hold.find((x) => x.officerId === officerId) || hold[0]; return b ? b.form : ''; };
+const rangeFormAt = (rec, i) => (rec.rangeForms && rec.rangeForms[i]) || bkFormAt(rec.ranges[i][0], rec.officerId);
+const sameF = (a, b) => !a || !b || remForm(a) === remForm(b);
+const inRec = (rec, n, form) => (rec.ranges || []).some(([a, z], i) => a <= n && n <= z && sameF(rangeFormAt(rec, i), form));
+export const rangesShow = (rec) => (rec.ranges || []).map(([a, z], i) => { const fk = rangeFormAt(rec, i); return `${fk ? remFormName(fk) + ' · ' : ''}${a === z ? a : `${a}–${z}`}`; }).join('; ');
+// [[from, to, form], …] → { ranges, rangeForms }: merged within each form, sorted by number.
+const mergeF = (list) => { const by = {}; list.forEach(([a, z, fk]) => (by[fk || ''] = by[fk || ''] || []).push([a, z]));
+  const all = Object.entries(by).flatMap(([fk, rs]) => mergeRanges(rs).map(([a, z]) => [a, z, fk])).sort((x, y) => x[0] - y[0]);
+  return { ranges: all.map(([a, z]) => [a, z]), rangeForms: all.map((x) => x[2]) }; };
 const serRow = (m) => { const fk = formOfSer(m), cash = fk === 'cash';
   return `<div class="rm-srow${cash ? ' rm-cash' : ''}"><select class="input rm-sk" aria-label="Form">${REM_FORMS.map(([k, l]) => `<option value="${k}" ${k === fk ? 'selected' : ''}>${l}</option>`).join('')}</select><input class="input mono rm-sf" inputmode="numeric" aria-label="OR From" placeholder="${cash ? 'optional' : ''}" value="${esc(m ? m.from || '' : '')}"><input class="input mono rm-st" inputmode="numeric" aria-label="OR To" placeholder="${cash ? 'optional' : ''}" value="${esc(m ? m.to || '' : '')}"><input class="input r rm-sp" inputmode="numeric" aria-label="Pieces" ${cash ? '' : 'readonly tabindex="-1" title="Counted from OR From and OR To"'} value="${esc(cash ? (m && m.pcs ? m.pcs : '') : (m && +m.from && +(m.to || m.from) >= +m.from ? +(m.to || m.from) - +m.from + 1 : ''))}"><input class="input r rm-sa" inputmode="decimal" aria-label="Amount" value="${m ? esc(money(m.amount)) : ''}"><button class="btn sm rm-sx" type="button" aria-label="Remove this series" title="Remove this series">✕</button></div>`; };
 // The series as listed: its form and range (every form named, AF 51 too); cash tickets with their pieces.
@@ -1367,10 +1382,10 @@ const rangesTyped = (rs) => (rs || []).map(([a, z]) => (a === z ? `${a}` : `${a}
 // the ORs not in any range. Deposits and remittances (no serial) go by date.
 const hasRange = (g) => Array.isArray(g.rec.ranges) && g.rec.ranges.length > 0;
 const inRanges = (rs, n) => (rs || []).some(([a, z]) => a <= n && n <= z);
-function placeIn(chain, date, serial) {
+function placeIn(chain, date, serial, form = '') {
   if (!chain) return '';
   if (serial) {
-    const hit = chain.figs.find((g) => hasRange(g) && inRanges(g.rec.ranges, serial)); if (hit) return hit.id;
+    const hit = chain.figs.find((g) => hasRange(g) && inRec(g.rec, serial, form)); if (hit) return hit.id;
     return date ? chain.figs.find((g) => !hasRange(g) && String(g.rec.date || '') >= date)?.id || '' : '';
   }
   return date ? chain.figs.find((g) => String(g.rec.date || '') >= date)?.id || '' : '';
@@ -1380,7 +1395,7 @@ const serIn = (d) => { const a = +d.from, z = +(d.to || d.from); return (x) => +
 function depHome(ch, d) {
   if (d.from && !d.fromLO) {
     const inR = serIn(d); const g = ch.figs.find((y) => y.ors.some(inR)); if (g) return g.id;
-    const x = ch.pend.ors.find(inR); if (x) return placeIn(ch, x.date, x.serial);
+    const x = ch.pend.ors.find(inR); if (x) return placeIn(ch, x.date, x.serial, x.form);
   }
   return placeIn(ch, d.date);
 }
@@ -1404,12 +1419,12 @@ export function depsBeforeOrs(f, o, fig) {
   return out;
 }
 // ORs in a report with a range whose number is outside it (e.g. the range was corrected).
-const strays = (ch) => ch.figs.filter(hasRange).flatMap((g) => g.ors.filter((x) => !inRanges(g.rec.ranges, x.serial)));
+const strays = (ch) => ch.figs.filter(hasRange).flatMap((g) => g.ors.filter((x) => !inRec(g.rec, x.serial, x.form)));
 const byDate = (a, b) => String(a.date).localeCompare(String(b.date));
 // An OR not yet in a report whose number is in the OR Range of a report of this officer (any fund or report type): it goes there.
-const rangeHome = (fig, x) => { for (const ch of Object.values(fig.chains)) { const g = ch.figs.find((y) => hasRange(y) && inRanges(y.rec.ranges, +x.serial)); if (g) return { ch, id: g.id }; } return null; };
+const rangeHome = (fig, x) => { for (const ch of Object.values(fig.chains)) { const g = ch.figs.find((y) => hasRange(y) && inRec(y.rec, +x.serial, x.form)); if (g) return { ch, id: g.id }; } return null; };
 const pendOrs = (fig) => Object.values(fig.chains).flatMap((ch) => ch.pend.ors);
-const misplaced = (fig) => pendOrs(fig).some((x) => rangeHome(fig, x)) || Object.values(fig.chains).some((ch) => ch.figs.length && (ch.pend.ors.some((x) => placeIn(ch, x.date, x.serial)) || strays(ch).length
+const misplaced = (fig) => pendOrs(fig).some((x) => rangeHome(fig, x)) || Object.values(fig.chains).some((ch) => ch.figs.length && (ch.pend.ors.some((x) => placeIn(ch, x.date, x.serial, x.form)) || strays(ch).length
   || (ch.pend.rec?.deposits || []).some((d) => !d.fromLO && depHome(ch, d)) || (ch.pend.rec?.remittances || []).some((m) => !m.fromCol && placeIn(ch, m.date))));
 // Moves the ORs, deposits and remittances not yet in a report into the report that covers their date.
 async function sweepChains(f, fig, refs) {
@@ -1419,8 +1434,8 @@ async function sweepChains(f, fig, refs) {
   for (const ch of Object.values(fig.chains)) {
     if (!ch.figs.length) continue;
     const p = ch.pend;
-    for (const x of strays(ch)) await store.save('cer_ors', x.id, { ...strip(x), reportId: placeIn(ch, x.date, x.serial) }, by(refs), { quiet: true });
-    for (const x of p.ors.filter((y) => !moved.has(y.id))) { const to = placeIn(ch, x.date, x.serial); if (to) await store.save('cer_ors', x.id, { ...strip(x), reportId: to, fund: ch.fund }, by(refs), { quiet: true }); }
+    for (const x of strays(ch)) await store.save('cer_ors', x.id, { ...strip(x), reportId: placeIn(ch, x.date, x.serial, x.form) }, by(refs), { quiet: true });
+    for (const x of p.ors.filter((y) => !moved.has(y.id))) { const to = placeIn(ch, x.date, x.serial, x.form); if (to) await store.save('cer_ors', x.id, { ...strip(x), reportId: to, fund: ch.fund }, by(refs), { quiet: true }); }
     // The stored record only (not the lines shown from the other side).
     const prec0 = f.reports.find((r) => r.id === p.id) || null;
     const prec = prec0 && prec0.lguId ? { ...prec0, deposits: (prec0.deposits || []).filter((d) => !d.fromLO), remittances: (prec0.remittances || []).filter((m) => !m.fromCol) } : null;
@@ -1444,11 +1459,11 @@ async function createReport(c, K, out) {
   const deps = (prec?.deposits || []).filter((d) => !d.fromLO), rems = (prec?.remittances || []).filter((m) => !m.fromCol);   // stored lines only
   const id = newId('cerr');
   const first = !ch.figs.length;
-  const goes = (d) => depWith(ch, d, (x) => inRanges(out.ranges, x.serial), out.date);
+  const outR = { ...out, officerId: o.id }, goes = (d) => depWith(ch, d, (x) => inRec(outR, x.serial, x.form), out.date);
   await store.save('cer_reports', id, { lguId: audit.lguId, officerId: o.id, kind: K, ...out, begTyped: first ? (out.begTyped ?? (num(prec?.begTyped) || 0)) : 0,
     deposits: deps.filter(goes), remittances: rems.filter((m) => m.date <= out.date) }, by(refs), { quiet: true });
   if (prec) await store.save('cer_reports', p.id, { ...strip(prec), pending: true, begTyped: first ? 0 : prec.begTyped, deposits: deps.filter((d) => !goes(d)), remittances: rems.filter((m) => m.date > out.date) }, by(refs), { quiet: true });
-  for (const x of p.ors.filter((x) => inRanges(out.ranges, x.serial))) await store.save('cer_ors', x.id, { ...strip(x), reportId: id, fund: out.fund }, by(refs), { quiet: true });
+  for (const x of p.ors.filter((x) => inRec(outR, x.serial, x.form))) await store.save('cer_ors', x.id, { ...strip(x), reportId: id, fund: out.fund }, by(refs), { quiet: true });
   return id;
 }
 
@@ -1499,7 +1514,7 @@ async function importOrs(c) {
       const b = hold.find((y) => y.form === form) || (hold.length === 1 ? hold[0] : null), fm = b ? b.form : form;
       if (f.ors.some((x) => x.form === fm && x.serial === g.n)) { problems.push({ line: g.lines[0], no: g.n, why: 'Already encoded.' }); return; }
       if (fm !== form && !/^cancel/i.test(String(g.items[0]?.p || '')) && g.items.length && g.items.every((i) => i.p === FIXED_PART[form])) g.items = g.items.map((i) => ({ ...i, p: FIXED_PART[fm] || NO_PART }));
-      add.push({ ...g, form: fm, bookletId: b ? b.id : '', reportId: placeIn(ch, g.date, g.n) });
+      add.push({ ...g, form: fm, bookletId: b ? b.id : '', reportId: placeIn(ch, g.date, g.n, fm) });
     });
     return { add, problems, form };
   };
@@ -1546,6 +1561,42 @@ async function reportModal(c, K, g) {
   // The remittances typed in this report (Collections tab): counted with the ticked ones against the hard copy.
   const typedIn = isNew ? [] : (rec.remittances || []).filter((m) => !m.fromCol && !m.beg);
   const typedT = r2(typedIn.reduce((n, m) => n + (+m.amount || 0), 0));
+  // OR Range: one row per series with its form (as on the LO's lines).
+  const rfOpts = [...new Set([...(exam.forms || []), ...f.booklets.filter((b) => b.officerId === o.id && b.form !== 'chk' && !b.noSerial).map((b) => b.form)])].filter(Boolean);
+  const rfName = (k) => (REM_FORMS.some(([x]) => x === remForm(k)) ? remFormName(k) : FORM_SHORT[k] || k);
+  const rRow = (a = '', z = '', fk = '') => `<div class="rp-rrow"><select class="input rp-rf" aria-label="Form"><option value="">— Form —</option>${[...new Set([...rfOpts, ...(fk ? [fk] : [])])].map((k) => `<option value="${esc(k)}" ${k === fk ? 'selected' : ''}>${esc(rfName(k))}</option>`).join('')}</select>
+      <input class="input mono rp-ra" inputmode="numeric" placeholder="OR From" value="${esc(a)}" aria-label="OR From"><input class="input mono rp-rz" inputmode="numeric" placeholder="OR To" value="${esc(z)}" aria-label="OR To">
+      <button class="btn sm rp-rx" type="button" aria-label="Remove this range" title="Remove this range">✕</button></div>`;
+  const rows0 = (rec.ranges || []).length ? rec.ranges.map(([a, z], i) => rRow(a, z, rangeFormAt({ ...rec, officerId: o.id }, i))) : [rRow()];
+  const readRows = (bg) => {
+    const list = [];
+    for (const r of $$('.rp-rrow', bg)) {
+      const a = +$('.rp-ra', r).value.replace(/\D/g, ''), z = +$('.rp-rz', r).value.replace(/\D/g, '') || a, fk = $('.rp-rf', r).value;
+      if (!a && !$('.rp-rz', r).value.trim()) continue;
+      if (!a) return { error: 'Type the OR From of each range.' };
+      if (z < a) return { error: `${a}–${z}: the first number is after the last.` };
+      if (z - a > 20000) return { error: `${a}–${z} has ${z - a + 1} numbers. Check the range.` };
+      if (!fk) return { error: `Choose the form of ${a}–${z}.` };
+      list.push([a, z, fk]);
+    }
+    list.sort((x, y) => x[0] - y[0]);
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) if (sameF(list[i][2], list[j][2]) && list[j][0] <= list[i][1] && list[i][0] <= list[j][1]) return { error: 'The ranges of the same form overlap.' };
+    return { ranges: list.map(([a, z]) => [a, z]), rangeForms: list.map((x) => x[2]) };
+  };
+  const wireRows = (bg) => {
+    const box = $('#rp-rows', bg);
+    const wire1 = (r) => {
+      $('.rp-rx', r).onclick = () => { if ($$('.rp-rrow', box).length > 1) r.remove(); else { $('.rp-ra', r).value = ''; $('.rp-rz', r).value = ''; } preview(bg); };
+      $('.rp-rf', r).onchange = () => { r.dataset.picked = '1'; preview(bg); };
+      const auto = () => { const n = +$('.rp-ra', r).value.replace(/\D/g, ''); if (!n || r.dataset.picked) return; const fk = bkFormAt(n, o.id);
+        if (fk) { const sel = $('.rp-rf', r); if (![...sel.options].some((x) => x.value === fk)) sel.add(new Option(rfName(fk), fk)); sel.value = fk; } };
+      $('.rp-ra', r).addEventListener('change', () => { auto(); preview(bg); });
+      ['.rp-ra', '.rp-rz'].forEach((k) => $(k, r).addEventListener('input', () => preview(bg)));
+      auto();
+    };
+    $$('.rp-rrow', box).forEach(wire1);
+    $('#rp-addr', bg).onclick = (e) => { e.preventDefault(); const d = document.createElement('div'); d.innerHTML = rRow(); const r = d.firstElementChild; box.append(r); wire1(r); $('.rp-ra', r).focus(); };
+  };
   const preview = (bg) => {
     const box = $('#rp-prev', bg), date = $('#rp-date', bg).value, fund = $('#rp-fund', bg).value, ch = chainOf(fund);
     $('#rp-begbox', bg).hidden = !firstOf(fund);
@@ -1553,12 +1604,13 @@ async function reportModal(c, K, g) {
       const all = r2(t + typedT), n = typedIn.length + tk.length;
       box.innerHTML = isNew ? `Then, in tab 2 · Collections, type the remittances of the hard copy or tick those already in the app.${hard ? ` Hard copy ₱ ${money(hard)}.` : ''}`
         : `Remittances in this ${K}: <b>${n}</b> (typed ${typedIn.length}, ticked ${tk.length}) · <b>₱ ${money(all)}</b>${hard ? ` · hard copy ₱ ${money(hard)}: ${Math.abs(hard - all) < 0.005 ? '<b class="ok-t">agrees</b>' : `<b class="warn-t">difference ₱ ${money(Math.abs(r2(hard - all)))}</b>`}` : ''}.`; return; }
-    const rr = readRanges($('#rp-range', bg).value);
+    const rr = readRows(bg);
     if (rr.error) { box.innerHTML = `<b class="warn-t">${esc(rr.error)}</b>`; return; }
     if (!rr.ranges.length) { box.textContent = `Type the OR Range of the ${K} to see which ORs go into it.`; return; }
-    const n = rr.ranges.reduce((t, [a, z]) => t + z - a + 1, 0), all = f.ors.filter((x) => x.officerId === o.id && inRanges(rr.ranges, x.serial));
+    const rrec = { ...rr, officerId: o.id };
+    const n = rr.ranges.reduce((t, [a, z]) => t + z - a + 1, 0), all = f.ors.filter((x) => x.officerId === o.id && inRec(rrec, x.serial, x.form));
     const other = all.filter((x) => x.reportId && x.reportId !== (g ? g.id : '')).length;
-    const deps = isNew && date && ch ? (ch.pend.rec?.deposits || []).filter((d) => depWith(ch, d, (x) => inRanges(rr.ranges, x.serial), date)) : [];
+    const deps = isNew && date && ch ? (ch.pend.rec?.deposits || []).filter((d) => depWith(ch, d, (x) => inRec(rrec, x.serial, x.form), date)) : [];
     const hard = num($('#rp-hard', bg).value), coll = r2(all.reduce((t, x) => t + orAmount(x), 0));
     box.innerHTML = `The range has <b>${n} OR${n > 1 ? 's' : ''}</b>; <b>${all.length}</b> encoded so far (₱ ${money(coll)})${other ? `, ${other} of them in another ${K}` : ''}.${deps.length ? ` <b>${deps.length} ${K === 'SCR' ? 'remittance' : 'deposit'}${deps.length === 1 ? '' : 's'}</b> dated on or before ${esc(fmtDate(date))} also go in.` : ''}${hard ? ` Hard copy ₱ ${money(hard)}: ${Math.abs(hard - coll) <= 0.004 ? '<b>balanced</b>' : `<b class="warn-t">₱ ${money(Math.abs(r2(hard - coll)))} ${hard > coll ? 'more' : 'less'} than the ORs encoded</b>`}.` : ''}`;
   };
@@ -1566,15 +1618,15 @@ async function reportModal(c, K, g) {
     const no = $('#rp-no', bg).value.trim(), date = $('#rp-date', bg).value, fund = $('#rp-fund', bg).value, hard = $('#rp-hard', bg).value.trim();
     if (!date) return bad(`Enter the ${K} date.`) || null;
     { const hit = f.reports.find((r) => !r.pending && r.id !== (g ? g.id : '') && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return bad(hit.madeFrom ? `${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.` : `${K} No. ${no} is already encoded for this officer.`); }
-    const rr = pureLO ? { ranges: [] } : readRanges($('#rp-range', bg).value);
+    const rr = pureLO ? { ranges: [], rangeForms: [] } : readRows(bg);
     if (rr.error) return bad(rr.error) || null;
-    if (!pureLO && !rr.ranges.length) return bad(`Type the OR Range of the ${K} (e.g. 3764059-3764100; 3765951-3765971).`) || null;
-    const clash = (chainOf(fund)?.figs || []).find((x) => x.id !== (g ? g.id : '') && hasRange(x) && x.rec.ranges.some(([a, z]) => rr.ranges.some(([p, q]) => p <= z && a <= q)));
+    if (!pureLO && !rr.ranges.length) return bad(`Type the OR Range of the ${K}: the form, OR From and OR To of each series.`) || null;
+    const clash = (chainOf(fund)?.figs || []).find((x) => x.id !== (g ? g.id : '') && hasRange(x) && x.rec.ranges.some(([a, z], i) => rr.ranges.some(([p, q], j) => p <= z && a <= q && sameF(rangeFormAt(x.rec, i), rr.rangeForms[j]))));
     if (clash) {
       const same = clash.rec.date === date && rangesTyped(clash.rec.ranges) === rangesTyped(rr.ranges);
       return bad(same ? `This ${K} is already entered (${repName(clash.rec, K)}).` : `Part of that range is already in ${repName(clash.rec, K)}.`) || null;
     }
-    const v = { no, date, fund, ranges: rr.ranges, hardTotal: hard ? num(hard) : null, received: $('#rp-recv', bg).value, dupe: no ? 0 : dupeOf(f, o.id, K, date, fund, g ? g.id : undefined) };
+    const v = { no, date, fund, ranges: rr.ranges, rangeForms: rr.rangeForms, hardTotal: hard ? num(hard) : null, received: $('#rp-recv', bg).value, dupe: no ? 0 : dupeOf(f, o.id, K, date, fund, g ? g.id : undefined) };
     if (firstOf(fund)) { const t = num($('#rp-beg', bg).value); v.begTyped = t === null ? '' : t; }
     return v;
   };
@@ -1583,7 +1635,7 @@ async function reportModal(c, K, g) {
         <div class="field"><label for="rp-no">${K} No. (if any)</label><input class="input mono" id="rp-no" value="${esc(rec.no || '')}" placeholder="Leave blank if none" autocomplete="off"></div>
         <div class="field"><label for="rp-date">${K} Date</label><input class="input" type="date" id="rp-date" value="${esc(rec.date || '')}"></div>
         <div class="field"><label for="rp-fund">Fund</label><select class="input" id="rp-fund">${fig.funds.map((x) => `<option ${x === fund0 ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
-        ${pureLO ? '' : `<div class="field rp-wide"><label for="rp-range">OR Range (from the ${K})</label><input class="input mono" id="rp-range" value="${esc(rangesTyped(rec.ranges))}" placeholder="e.g. 3764059-3764100; 3765951-3765971" autocomplete="off"></div>`}
+        ${pureLO ? '' : `<div class="field rp-wide"><span class="cd-lbl">OR Range (from the ${K}) · one row per series</span><div id="rp-rows">${rows0.join('')}</div><a href="#" class="cd-link" id="rp-addr">+ Range</a></div>`}
         <div class="field"><label for="rp-hard">Total per Hard Copy</label><input class="input r" id="rp-hard" inputmode="decimal" placeholder="0.00" value="${rec.hardTotal !== null && rec.hardTotal !== undefined && rec.hardTotal !== '' ? esc(money(rec.hardTotal)) : ''}"></div>
         <div class="field"><label for="rp-recv">Date Received</label><input class="input" type="date" id="rp-recv" value="${esc(rec.received || '')}"></div>
         <div class="field" id="rp-begbox"><label for="rp-beg">${UND} per last ${K} (first in the app)</label><input class="input r" id="rp-beg" inputmode="decimal" placeholder="0.00" value="${esc(beg0)}"></div>
@@ -1591,7 +1643,7 @@ async function reportModal(c, K, g) {
 
       <p class="af-note">${pureLO ? `${K} Date: the date written on the ${K}. Its remittances are typed or ticked in tab 2 · Collections.` : `${K} Date: the date written on the ${K}; if none, the date of the last OR it covers. ORs go into the ${K} by their number in the OR Range.`}</p>
       <p class="af-note" id="rp-prev"></p>`,
-    onOpen: (bg) => { $$('#rp-date, #rp-fund, #rp-range, #rp-hard, [data-rpk]', bg).forEach((el) => { el.addEventListener('input', () => preview(bg)); el.addEventListener('change', () => preview(bg)); }); preview(bg); },
+    onOpen: (bg) => { if ($('#rp-rows', bg)) wireRows(bg); $$('#rp-date, #rp-fund, #rp-hard, [data-rpk]', bg).forEach((el) => { el.addEventListener('input', () => preview(bg)); el.addEventListener('change', () => preview(bg)); }); preview(bg); },
     buttons: [...(isNew ? [] : [{ label: 'Delete', cls: 'danger', value: 'del' }]), { label: 'Cancel', value: null },
       { label: `Save ${K}`, cls: 'primary', value: 'save', check: (bg) => { out = read(bg); return !!out; } }] }).then((v) => { act = v; });
   if (act === 'del') return deleteReport(c, K, g);
