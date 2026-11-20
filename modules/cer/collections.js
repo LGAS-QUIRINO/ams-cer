@@ -332,16 +332,17 @@ const quickColl = (f, r) => r2(f.ors.filter((x) => x.reportId === r.id && x.stat
 function loDays(f, o, chains, countDate) {
   const items = [], deps = [];
   Object.values(chains).forEach(({ figs, pend }) => [...figs, pend].forEach((fg) => {
-    (fg.rec?.remittances || []).forEach((m) => items.push({ date: m.date, from: f.officers.find((x) => x.id === m.collectorId)?.name || '', no: m.reportNo || (m.reportId ? f.reports.find((r) => r.id === m.reportId)?.no : '') || '', amount: +m.amount || 0, fund: fg.rec?.fund || fg.fund,
-      m, repId: fg.id, pending: !!fg.pending, repName: fg.pending ? '' : (fg.rec?.no ? `RCD ${fg.rec.no}` : 'RCD') }));
+    (fg.rec?.remittances || []).forEach((m) => items.push({ date: m.date, from: f.officers.find((x) => x.id === m.collectorId)?.name || '', no: String(m.colNo || m.reportNo || (m.reportId ? f.reports.find((r) => r.id === m.reportId)?.no : '') || '').replace(/^\s*(SCR|RCD|SCD)\s*(No\.?)?\s*/i, '').trim(), amount: +m.amount || 0, fund: fg.rec?.fund || fg.fund,
+      m, repId: fg.id, pending: !!fg.pending, noOnly: true, repName: fg.pending ? '' : (fg.rec?.no ? `RCD ${fg.rec.no}` : 'RCD') }));
     const own = {}; fg.ors.filter((x) => x.status !== 'cancelled').forEach((x) => { own[x.date] = r2((own[x.date] || 0) + orAmount(x)); });
-    Object.entries(own).forEach(([d, a]) => items.push({ date: d, from: 'Own collections (ORs)', no: '', amount: a, own: true, fund: fg.rec?.fund || fg.fund }));
-    (fg.rec?.deposits || []).forEach((d) => deps.push({ ...d, amount: +d.amount || 0, fund: fg.rec?.fund || fg.fund }));
+    Object.entries(own).forEach(([d, a]) => items.push({ date: d, from: 'Own collections (ORs)', no: '', amount: a, own: true, fund: fg.rec?.fund || fg.fund, repId: fg.id }));
+    (fg.rec?.deposits || []).forEach((d) => deps.push({ ...d, amount: +d.amount || 0, fund: fg.rec?.fund || fg.fund, repId: fg.id }));
   }));
   const out = [];
-  [...new Set(Object.values(chains).map((c) => c.fund))].forEach((fund) => {
-    const its = items.filter((x) => x.fund === fund).sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    const ds = deps.filter((x) => x.fund === fund).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  // Each RCD's deposits cover that RCD's remittances (in date order); a remittance its RCD has not deposited stays undeposited.
+  [...new Set(items.map((x) => x.repId))].forEach((rid) => {
+    const its = items.filter((x) => x.repId === rid).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const ds = deps.filter((x) => x.repId === rid).sort((a, b) => String(a.date).localeCompare(String(b.date)));
     let di = 0, left = ds[0] ? ds[0].amount : 0;
     its.forEach((it) => {
       let need = it.amount, dep = null;
@@ -714,7 +715,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
           <td>${x.undeposited ? '<span class="pill p-stock">Undeposited</span>' : esc(fmtDate(x.depDate))}</td><td>${esc(x.depRef || '')}</td><td class="r">${x.days ?? '—'}${x.undeposited ? ' <span class="dim">to the count</span>' : ''}</td>
           <td>${x.own ? '' : `<a href="#" class="cd-link" data-lorep="${esc(x.repId)}">${esc(x.pending ? 'Not yet in an RCD' : x.repName)}</a>`}</td>
           ${enc ? `<td>${x.own ? '' : `<button class="btn sm" type="button" data-lodel="${esc(x.repId)}" data-lokey="${esc(x.m.fromCol ? 'c|' + x.m.key : `t|${x.m.collectorId}|${x.m.date}|${r2(+x.m.amount || 0)}|${x.m.from || ''}`)}" title="${x.m.fromCol ? 'Take it out of the RCD (the collector\'s record stays)' : 'Delete this remittance typed by the LO'}" aria-label="Remove">✕</button>`}</td>` : ''}</tr>`).join('')}</tbody></table></div>
-        <p class="af-note">Days with LO = date received to date deposited; deposits cover the remittances in date order. An undeposited remittance counts up to the cash count on ${esc(fmtDate(audit.countDate))}.</p>`
+        <p class="af-note">Days with LO = date received to date deposited; each RCD's deposits cover that RCD's remittances, in date order. An undeposited remittance counts up to the cash count on ${esc(fmtDate(audit.countDate))}.</p>`
       : '<div class="empty"><b>No remittances received yet.</b>Enter them in part 1.</div>'}</div>` : ''}
     ${depReg}`;
 
