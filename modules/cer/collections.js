@@ -102,6 +102,10 @@ const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[
 const OPEN = { rep: true, col: false, dep: false };   // which tab is shown (one at a time); 1 SCD when the screen is opened
 export const resetTabs = () => { Object.keys(OPEN).forEach((k) => { OPEN[k] = k === 'rep'; }); };
 const NO_PART = 'No particular';   // an imported OR whose particular was left blank
+// Forms with one particular: filled in when encoding (still editable) and shown for an OR left without one. AF 51 is typed.
+export const FIXED_PART = { ctci: 'Community Tax', ctcc: 'Community Tax', af56: 'Real Property Tax', af54: 'Marriage License Certificate',
+  af52: 'Certificate of Transfer of Large Cattle', af53: 'Certificate of Ownership of Large Cattle', cash: 'Market Fees' };
+export const partOf = (form, p) => ((!p || p === NO_PART) && FIXED_PART[form] ? FIXED_PART[form] : p);
 const LASTC = { key: '', form: '', bookletId: '', serial: '', date: '', auto: true, status: 'issued', focus: '' };
 
 /* ---------- figures ---------- */
@@ -537,7 +541,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const orCells = `<div class="cd-ocell"><label class="sr-only" for="cd-or">OR No.</label><input class="input mono cd-orno" id="cd-or" inputmode="numeric" value="${esc(serial)}" autocomplete="off"></div>
       <label class="cd-auto" title="Auto-next: the next OR No. is filled in after saving"><input type="checkbox" id="cd-autonext" ${LASTC.auto ? 'checked' : ''}> next</label>
       <div class="seg cd-st" role="group" aria-label="Status"><a href="#" data-st="issued" class="${LASTC.status !== 'cancelled' ? 'on' : ''}" aria-pressed="${LASTC.status !== 'cancelled'}">Issued</a><a href="#" data-st="cancelled" class="${LASTC.status === 'cancelled' ? 'on' : ''}" aria-pressed="${LASTC.status === 'cancelled'}">Cancelled</a></div>`;
-  const partRow = (p = {}, i = 0) => `<div class="cd-prow">${i ? '<span></span><span></span><span></span><span></span>' : orCells + dateCell}<label class="sr-only" for="cd-p${i}">Particular ${i + 1}</label><input class="input cd-p" id="cd-p${i}" list="cd-parts" value="${esc(p.p || '')}" placeholder="Type to search or add a new particular…" autocomplete="off">
+  const partRow = (p = {}, i = 0) => `<div class="cd-prow">${i ? '<span></span><span></span><span></span><span></span>' : orCells + dateCell}<label class="sr-only" for="cd-p${i}">Particular ${i + 1}</label><input class="input cd-p" id="cd-p${i}" list="cd-parts" value="${esc(p.p || (!i ? FIXED_PART[form] || '' : ''))}" placeholder="Type to search or add a new particular…" autocomplete="off">
       <label class="sr-only" for="cd-a${i}">Amount ${i + 1}</label><input class="input r cd-a" id="cd-a${i}" inputmode="decimal" value="${p.amt ? esc(money(p.amt)) : ''}" placeholder="0.00" autocomplete="off">
       <button class="btn sm cd-x" type="button" aria-label="Remove particular">✕</button>${i ? '<span></span>' : '<button class="btn primary" type="button" id="cd-enter">Enter</button>'}</div>`;
   const colBody = !forms.length ? `<div class="cd-info">This officer has no accountable forms ticked in Audit Setup${isLO ? '. A Liquidating Officer who issues ORs himself needs Collecting and the forms ticked there' : ''}. ${isLO ? 'Remittances and deposits are entered in parts 1 and 3.' : ''}</div>`
@@ -572,9 +576,9 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         <span class="cd-total">Total <b>₱ ${money(listOrs.reduce((n, x) => n + orAmount(x), 0))}</b></span>
         ${enc && forms.length ? '<a href="#" class="cd-link cd-tpl" id="cd-ortpl">Template</a><button class="btn" type="button" id="cd-orimp">Import from Excel</button>' : ''}<button class="btn" type="button" id="cd-xls">Export to Excel</button></div>
       ${listOrs.length ? `<div class="af-tbl cd-orscroll"><table class="af-reg cd-ors"><thead><tr><th scope="col">No.</th><th scope="col">OR No.</th><th scope="col">Date</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Status</th><th scope="col">${K}</th><th scope="col" class="r"></th></tr></thead>
-        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => p.p).join(' ')).toLowerCase())}"><td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.range ? `${x.serial}–${x.serialTo} <small class="dim">${maxSer(x) - x.serial + 1} ORs</small>` : x.serial}${x.beg ? ' <span class="pill p-beg" title="Dated before the last cash exam: in the beginning balance">Before the period</span>' : ''}${outOfBooklets(f, o, x) && !inBegRanges(begRangesOf(exam), x) ? ' <span class="pill p-flag" title="Its number is in no booklet received or issued to this officer in the Forms Register">Not in a received booklet</span>' : ''}</td><td>${esc(fmtDate(x.date))}</td>
+        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => partOf(x.form, p.p)).join(' ')).toLowerCase())}"><td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.range ? `${x.serial}–${x.serialTo} <small class="dim">${maxSer(x) - x.serial + 1} ORs</small>` : x.serial}${x.beg ? ' <span class="pill p-beg" title="Dated before the last cash exam: in the beginning balance">Before the period</span>' : ''}${outOfBooklets(f, o, x) && !inBegRanges(begRangesOf(exam), x) ? ' <span class="pill p-flag" title="Its number is in no booklet received or issued to this officer in the Forms Register">Not in a received booklet</span>' : ''}</td><td>${esc(fmtDate(x.date))}</td>
           ${(() => { const one = enc && x.status !== 'cancelled' && (x.items || []).length <= 1, p = (x.items || [])[0]?.p || '';
-            return `<td ${one ? `class="cd-ed" data-ip="${esc(x.id)}" tabindex="0" title="Click to change the particular"` : ''}>${x.status === 'cancelled' ? '<span class="dim">—</span>' : (x.items || []).length > 1 ? esc(x.items.map((q) => q.p).join('; ')) : p === NO_PART || !p ? `<span class="cd-nopart">${NO_PART}</span>` : esc(p)}</td>
+            return `<td ${one ? `class="cd-ed" data-ip="${esc(x.id)}" tabindex="0" title="Click to change the particular"` : ''}>${x.status === 'cancelled' ? '<span class="dim">—</span>' : (x.items || []).length > 1 ? esc(x.items.map((q) => partOf(x.form, q.p)).join('; ')) : (p === NO_PART || !p) && !FIXED_PART[x.form] ? `<span class="cd-nopart">${NO_PART}</span>` : esc(partOf(x.form, p))}</td>
             <td class="r ${one ? 'cd-ed' : ''}" ${one ? `data-ia="${esc(x.id)}" tabindex="0" title="Click to change the amount"` : ''}>${x.beg ? `<span class="dim" title="In the beginning balance, not this period's">${money(+x.amount || 0)}</span>` : money(orAmount(x))}</td>`; })()}
           <td><span class="pill ${x.status === 'cancelled' ? 'p-stock' : 'p-done'}">${x.status === 'cancelled' ? 'Cancelled' : 'Issued'}</span></td><td>${repPill(x)}</td>
           <td class="r">${enc ? (x.range ? `<button class="btn sm" type="button" data-rgdel="${esc(x.id)}" aria-label="Delete range ${x.serial}">Delete</button>` : `<button class="btn sm" type="button" data-edit="${esc(x.id)}" aria-label="Edit OR ${x.serial}">Edit</button>`) : ''}</td></tr>`).join('')}</tbody></table></div>
@@ -688,7 +692,7 @@ function wireAll(c) {
   ['#cd-sumxls', '#cd-sumxls2'].forEach((id) => { const b = $(id); if (b) b.onclick = sumX; });
   const xls = $('#cd-xls');
   if (xls) xls.onclick = () => exportXlsx(`ORs ${o.name} ${audit.countDate}.xlsx`, 'ORs', c.listOrs.map((x) => ({
-    Form: FORM_SHORT[x.form] || x.form, 'OR No.': x.serial, Date: fmtDate(x.date), Particulars: (x.items || []).map((p) => p.p).join('; '), 'Amounts': (x.items || []).map((p) => money(p.amt)).join('; '),
+    Form: FORM_SHORT[x.form] || x.form, 'OR No.': x.serial, Date: fmtDate(x.date), Particulars: (x.items || []).map((p) => partOf(x.form, p.p)).join('; '), 'Amounts': (x.items || []).map((p) => money(p.amt)).join('; '),
     Fund: x.fund || '', Amount: orAmount(x), Status: x.status === 'cancelled' ? 'Cancelled' : 'Issued', [K]: x.reportId ? repName(f.reports.find((r) => r.id === x.reportId), K) : `Not yet in an ${K}` })));
   const sr = $('#cd-search');
   if (sr) sr.oninput = () => { const t = sr.value.trim().toLowerCase(); $$('tr[data-or]').forEach((tr) => { tr.hidden = !!t && !tr.dataset.s.includes(t); }); };
@@ -1151,7 +1155,7 @@ function wireAll(c) {
   const addPartRow = () => { const n = $$('.cd-prow', rows).length; const d = document.createElement('div'); d.innerHTML = partRowHtml(n); const r0 = d.firstElementChild; for (let k = 0; k < 4; k++) r0.prepend(document.createElement('span')); r0.append(document.createElement('span')); rows.appendChild(d.firstElementChild); wireParts(); $$('.cd-p', rows).pop().focus(); };
   $('#cd-addp').onclick = addPart;
   // Date → Enter → first particular (a cancelled OR is saved right away).
-  dateIn.onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); LASTC.date = dateIn.value; if (LASTC.status === 'cancelled') enter.click(); else $('.cd-p', rows).focus(); };
+  dateIn.onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); LASTC.date = dateIn.value; if (LASTC.status === 'cancelled') enter.click(); else if (FIXED_PART[$('#cd-form').value] && $('.cd-p', rows).value.trim()) $('.cd-a', rows).focus(); else $('.cd-p', rows).focus(); };
   wireParts(); total();
   $$('[data-st]').forEach((a) => { a.onclick = (e) => {
     e.preventDefault(); LASTC.status = a.dataset.st;
@@ -1478,7 +1482,7 @@ async function importOrs(c) {
       const amt = typeof aTxt === 'number' ? aTxt : num(aTxt);
       if (!cancelled && (amt === null || amt <= 0)) { problems.push({ line, no: n, why: String(aTxt).trim() ? `Amount "${aTxt}" is not a number.` : 'Amount is missing.' }); return; }
       const g = byNo.get(n) || { n, date, items: [], cancelled: false, lines: [] };
-      g.lines.push(line); if (cancelled) g.cancelled = true; else g.items.push({ p: pTxt || NO_PART, amt: r2(amt) });
+      g.lines.push(line); if (cancelled) g.cancelled = true; else g.items.push({ p: pTxt || FIXED_PART[form] || NO_PART, amt: r2(amt) });
       byNo.set(n, g);
     });
     const taken = new Set(f.ors.filter((x) => x.form === form).map((x) => x.serial));

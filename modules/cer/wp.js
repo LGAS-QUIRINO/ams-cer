@@ -8,7 +8,7 @@ import { itemText } from './count.js';
 import { store } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, fmtDate, money, num } from './cer.js';
-import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart, repName, depsBeforeOrs } from './collections.js';
+import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart, repName, depsBeforeOrs, partOf } from './collections.js';
 import { accountsOf, caFund, begByFund, restFund, fundOrder } from './funds.js';
 import { saafRows, unusedFormsOf, notPresentedOf, countRanges, FORM_SHORT, faceOf } from './forms.js';
 
@@ -50,7 +50,7 @@ export function wpLines(c, paper, ver) {
     Object.values(A.fig.chains).filter((ch) => ch.kind === kind).forEach((ch) => [...ch.figs, ch.pend].forEach((g) => {
       (g.ors || []).filter((x) => partOk(part, x.form) && x.date && x.date <= to && orOk(x)).forEach((x) => {
         const cx = x.status === 'cancelled';
-        lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : (x.items || []).map((i) => i.p).filter(Boolean).join('; '), no: x.range ? `${x.serial}–${x.serialTo}` : String(x.serial), d: cx ? 0 : face(x), c: 0, ord: 0, sn: +x.serial || 0 });
+        lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : ((x.items || []).map((i) => partOf(x.form, i.p)).filter(Boolean).join('; ') || partOf(x.form, '')), no: x.range ? `${x.serial}–${x.serialTo}` : String(x.serial), d: cx ? 0 : face(x), c: 0, ord: 0, sn: +x.serial || 0 });
       });
       const s = part ? ctcAlloc(ch, bs) : null, share = (d) => (part ? depPart(part, d, s) : +d.amount || 0);
       const where = g.pending ? 'not yet in a report' : `in ${repName(g.rec, ch.kind)}`;
