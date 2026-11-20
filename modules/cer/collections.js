@@ -332,7 +332,8 @@ const quickColl = (f, r) => r2(f.ors.filter((x) => x.reportId === r.id && x.stat
 function loDays(f, o, chains, countDate) {
   const items = [], deps = [];
   Object.values(chains).forEach(({ figs, pend }) => [...figs, pend].forEach((fg) => {
-    (fg.rec?.remittances || []).forEach((m) => items.push({ date: m.date, from: f.officers.find((x) => x.id === m.collectorId)?.name || '', no: m.reportNo || (m.reportId ? f.reports.find((r) => r.id === m.reportId)?.no : '') || '', amount: +m.amount || 0, fund: fg.rec?.fund || fg.fund }));
+    (fg.rec?.remittances || []).forEach((m) => items.push({ date: m.date, from: f.officers.find((x) => x.id === m.collectorId)?.name || '', no: m.reportNo || (m.reportId ? f.reports.find((r) => r.id === m.reportId)?.no : '') || '', amount: +m.amount || 0, fund: fg.rec?.fund || fg.fund,
+      m, repId: fg.id, pending: !!fg.pending, repName: fg.pending ? '' : (fg.rec?.no ? `RCD ${fg.rec.no}` : 'RCD') }));
     const own = {}; fg.ors.filter((x) => x.status !== 'cancelled').forEach((x) => { own[x.date] = r2((own[x.date] || 0) + orAmount(x)); });
     Object.entries(own).forEach(([d, a]) => items.push({ date: d, from: 'Own collections (ORs)', no: '', amount: a, own: true, fund: fg.rec?.fund || fg.fund }));
     (fg.rec?.deposits || []).forEach((d) => deps.push({ ...d, amount: +d.amount || 0, fund: fg.rec?.fund || fg.fund }));
@@ -708,9 +709,11 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <div class="cd-sumt"><span>${remish ? 'Unremitted' : 'Undeposited'}, end</span><span>${money(cur.end)}</span></div>
       ${agree}${cur.issues.filter((t) => t.startsWith('Series ') || t.startsWith(NIB)).map((t) => `<p class="cd-serchk">⚠ ${esc(t)}</p>`).join('')}</div>
     ${isLO ? `<div class="cd-block"><h3 class="cer-h3">Days with the LO · received → deposited</h3>
-      ${lo.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th scope="col">Date Received</th><th scope="col">From</th><th scope="col">Collector's RCD No.</th><th scope="col">Fund</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Deposited</th><th scope="col">Deposit Reference</th><th scope="col" class="r">Days with LO</th></tr></thead>
+      ${lo.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th scope="col">Date Received</th><th scope="col">From</th><th scope="col">Collector's RCD No.</th><th scope="col">Fund</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Deposited</th><th scope="col">Deposit Reference</th><th scope="col" class="r">Days with LO</th><th scope="col">In</th>${enc ? '<th scope="col"></th>' : ''}</tr></thead>
         <tbody>${lo.map((x) => `<tr><td>${esc(fmtDate(x.date))}</td><td>${esc(x.from)}</td><td class="mono">${esc(x.no || '')}</td><td>${esc(x.fund)}</td><td class="r">${money(x.amount)}</td>
-          <td>${x.undeposited ? '<span class="pill p-stock">Undeposited</span>' : esc(fmtDate(x.depDate))}</td><td>${esc(x.depRef || '')}</td><td class="r">${x.days ?? '—'}${x.undeposited ? ' <span class="dim">to the count</span>' : ''}</td></tr>`).join('')}</tbody></table></div>
+          <td>${x.undeposited ? '<span class="pill p-stock">Undeposited</span>' : esc(fmtDate(x.depDate))}</td><td>${esc(x.depRef || '')}</td><td class="r">${x.days ?? '—'}${x.undeposited ? ' <span class="dim">to the count</span>' : ''}</td>
+          <td>${x.own ? '' : `<a href="#" class="cd-link" data-lorep="${esc(x.repId)}">${esc(x.pending ? 'Not yet in an RCD' : x.repName)}</a>`}</td>
+          ${enc ? `<td>${x.own ? '' : `<button class="btn sm" type="button" data-lodel="${esc(x.repId)}" data-lokey="${esc(x.m.fromCol ? 'c|' + x.m.key : `t|${x.m.collectorId}|${x.m.date}|${r2(+x.m.amount || 0)}|${x.m.from || ''}`)}" title="${x.m.fromCol ? 'Take it out of the RCD (the collector\'s record stays)' : 'Delete this remittance typed by the LO'}" aria-label="Remove">✕</button>`}</td>` : ''}</tr>`).join('')}</tbody></table></div>
         <p class="af-note">Days with LO = date received to date deposited; deposits cover the remittances in date order. An undeposited remittance counts up to the cash count on ${esc(fmtDate(audit.countDate))}.</p>`
       : '<div class="empty"><b>No remittances received yet.</b>Enter them in part 1.</div>'}</div>` : ''}
     ${depReg}`;
@@ -815,6 +818,21 @@ function wireAll(c) {
     emitChange('local'); toast(on ? 'Put in this RCD.' : 'Taken out of this RCD (the collector\'s report stays).', 'ok');
   };
   $$('[data-colk]').forEach((cb) => { cb.onchange = () => putCol(cb.dataset.colk, cb.checked); });
+  // Remittances received register: open the RCD a line is in, or take the line out (ticked) / delete it (typed).
+  $$('[data-lorep]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); go({ r: a.dataset.lorep }); }; });
+  $$('[data-lodel]').forEach((b) => { b.onclick = async () => {
+    const k = b.dataset.lokey, rec = f.reports.find((r) => r.id === b.dataset.lodel);
+    if (k.startsWith('c|')) { const key = k.slice(2);
+      for (const r of f.reports.filter((y) => y.officerId === o.id && ((y.colIn || []).includes(key)))) await store.save('cer_reports', r.id, { ...strip(r), remittances: (r.remittances || []).filter((m) => !m.fromCol), deposits: (r.deposits || []).filter((d) => !d.fromLO), colIn: (r.colIn || []).filter((x) => x !== key) }, by(refs), { quiet: true });
+      emitChange('local'); toast('Taken out of the RCD (the collector\'s record stays).', 'ok'); return; }
+    if (!rec) return;
+    const [, col, date, amt, from] = k.split('|');
+    const ok = await modal({ title: 'Delete this remittance?', body: `<p style="margin:0">${esc(f.officers.find((x) => x.id === col)?.name || 'Collector')} · ${esc(fmtDate(date))} · ₱${money(+amt)}${from ? ` · from ${esc(from)}` : ''}, typed in ${esc(rec.pending ? 'Not yet in an RCD' : repName(rec, K))}.</p>`, buttons: [{ label: 'Cancel', value: false }, { label: 'Delete', cls: 'danger', value: true }] });
+    if (!ok) return;
+    let done = false;
+    const rems = (rec.remittances || []).filter((m) => !m.fromCol).filter((m) => { if (!done && m.collectorId === col && m.date === date && Math.abs(r2(+m.amount || 0) - +amt) < 0.005 && String(m.from || '') === from) { done = true; return false; } return true; });
+    await store.save('cer_reports', rec.id, { ...strip(rec), remittances: rems, deposits: (rec.deposits || []).filter((d) => !d.fromLO) }, by(refs));
+    emitChange('local'); toast('Remittance deleted.', 'ok'); }; });
   $$('[data-noedit]').forEach((sp) => { const open = () => {
     if (sp.querySelector('input')) return;
     const id = sp.dataset.noedit, was = sp.dataset.cur || '', html = sp.innerHTML;
