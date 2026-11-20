@@ -527,6 +527,24 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const cbook = exam.records === 'cashbook', cbMode = cbook || f.ors.some((x) => x.officerId === o.id && x.range);
   if (LASTC.key !== ckey) Object.assign(LASTC, { key: ckey, form: '', bookletId: '', serial: '', focus: '', mode: cbook ? 'range' : 'one' });
   if (!cbMode) LASTC.mode = 'one';
+  // An RCD with its OR Range: the entry line follows it. Per range: its form and the numbers not yet encoded; the OR No.
+  // starts at the first of them (form and booklet set), and a number outside the range is stopped.
+  const rMode = !cur.pending && hasRange(cur) && !cbMode && forms.length > 0;
+  const rRec = rMode ? { ...cur.rec, officerId: o.id } : null;
+  const rMiss = rMode ? cur.rec.ranges.map(([a, z], i) => { const fk = rangeFormAt(rRec, i) || forms[0];
+    const used = new Set(f.ors.filter((x) => x.officerId === o.id && sameF(fk, x.form)).flatMap(serialsOf));
+    const miss = []; if (z - a < 5000) for (let n = a; n <= z; n++) if (!used.has(n)) miss.push(n);
+    return { a, z, fk: forms.find((k) => sameF(k, fk)) || fk, miss, n: z - a + 1 }; }) : [];
+  rMiss.forEach((r) => { if (!forms.includes(r.fk)) forms.push(r.fk); });
+  const firstMiss = rMiss.find((r) => r.miss.length);
+  const holdBk = (fk, n) => f.booklets.find((b) => b.officerId === o.id && b.form === fk && !b.noSerial && b.from <= n && n <= b.to);
+  if (rMode && firstMiss && (LASTC.serial === '' || LASTC.serial === undefined || LASTC.goMiss)) {
+    const n = firstMiss.miss[0], b0 = holdBk(firstMiss.fk, n);
+    Object.assign(LASTC, { form: firstMiss.fk, bookletId: b0 ? b0.id : '__none', serial: n, goMiss: false });
+  }
+  const rToGo = rMiss.reduce((t, r) => t + r.miss.length, 0);
+  const rProg = rMode ? `<div class="cd-rprog"><span>${rMiss.map((r) => `${esc(remFormName(r.fk))} · ${r.a}–${r.z}: <b>${r.n - r.miss.length} of ${r.n}</b>`).join(' &nbsp;·&nbsp; ')}</span>
+      ${rToGo ? `<a href="#" class="cd-link" id="cd-gomiss" title="${esc(rMiss.filter((r) => r.miss.length).map((r) => `${remFormName(r.fk)}: ${rangesText(mergeRanges(r.miss.map((n) => [n, n])))}`).join('\n'))}"><b>${rToGo} to go</b> · next ${firstMiss.miss[0]}</a>` : '<b class="ok-t">All ORs of the range encoded</b>'}</div>` : '';
   const form = forms.includes(LASTC.form) ? LASTC.form : forms[0] || '';
   // Only the booklets still in use (with unused numbers) are offered; a used-up booklet stays out of the list (its ORs remain
   // in the records). The booklet chosen last stays listed so the entry line keeps it.
@@ -556,7 +574,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <label class="sr-only" for="cd-a${i}">Amount ${i + 1}</label><input class="input r cd-a" id="cd-a${i}" inputmode="decimal" value="${p.amt ? esc(money(p.amt)) : ''}" placeholder="0.00" autocomplete="off">
       <button class="btn sm cd-x" type="button" aria-label="Remove particular">✕</button>${i ? '<span></span>' : '<button class="btn primary" type="button" id="cd-enter">Enter</button>'}</div>`;
   const colBody = !forms.length ? `<div class="cd-info">This officer has no accountable forms ticked in Audit Setup${isLO ? '. A Liquidating Officer who issues ORs himself needs Collecting and the forms ticked there' : ''}. ${isLO ? 'Remittances and deposits are entered in parts 1 and 3.' : ''}</div>`
-    : `${enc ? `<div class="cd-set">
+    : `${rProg}${enc ? `<div class="cd-set">
         <div class="field"><label for="cd-form">Form Type</label><select class="input" id="cd-form">${forms.map((k) => `<option value="${esc(k)}" ${k === form ? 'selected' : ''}>${esc(FORMS.find(([x]) => x === k)?.[1] || k)}</option>`).join('')}</select></div>
         <div class="field"><label for="cd-bk">Booklet</label><select class="input" id="cd-bk">${bks.map((b) => `<option value="${esc(b.id)}" ${bk && b.id === bk.id ? 'selected' : ''}>${b.from} – ${b.to} · ${unusedOfBk(b)} unused</option>`).join('')}<option value="" ${bk ? '' : 'selected'}>Not in the Forms Register</option></select></div>
         <span class="cd-goes">Goes to: <b>${esc(cur.pending ? `the ${K} whose OR Range has its number` : repName(cur.rec, K))} · ${esc(curFund)}</b> <span class="crumb-i" title="Enter moves along: Date → Particulars → Amount → saves the OR, then back to Date for the next OR (Alt + Enter in Amount adds another particular). The fund follows the ${K}. Cancelled ORs have no particulars and a zero amount.">ⓘ</span></span>
@@ -675,7 +693,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       ['dep', isRem ? 'Remittances to MTO' : 'Deposits', `₱ ${money(cur.dep)} ${isRem ? 'remitted' : 'deposited'} · ₱ ${money(cur.end)} ${isRem ? 'unremitted' : 'undeposited'}`, depBody]])}
 `;
 
-  const ctxw = { refs, f, audit, lgu, K, KS, o, exam, fig, cur, curFund, curKey, selId, isLO, pureLO, enc, funds, form, bk, bks, listOrs, allFigs, isFirst, toLO, cbook };
+  const ctxw = { refs, f, audit, lgu, K, KS, o, exam, fig, cur, curFund, curKey, selId, isLO, pureLO, enc, funds, form, bk, bks, listOrs, allFigs, isFirst, toLO, cbook, rMode, rRec };
   return { crumb, body, wire: () => { wireTop(); wireAll(ctxw); } };
 }
 
@@ -1225,6 +1243,7 @@ function wireAll(c) {
     };
   };
   orIn.oninput = checkSkip; checkSkip();
+  { const gm = $('#cd-gomiss'); if (gm) gm.onclick = (e) => { e.preventDefault(); LASTC.goMiss = true; emitChange('local'); }; }
   orIn.onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); dateIn.focus(); };
   enter.onclick = async () => {
     const b = bkOf(), n = int(orIn.value), date = dateIn.value, st = LASTC.status === 'cancelled' ? 'cancelled' : 'issued';
@@ -1232,6 +1251,7 @@ function wireAll(c) {
     if (!date) return bad('Enter the date of collection.');
     if (b && (n < b.from || n > b.to)) return bad(`OR No. ${n} is outside the booklet ${b.from} – ${b.to}. Choose the right booklet.`);
     const form = $('#cd-form').value;
+    if (c.rMode && !inRec(c.rRec, n, form)) return bad(`${FORM_SHORT[form] || form} ${n} is not in the OR Range of ${repName(c.cur.rec, K)} (${rangesShow(c.rRec)}). Check the number, or choose "Not yet in an ${K}" to encode ORs of another report.`);
     if (f.ors.some((x) => x.form === form && x.serial === n)) return bad(`${FORM_SHORT[form] || form} ${n} is already encoded.`);
     const items = [];
     if (st === 'issued') {
@@ -1253,7 +1273,7 @@ function wireAll(c) {
         else if (b) { const nb2 = c.bks.find((x) => x.from > b.to && x.status === 'issued'); if (nb2) { nextBk = nb2.id; next = ''; } }
         else next = n + 1;
       }
-      Object.assign(LASTC, { form, bookletId: nextBk, serial: next, date, focus: 'date' });
+      Object.assign(LASTC, { form, bookletId: nextBk, serial: next, date, focus: 'date', goMiss: !!c.rMode });   // an RCD with a range: the next number not yet encoded
       await store.save('cer_ors', newId('ceror'), orData(c, b, n, date, st, items), by(refs));
       toast(`OR ${n} saved.`, 'ok');
     } finally { enter.disabled = false; }
@@ -1545,6 +1565,7 @@ async function importOrs(c) {
       // The booklet holding the number decides the form (e.g. AF 56 numbers imported while AF 51 was chosen).
       const hold = f.booklets.filter((y) => y.officerId === o.id && !y.noSerial && y.form !== 'chk' && y.from <= g.n && g.n <= y.to);
       const b = hold.find((y) => y.form === form) || (hold.length === 1 ? hold[0] : null), fm = b ? b.form : form;
+      if (c.rMode && !inRec(c.rRec, g.n, fm)) { problems.push({ line: g.lines[0], no: g.n, why: `Not in the OR Range of ${repName(c.cur.rec, c.K)}: skipped.` }); return; }
       if (f.ors.some((x) => x.form === fm && x.serial === g.n)) { problems.push({ line: g.lines[0], no: g.n, why: 'Already encoded.' }); return; }
       if (fm !== form && !/^cancel/i.test(String(g.items[0]?.p || '')) && g.items.length && g.items.every((i) => i.p === FIXED_PART[form])) g.items = g.items.map((i) => ({ ...i, p: FIXED_PART[fm] || NO_PART }));
       add.push({ ...g, form: fm, bookletId: b ? b.id : '', reportId: placeIn(ch, g.date, g.n, fm) });
@@ -1574,6 +1595,18 @@ async function importOrs(c) {
     await store.save('cer_ors', newId('ceror'), { lguId: c.audit.lguId, officerId: o.id, form: x.form || plan.form, bookletId: x.bookletId, serial: x.n, date: x.date, status: x.cancelled ? 'cancelled' : 'issued',
       items: x.cancelled ? [] : x.items, amount: x.cancelled ? 0 : r2(x.items.reduce((t, i) => t + i.amt, 0)), fund: curFund, reportId: x.reportId,
       ...(begOr(f, { date: x.date, serial: x.n, bookletId: x.bookletId, officerId: o.id, form: plan.form }, c.exam.lastExamDate, begRangesOf(c.exam)) ? { beg: true } : {}) }, by(refs), { quiet: true });
+  }
+  // An RCD with its OR Range: what is still to encode, and the entry line set at the first of them.
+  if (c.rMode) {
+    const left = c.rRec.ranges.map(([a, z], i) => { const fk = rangeFormAt(c.rRec, i);
+      const used = new Set([...f.ors.filter((x) => x.officerId === o.id && sameF(fk, x.form)).flatMap(serialsOf), ...plan.add.filter((x) => sameF(fk, x.form || plan.form)).map((x) => x.n)]);
+      const miss = []; if (z - a < 5000) for (let n = a; n <= z; n++) if (!used.has(n)) miss.push([n, n]);
+      return miss.length ? `${remFormName(fk)}: ${rangesText(mergeRanges(miss))}` : ''; }).filter(Boolean);
+    LASTC.goMiss = true;
+    emitChange('local');
+    if (left.length) await modal({ title: `${plan.add.length} OR${plan.add.length === 1 ? '' : 's'} imported · still to encode`, body: `<p style="margin:0 0 6px">Not yet encoded in the OR Range of ${esc(repName(c.cur.rec, c.K))}:</p>${left.map((t) => `<div class="mono">${esc(t)}</div>`).join('')}<p class="af-note">The entry line is set at the first of them: type the rest one OR at a time.</p>`, buttons: [{ label: 'OK', cls: 'primary', value: null }] });
+    else toast(`${plan.add.length} OR${plan.add.length === 1 ? '' : 's'} imported. All ORs of the range are encoded.`, 'ok');
+    return;
   }
   emitChange('local'); toast(`${plan.add.length} OR${plan.add.length === 1 ? '' : 's'} imported.`, 'ok');
 }

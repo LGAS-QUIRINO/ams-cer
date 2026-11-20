@@ -1040,3 +1040,4 @@ table.af-reg.tr-month{min-width:0}
 .rp-rrow { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(110px, 1.2fr) minmax(110px, 1.2fr) auto; gap: 8px; align-items: center; margin-bottom: 6px }
 #rp-rows { margin-top: 4px }
 @media (max-width: 560px) { .rp-rrow { grid-template-columns: 1fr 1fr; } }
+.cd-rprog { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center; padding: 8px 12px; margin: 0 0 10px; background: #f3f7fd; border: 1px solid var(--line, #dbe3ef); border-radius: 10px; font-size: 13.5px }
