@@ -704,7 +704,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <b class="cd-sumh">Summary (computed) · ${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</b>
       <div><span>${remish ? 'Unremitted' : 'Undeposited'}, last ${K}</span><span>${money(cur.beg)}</span></div>
       ${cur.begAdd ? `<div><span>Add: Beginning balance, last cash exam (ORs in this ${cur.pending ? 'list' : K}${cur.begSer ? `: ${esc(cur.begSer)}` : ''})</span><span>${money(cur.begAdd)}</span></div>` : ''}
-      <div><span>Add: Collections${isLO ? ' (ORs ₱' + money(cur.orsTotal) + ' + remittances ₱' + money(cur.remTotal) + ')' : ''}</span><span>${money(cur.coll)}</span></div>
+      <div><span>Add: Collections</span><span>${money(cur.coll)}</span></div>
       <div><span>Less: ${DEPS}</span><span>${money(cur.dep)}</span></div>
       <div class="cd-sumt"><span>${remish ? 'Unremitted' : 'Undeposited'}, end</span><span>${money(cur.end)}</span></div>
       ${agree}${cur.issues.filter((t) => t.startsWith('Series ') || t.startsWith(NIB)).map((t) => `<p class="cd-serchk">⚠ ${esc(t)}</p>`).join('')}</div>
