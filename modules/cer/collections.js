@@ -151,6 +151,15 @@ function rangeByForm(list) {
 // Every report of the officer (and the "Not yet reported" of each fund), in order, with its figures and checks.
 // exam (optional): its Audit Setup beginning balances open the first report of each report type (General Fund), unless the
 // first report has its own "undeposited per last report" typed; the beginning ORs in it stay at nil (Before the period).
+// A collector's report made from an LO's line (madeFrom) that no LO line uses any more and that has no OR or deposit of its
+// own (e.g. the line's collector or No. corrected): a leftover, not shown anywhere. Worked out on screen; removed for good
+// the next time that LO saves her remittances.
+export function orphanShell(f, r) {
+  if (!r || !r.madeFrom) return false;
+  if (!f._shellUse || f._shellUseOf !== f.reports) { f._shellUseOf = f.reports; f._shellUse = new Set(f.reports.flatMap((x) => (x.remittances || []).filter((m) => !m.fromCol && m.reportId).map((m) => m.reportId))); }
+  if (f._shellUse.has(r.id)) return false;
+  return !(f.ors || []).some((x) => x.reportId === r.id) && !(r.deposits || []).some((d) => !d.fromLO);
+}
 export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   if (f.booklets) BKS = f.booklets;
   const kinds = kindsOf(lgu);
@@ -161,8 +170,8 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   // (its ending is this exam's beginning) and do not count here. A report dated after it that still holds ORs of before the
   // cut-off shows them as Before the period, their amount in the beginning balance.
   const cutPrev = exam?.lastExamDate || carriedFrom;
-  const reals = f.reports.filter((r) => r.officerId === o.id && !r.pending && !(cutPrev && r.date && r.date <= cutPrev));
-  const oldReps = cutPrev ? f.reports.filter((r) => r.officerId === o.id && !r.pending && r.date && r.date <= cutPrev) : [];
+  const reals = f.reports.filter((r) => r.officerId === o.id && !r.pending && !orphanShell(f, r) && !(cutPrev && r.date && r.date <= cutPrev));
+  const oldReps = cutPrev ? f.reports.filter((r) => r.officerId === o.id && !r.pending && !orphanShell(f, r) && r.date && r.date <= cutPrev) : [];
   const oldIds = new Set(oldReps.map((r) => r.id));
   const allFunds = [...new Set([...funds, ...reals.map((r) => r.fund), ...ors.map((x) => x.fund).filter(Boolean)])];
   const begR = begRangesOf(exam);
@@ -875,6 +884,10 @@ function wireAll(c) {
       const sh = f.reports.find((r) => r.id === id && r.madeFrom && r.madeFrom.officerId === o.id);
       if (sh && !f.ors.some((x) => x.reportId === id) && !(sh.deposits || []).some((d) => !d.fromLO)) await store.save('cer_reports', sh.id, strip(sh), by(refs), { deleted: true, quiet: true });
     }
+    // Leftovers made from this LO's lines that no LO line uses any more (any of her RCDs, or another LO's): removed for good.
+    { const used = new Set([...f.reports.filter((r) => r.id !== selId).flatMap((r) => (r.remittances || []).filter((m) => !m.fromCol && m.reportId).map((m) => m.reportId)), ...list.map((m) => m.reportId).filter(Boolean)]);
+      for (const sh of f.reports.filter((r) => r.madeFrom && r.madeFrom.officerId === o.id && !used.has(r.id) && !f.ors.some((x) => x.reportId === r.id) && !(r.deposits || []).some((d) => !d.fromLO)))
+        await store.save('cer_reports', sh.id, strip(sh), by(refs), { deleted: true, quiet: true }); }
     await pendRec({ remittances: [...list].sort((a, b) => String(a.date).localeCompare(String(b.date))) });
     if (!quiet) { const n = list.filter((x) => x.reportId && x.reportId === list[list.length - 1]?.reportId).length; toast(n > 1 ? `Saved as series ${n} of ${list[list.length - 1].reportNo}.` : 'Remittance saved.', 'ok'); }
     return true;
@@ -1617,7 +1630,7 @@ async function reportModal(c, K, g) {
   const read = (bg) => {
     const no = $('#rp-no', bg).value.trim(), date = $('#rp-date', bg).value, fund = $('#rp-fund', bg).value, hard = $('#rp-hard', bg).value.trim();
     if (!date) return bad(`Enter the ${K} date.`) || null;
-    { const hit = f.reports.find((r) => !r.pending && r.id !== (g ? g.id : '') && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return bad(hit.madeFrom ? `${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.` : `${K} No. ${no} is already encoded for this officer.`); }
+    { const hit = f.reports.find((r) => !r.pending && !orphanShell(f, r) && r.id !== (g ? g.id : '') && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return bad(hit.madeFrom ? `${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.` : `${K} No. ${no} is already encoded for this officer.`); }
     const rr = pureLO ? { ranges: [], rangeForms: [] } : readRows(bg);
     if (rr.error) return bad(rr.error) || null;
     if (!pureLO && !rr.ranges.length) return bad(`Type the OR Range of the ${K}: the form, OR From and OR To of each series.`) || null;
@@ -1699,7 +1712,7 @@ async function newReportModal(c, K) {
     buttons: [{ label: 'Cancel', value: null }, { label: `Save ${K}`, cls: 'primary', value: 'ok', check: (bg) => {
       const no = $('#nr-no', bg).value.trim(), date = $('#nr-date', bg).value, fund = $('#nr-fund', bg).value, hard = $('#nr-hard', bg).value.trim();
       if (!date) return bad(`Enter the ${K} date.`);
-      { const hit = f.reports.find((r) => !r.pending && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return bad(hit.madeFrom ? `${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.` : `${K} No. ${no} is already encoded for this officer.`); }
+      { const hit = f.reports.find((r) => !r.pending && !orphanShell(f, r) && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return bad(hit.madeFrom ? `${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.` : `${K} No. ${no} is already encoded for this officer.`); }
       out = { no, date, fund, hardTotal: hard ? num(hard) : null, received: $('#nr-recv', bg).value, dupe: no ? 0 : dupeOf(f, o.id, K, date, fund) }; return true;
     } }] });
   if (!out) return;
