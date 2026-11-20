@@ -147,6 +147,18 @@ export async function loadForms() {
   const [booklets, checks, raaf, settings, ors, cutoffs, ckdj] = await Promise.all([store.list('cer_booklets'), store.list('cer_formcheck'), store.list('cer_raaf'), store.list('cer_settings'), store.list('cer_ors'), store.list('cer_cutoff'), store.list('src_ckdj')]);
   const flat = (r) => ({ id: r.id, ...r.data });
   const out = { ...cer, booklets: booklets.map(flat), checks: checks.map(flat), cutoffs: cutoffs.map(flat), raaf: raaf.map(flat), settings: Object.fromEntries(settings.map((s) => [s.id, s.data])), ors: ors.map(flat) };
+  // An OR's booklet is the one holding its number (the Forms Register decides, not the Form Type chosen when it was encoded
+  // or imported): an OR with no booklet, or none of its form holding the number, takes the officer's booklet that holds it
+  // (its form too). Worked out on loading; the saved OR is not rewritten.
+  const bkById = new Map(out.booklets.map((b) => [b.id, b]));
+  out.ors.forEach((o) => {
+    if (o.range || !o.serial) return;
+    const n = +o.serial, has = (b) => b && !b.noSerial && b.form !== 'chk' && b.from <= n && n <= b.to;
+    if (o.bookletId && has(bkById.get(o.bookletId)) && bkById.get(o.bookletId).form === o.form) return;
+    const mine = out.booklets.filter((b) => b.officerId === o.officerId && has(b));
+    const b = mine.find((x) => x.form === o.form) || (mine.length === 1 ? mine[0] : null);
+    if (b) { o.bookletId = b.id; if (b.form !== o.form) { o.formTyped = o.form; o.form = b.form; } }
+  });
   // Numbers encoded in Collections & Deposits (issued or cancelled) are used numbers of their booklet.
   const byBk = {}; out.ors.forEach((o) => {
     if (!o.range) { if (o.bookletId) (byBk[o.bookletId] = byBk[o.bookletId] || []).push({ n: o.serial, d: o.date }); return; }

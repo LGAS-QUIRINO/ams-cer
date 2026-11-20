@@ -89,7 +89,7 @@ const int = (s) => { const v = parseInt(String(s ?? '').replace(/[^\d]/g, ''), 1
 const r2 = (n) => Math.round(n * 100) / 100;
 const sum = (list, k) => r2(list.reduce((n, x) => n + (+x[k] || 0), 0));
 const flat = (r) => ({ id: r.id, ...r.data });
-const strip = (x) => { const { id, sameDay, ...rest } = x; return rest; };   // sameDay is worked out on loading, never saved
+const strip = (x) => { const { id, sameDay, formTyped, ...rest } = x; return rest; };   // sameDay is worked out on loading, never saved
 const bad = (m) => { toast(m, 'bad'); return false; };
 const DEPSHOW = { v: 'all' };
 const REM = { key: '', i: -1, date: '', mode: 'type', find: '' };   // the typed remittance being edited (by report) and the last date typed
@@ -346,6 +346,7 @@ export async function collectionsView(ctx) {
   const { refs, q } = ctx;
   const f = await loadForms();
   f.reports = tagSameDay((await store.list('cer_reports')).map(flat));
+  BKS = f.booklets;
   const crumb = 'Collections & Deposits';
   const hello = (extra = '') => `<div class="hello"><div><h1>Collections &amp; Deposits</h1><p>Encode each OR as printed on the receipt in hand, then the deposits. Barangays file an SCD (Summary of Collections and Deposits) for AF 51 and an SCR (Summary of Collections and Remittances) for CTC remitted to the MTO; the LGU and PLGU file an RCD (Report of Collections and Deposits).</p></div>${extra}</div>`;
   const audits = f.audits.filter((a) => mayView(refs, refs.lgu[a.lguId]) && (cycleOk(a) || a.id === q.get('a'))).sort((a, b) => String(b.countDate).localeCompare(String(a.countDate)));
@@ -1255,10 +1256,16 @@ const colName = (f, refs, id) => { const x = f.officers.find((y) => y.id === id)
 const REM_FORMS = [['af51', 'AF 51'], ['ctci', 'CTC – Ind.'], ['ctcc', 'CTC – Corp.'], ['af52', 'AF 52'], ['af53', 'AF 53'], ['af54', 'AF 54'], ['af56', 'AF 56'], ['cash', 'Cash tickets']];
 const remForm = (k) => (k === 'af51b' ? 'af51' : k || 'af51');
 const remFormName = (k) => (REM_FORMS.find(([x]) => x === remForm(k)) || [, 'AF 51'])[1];
-const serRow = (m) => { const fk = remForm(m && m.form), cash = fk === 'cash';
+// The form of a remittance's series: the booklet holding its OR From decides (the collector's first), else the form chosen.
+let BKS = [];
+const formOfSer = (m) => { if (!m) return remForm(''); const fk = remForm(m.form); const n = +String(m.from || '').replace(/\D/g, '');
+  if (!n || fk === 'cash') return fk;
+  const hold = BKS.filter((b) => !b.noSerial && b.form !== 'chk' && b.from <= n && n <= b.to), b = hold.find((x) => x.officerId === m.collectorId) || hold[0];
+  return b && REM_FORMS.some(([k]) => k === remForm(b.form)) ? remForm(b.form) : fk; };
+const serRow = (m) => { const fk = formOfSer(m), cash = fk === 'cash';
   return `<div class="rm-srow${cash ? ' rm-cash' : ''}"><select class="input rm-sk" aria-label="Form">${REM_FORMS.map(([k, l]) => `<option value="${k}" ${k === fk ? 'selected' : ''}>${l}</option>`).join('')}</select><input class="input mono rm-sf" inputmode="numeric" aria-label="OR From" placeholder="${cash ? 'optional' : ''}" value="${esc(m ? m.from || '' : '')}"><input class="input mono rm-st" inputmode="numeric" aria-label="OR To" placeholder="${cash ? 'optional' : ''}" value="${esc(m ? m.to || '' : '')}"><input class="input r rm-sp" inputmode="numeric" aria-label="Pieces" ${cash ? '' : 'readonly tabindex="-1" title="Counted from OR From and OR To"'} value="${esc(cash ? (m && m.pcs ? m.pcs : '') : (m && +m.from && +(m.to || m.from) >= +m.from ? +(m.to || m.from) - +m.from + 1 : ''))}"><input class="input r rm-sa" inputmode="decimal" aria-label="Amount" value="${m ? esc(money(m.amount)) : ''}"><button class="btn sm rm-sx" type="button" aria-label="Remove this series" title="Remove this series">✕</button></div>`; };
 // The series as listed: its form and range (every form named, AF 51 too); cash tickets with their pieces.
-const serText = (m) => { const fk = remForm(m.form), rg = m.from ? `${m.from}–${m.to || m.from}` : '';
+const serText = (m) => { const fk = formOfSer(m), rg = m.from ? `${m.from}–${m.to || m.from}` : '';
   if (fk === 'cash') return `Cash tickets${rg ? ' · ' + rg : ''}${m.pcs ? ` · ${m.pcs} pcs` : ''}`;
   return `${remFormName(fk)} · ${rg || '—'}`; };
 // Typed remittances grouped by the collector's report (same collector and No.): one row per report, its OR series under it,
@@ -1485,12 +1492,14 @@ async function importOrs(c) {
       g.lines.push(line); if (cancelled) g.cancelled = true; else g.items.push({ p: pTxt || FIXED_PART[form] || NO_PART, amt: r2(amt) });
       byNo.set(n, g);
     });
-    const taken = new Set(f.ors.filter((x) => x.form === form).map((x) => x.serial));
     const add = [];
     [...byNo.values()].sort((a, b) => a.n - b.n).forEach((g) => {
-      if (taken.has(g.n)) { problems.push({ line: g.lines[0], no: g.n, why: 'Already encoded.' }); return; }
-      const b = f.booklets.find((y) => y.form === form && y.officerId === o.id && !y.noSerial && y.from <= g.n && g.n <= y.to);
-      add.push({ ...g, bookletId: b ? b.id : '', reportId: placeIn(ch, g.date, g.n) });
+      // The booklet holding the number decides the form (e.g. AF 56 numbers imported while AF 51 was chosen).
+      const hold = f.booklets.filter((y) => y.officerId === o.id && !y.noSerial && y.form !== 'chk' && y.from <= g.n && g.n <= y.to);
+      const b = hold.find((y) => y.form === form) || (hold.length === 1 ? hold[0] : null), fm = b ? b.form : form;
+      if (f.ors.some((x) => x.form === fm && x.serial === g.n)) { problems.push({ line: g.lines[0], no: g.n, why: 'Already encoded.' }); return; }
+      if (fm !== form && !/^cancel/i.test(String(g.items[0]?.p || '')) && g.items.length && g.items.every((i) => i.p === FIXED_PART[form])) g.items = g.items.map((i) => ({ ...i, p: FIXED_PART[fm] || NO_PART }));
+      add.push({ ...g, form: fm, bookletId: b ? b.id : '', reportId: placeIn(ch, g.date, g.n) });
     });
     return { add, problems, form };
   };
@@ -1514,7 +1523,7 @@ async function importOrs(c) {
     buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; } if (!plan.add.length) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
   if (v !== 'go') return;
   for (const x of plan.add) {
-    await store.save('cer_ors', newId('ceror'), { lguId: c.audit.lguId, officerId: o.id, form: plan.form, bookletId: x.bookletId, serial: x.n, date: x.date, status: x.cancelled ? 'cancelled' : 'issued',
+    await store.save('cer_ors', newId('ceror'), { lguId: c.audit.lguId, officerId: o.id, form: x.form || plan.form, bookletId: x.bookletId, serial: x.n, date: x.date, status: x.cancelled ? 'cancelled' : 'issued',
       items: x.cancelled ? [] : x.items, amount: x.cancelled ? 0 : r2(x.items.reduce((t, i) => t + i.amt, 0)), fund: curFund, reportId: x.reportId,
       ...(begOr(f, { date: x.date, serial: x.n, bookletId: x.bookletId, officerId: o.id, form: plan.form }, c.exam.lastExamDate, begRangesOf(c.exam)) ? { beg: true } : {}) }, by(refs), { quiet: true });
   }
