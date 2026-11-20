@@ -585,9 +585,9 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         <label class="sr-only" for="cd-search">Search ORs</label><input class="input af-sm" id="cd-search" placeholder="Search OR No. or particular…">
         <label class="sr-only" for="cd-show">Show</label><select class="input af-sm" id="cd-show"><option value="sel" ${show === 'sel' ? 'selected' : ''}>${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</option>${cur.pending ? '' : `<option value="nyr" ${show === 'nyr' ? 'selected' : ''}>Not yet in an ${K}</option>`}<option value="all" ${show === 'all' ? 'selected' : ''}>All of this officer</option></select>
         <span class="cd-total">Total <b>₱ ${money(listOrs.reduce((n, x) => n + orAmount(x), 0))}</b></span>
-        ${enc && forms.length ? '<a href="#" class="cd-link cd-tpl" id="cd-ortpl">Template</a><button class="btn" type="button" id="cd-orimp">Import from Excel</button>' : ''}<button class="btn" type="button" id="cd-xls">Export to Excel</button></div>
-      ${listOrs.length ? `<div class="af-tbl cd-orscroll"><table class="af-reg cd-ors"><thead><tr><th scope="col">No.</th><th scope="col">OR No.</th><th scope="col">Date</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Status</th><th scope="col">${K}</th><th scope="col" class="r"></th></tr></thead>
-        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => partOf(x.form, p.p)).join(' ')).toLowerCase())}"><td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.range ? `${x.serial}–${x.serialTo} <small class="dim">${maxSer(x) - x.serial + 1} ORs</small>` : x.serial}${x.beg ? ' <span class="pill p-beg" title="Dated before the last cash exam: in the beginning balance">Before the period</span>' : ''}${outOfBooklets(f, o, x) && !inBegRanges(begRangesOf(exam), x) ? ' <span class="pill p-flag" title="Its number is in no booklet received or issued to this officer in the Forms Register">Not in a received booklet</span>' : ''}</td><td>${esc(fmtDate(x.date))}</td>
+        ${enc && forms.length ? '<a href="#" class="cd-link cd-tpl" id="cd-ortpl">Template</a><button class="btn" type="button" id="cd-orimp">Import from Excel</button>' : ''}<button class="btn" type="button" id="cd-xls">Export to Excel</button>${enc ? '<button class="btn danger" type="button" id="cd-delsel" hidden>Delete selected</button>' : ''}</div>
+      ${listOrs.length ? `<div class="af-tbl cd-orscroll"><table class="af-reg cd-ors"><thead><tr>${enc ? '<th scope="col" style="width:30px"><input type="checkbox" id="cd-selall" aria-label="Select all ORs shown"></th>' : ''}<th scope="col">No.</th><th scope="col">OR No.</th><th scope="col">Date</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Status</th><th scope="col">${K}</th><th scope="col" class="r"></th></tr></thead>
+        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => partOf(x.form, p.p)).join(' ')).toLowerCase())}">${enc ? `<td><input type="checkbox" class="cd-sel" data-sel="${esc(x.id)}" aria-label="Select OR ${x.serial}"></td>` : ''}<td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.range ? `${x.serial}–${x.serialTo} <small class="dim">${maxSer(x) - x.serial + 1} ORs</small>` : x.serial}${x.beg ? ' <span class="pill p-beg" title="Dated before the last cash exam: in the beginning balance">Before the period</span>' : ''}${outOfBooklets(f, o, x) && !inBegRanges(begRangesOf(exam), x) ? ' <span class="pill p-flag" title="Its number is in no booklet received or issued to this officer in the Forms Register">Not in a received booklet</span>' : ''}</td><td>${esc(fmtDate(x.date))}</td>
           ${(() => { const one = enc && x.status !== 'cancelled' && (x.items || []).length <= 1, p = (x.items || [])[0]?.p || '';
             return `<td ${one ? `class="cd-ed" data-ip="${esc(x.id)}" tabindex="0" title="Click to change the particular"` : ''}>${x.status === 'cancelled' ? '<span class="dim">—</span>' : (x.items || []).length > 1 ? esc(x.items.map((q) => partOf(x.form, q.p)).join('; ')) : (p === NO_PART || !p) && !FIXED_PART[x.form] ? `<span class="cd-nopart">${NO_PART}</span>` : esc(partOf(x.form, p))}</td>
             <td class="r ${one ? 'cd-ed' : ''}" ${one ? `data-ia="${esc(x.id)}" tabindex="0" title="Click to change the amount"` : ''}>${x.beg ? `<span class="dim" title="In the beginning balance, not this period's">${money(+x.amount || 0)}</span>` : money(orAmount(x))}</td>`; })()}
@@ -706,7 +706,27 @@ function wireAll(c) {
     Form: FORM_SHORT[x.form] || x.form, 'OR No.': x.serial, Date: fmtDate(x.date), Particulars: (x.items || []).map((p) => partOf(x.form, p.p)).join('; '), 'Amounts': (x.items || []).map((p) => money(p.amt)).join('; '),
     Fund: x.fund || '', Amount: orAmount(x), Status: x.status === 'cancelled' ? 'Cancelled' : 'Issued', [K]: x.reportId ? repName(f.reports.find((r) => r.id === x.reportId), K) : `Not yet in an ${K}` })));
   const sr = $('#cd-search');
-  if (sr) sr.oninput = () => { const t = sr.value.trim().toLowerCase(); $$('tr[data-or]').forEach((tr) => { tr.hidden = !!t && !tr.dataset.s.includes(t); }); };
+  // Select ORs (the header box: all those shown by the search) and delete them at once: encoding mistakes only.
+  const selBtn = $('#cd-delsel'), selAll = $('#cd-selall');
+  const selPaint = () => { if (!selBtn) return; const n = $$('.cd-sel').filter((b) => b.checked).length; selBtn.hidden = !n; selBtn.textContent = `Delete ${n} selected`;
+    const shown = $$('tr[data-or]').filter((tr) => !tr.hidden).map((tr) => $('.cd-sel', tr)).filter(Boolean); if (selAll) { selAll.checked = !!shown.length && shown.every((b) => b.checked); selAll.indeterminate = !selAll.checked && shown.some((b) => b.checked); } };
+  $$('.cd-sel').forEach((b) => { b.onchange = selPaint; });
+  if (selAll) selAll.onchange = () => { $$('tr[data-or]').forEach((tr) => { const b = $('.cd-sel', tr); if (b) b.checked = !tr.hidden && selAll.checked; }); selPaint(); };
+  if (selBtn) selBtn.onclick = async () => {
+    const picked = $$('.cd-sel').filter((b) => b.checked).map((b) => f.ors.find((x) => x.id === b.dataset.sel)).filter(Boolean);
+    const inRep = picked.filter((x) => x.reportId && f.reports.some((r) => r.id === x.reportId && !r.pending)), del = picked.filter((x) => !inRep.includes(x));
+    if (!del.length) return bad(`The ${inRep.length} OR${inRep.length > 1 ? 's' : ''} selected ${inRep.length > 1 ? 'are' : 'is'} in a submitted ${K}. Take ${inRep.length > 1 ? 'them' : 'it'} out of the ${K} first (Edit), then delete.`);
+    const nos = mergeRanges(del.flatMap((x) => (x.range ? [[+x.serial, maxSer(x)]] : [[+x.serial, +x.serial]])));
+    const ok = await modal({ title: `Delete ${del.length} OR${del.length > 1 ? 's' : ''}?`, body: `<p style="margin:0 0 8px">${esc(rangesText(nos))} · ₱ ${money(r2(del.reduce((n, x) => n + (x.status === 'cancelled' ? 0 : +x.amount || 0), 0)))}</p>
+        <p class="af-note" style="margin:0">Only for an encoding mistake: a cancelled OR is encoded as Cancelled, not deleted.${inRep.length ? ` <b>${inRep.length} OR${inRep.length > 1 ? 's' : ''} in a submitted ${K} ${inRep.length > 1 ? 'are' : 'is'} skipped</b> (take ${inRep.length > 1 ? 'them' : 'it'} out of the ${K} first).` : ''}</p>`,
+      buttons: [{ label: 'Cancel', value: false }, { label: `Delete ${del.length}`, cls: 'danger', value: true }] });
+    if (!ok) return;
+    selBtn.disabled = true;
+    try { for (const x of del) await store.save('cer_ors', x.id, strip(x), by(refs), { deleted: true, quiet: true }); }
+    finally { selBtn.disabled = false; }
+    emitChange('local'); toast(`${del.length} OR${del.length > 1 ? 's' : ''} deleted.${inRep.length ? ` ${inRep.length} in a ${K} skipped.` : ''}`, 'ok');
+  };
+  if (sr) sr.oninput = () => { const t = sr.value.trim().toLowerCase(); $$('tr[data-or]').forEach((tr) => { tr.hidden = !!t && !tr.dataset.s.includes(t); }); selPaint(); };
   const sh = $('#cd-show'); if (sh) sh.onchange = () => go({ show: sh.value });
   if (!enc) return;
 
