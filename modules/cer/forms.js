@@ -31,6 +31,8 @@ const peso = (n) => '₱' + Number(n).toLocaleString('en-US', { minimumFractionD
 const NS_MAX = 20000, NS_STEP = 20000;
 let nsLast = 0;
 function nsBase() { let b = (Date.now() - 1.7e12) * NS_STEP; if (b <= nsLast) b = nsLast + NS_STEP; nsLast = b; return b; }
+// Booklets in order: by form, then by serial; Cash Ticket (Booklet No.) by Booklet No.
+const bkOrder = (a, b) => a.form.localeCompare(b.form) || (a.bn || b.bn ? (a.bn || 0) - (b.bn || 0) : a.from - b.from);
 export const bnText = (b) => (b && b.bn ? `BN. ${b.bn}` : 'BN. —');
 const serialText = (b) => (b.noSerial ? bnText(b) : rangeText(b.from, b.to));
 const rt = (b, rs) => (b && b.noSerial ? `${countRanges(rs)} pcs` : rangesText(rs));
@@ -356,8 +358,8 @@ function registerView(ctx, f, lguId) {
   let rows = mine.filter((b) => (!fForm || b.form === fForm)
     && (!fCust || (fCust === 'stock' ? b.status === 'stock' : fCust === 'direct' ? !!b.receivedDirect : b.officerId === fCust))
     && (fStat === 'all' || (fStat === 'open' ? statusOf(b).key !== 'done' : statusOf(b).key === fStat)));
-  rows.sort(sort === 'days' ? (a, b) => (dAo(b) ?? -1) - (dAo(a) ?? -1) || a.form.localeCompare(b.form) || a.from - b.from
-    : (a, b) => a.form.localeCompare(b.form) || a.from - b.from);
+  rows.sort(sort === 'days' ? (a, b) => (dAo(b) ?? -1) - (dAo(a) ?? -1) || bkOrder(a, b)
+    : (a, b) => bkOrder(a, b));
   const stock = mine.filter((b) => b.status === 'stock');
   const withAo = mine.filter(held);
   const done = mine.filter((b) => statusOf(b).key === 'done');
@@ -1091,7 +1093,7 @@ function officerView(ctx, f, lguId) {
     return { crumb: 'Accountable Forms · By Accountable Officer', body, wire: () => {} };
   }
   const mine = f.booklets.filter((b) => b.officerId === o.id);
-  const inHand = mine.filter(held).sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
+  const inHand = mine.filter(held).sort((a, b) => bkOrder(a, b));
   const exams = f.exams.filter((e) => e.officerId === o.id).map((e) => ({ ...e, audit: f.audits.find((a) => a.id === e.auditId) })).filter((e) => e.audit)
     .sort((a, b) => b.audit.countDate.localeCompare(a.audit.countDate));
   const exam = exams.find((e) => e.id === q.get('exam')) || exams[0] || null;
@@ -1126,7 +1128,7 @@ function officerView(ctx, f, lguId) {
       ${tabBody}
     </section>
     <div id="cer-print" class="af-print" hidden>${clearanceHtml(refs, f, o, mine, lguId)}</div>`;
-  const exportRows = () => mine.slice().sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from).map((b) => {
+  const exportRows = () => mine.slice().sort((a, b) => bkOrder(a, b)).map((b) => {
     const c = exam ? f.checks.find((x) => x.id === exam.id + '|' + b.id) : null;
     const counted = c ? (Array.isArray(c.ranges) ? c.ranges : (c.unusedFrom && c.unusedTo ? [[c.unusedFrom, c.unusedTo]] : [])) : null;
     return { Form: FORM_SHORT[b.form] || b.form, 'Bank / Account': b.bankAccount || '', 'Series From': b.from, 'Series To': b.to, Qty: b.qty, 'Date Issued': b.issuedAsOf ? 'Not yet known (on hand as of ' + fmtDate(b.issuedDate) + ')' : fmtDate(b.issuedDate), 'Days in Hand': daysWithAo(b, asOf) === null ? '' : (b.issuedAsOf ? '≥ ' : '') + daysWithAo(b, asOf),
@@ -1194,7 +1196,7 @@ async function addCheckbook(refs, f, lguId, o) {
   toast(`${plan.parts.length} checkbook${plan.parts.length > 1 ? 's' : ''} added for ${o.name}.`, 'ok');
 }
 function clearanceHtml(refs, f, o, mine, lguId) {
-  const list = mine.filter(held).sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
+  const list = mine.filter(held).sort((a, b) => bkOrder(a, b));
   return `<h2>Accountable Forms in the Officer's Hands</h2>
     <p><b>${esc(o.name)}</b>, ${esc(o.designation || '')} · ${esc(agencyName(refs, refs.lgu[o.lguId]))} · as of ${esc(fmtDate(today()))}</p>
     <table><thead><tr><th>Form</th><th>Booklet</th><th>Date Issued</th><th>Used</th><th>Unused Range</th><th>Unused Qty</th></tr></thead>
@@ -1254,7 +1256,7 @@ export function stockAt(f, regId, date) {
   if (!regId || !date) return [];
   return f.booklets.filter((b) => b.lguId === regId).map((b) => { const h = holderAt(holderEvents(b), date);
     return h === 'mto' ? { b, unused: piecesAt(b, 'mto', date), src: 'stock' } : null; })
-    .filter((r) => r && r.unused.length).sort((x, y) => x.b.form.localeCompare(y.b.form) || x.b.from - y.b.from);
+    .filter((r) => r && r.unused.length).sort((x, y) => bkOrder(x.b, y.b));
 }
 // The register whose stock an officer answers for: his own LGU when he is its custodian in this exam.
 export const stockRegOf = (f, o, exam) => (o && exam && (exam.functions || []).includes('custodian') && custodianOf(f, o.lguId)?.id === o.id ? o.lguId : '');
@@ -1694,7 +1696,7 @@ export function cutoffChoices(f, officerId, countDate, examId = '', stockReg = '
       && !entered.has(b.id) && rawUnused(b, countDate).length);
   // The custodian: the stock he held at the count (booklets issued after it were still with him).
   const stock = stockReg ? stockAt(f, stockReg, countDate).map((r) => r.b).filter((b) => !entered.has(b.id) && !own.includes(b)) : [];
-  return [...own, ...stock].sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from);
+  return [...own, ...stock].sort((a, b) => bkOrder(a, b));
 }
 // A booklet's unused numbers as of a date (beginning, ORs encoded and checks in the CkDJ taken out): for the cut-off.
 export const unusedAt = (b, date) => rawUnused(b, date);
@@ -1780,7 +1782,7 @@ export function saafRows(f, officerId, exam, from, to, advs = []) {
       diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || b.bankAccount || '', date: recD || b.receivedDate || '', stock: true });
   });
   f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && b.issuedDate <= to)
-    .sort((a, b) => a.form.localeCompare(b.form) || a.from - b.from).forEach((b) => {
+    .sort((a, b) => bkOrder(a, b)).forEach((b) => {
       const beg = begRanges(f, b, from);
       const rec = !isBeg(b, from) ? [[b.from, b.to]] : [];
       const mine = lines.filter((l) => l.bookletId === b.id);
@@ -1872,7 +1874,7 @@ export function beginningFormsOf(f, officerId, asOf) {
   return f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && b.issuedDate <= asOf
       && !(b.status === 'lost' && (b.history || []).some((h) => h.action === 'lost' && h.date <= asOf)))
     .map((b) => ({ b, unused: rawUnused(b, asOf), src: srcOf(b) })).filter((r) => r.unused.length)
-    .sort((x, y) => x.b.form.localeCompare(y.b.form) || x.b.from - y.b.from);
+    .sort((x, y) => bkOrder(x.b, y.b));
 }
 // Booklets the officer received after the last cash exam, up to the count date (shown for information).
 export const receivedDuringOf = (f, officerId, asOf, countDate) =>
