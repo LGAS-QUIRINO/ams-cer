@@ -471,8 +471,8 @@ function encodeHtml(refs, offs, q) {
       <div class="field"><label for="e-held">Held By</label><select class="input" id="e-held"><option value="custodian">${custL} · in stock</option>
         <optgroup label="Accountable Officer">${offs.filter((o) => o.id !== custId).map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.held)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>
-    <div class="af-startset"><button class="btn sm" type="button" id="e-setrcv">Set Date Received for a range</button><span class="dim">for starting inventory already entered</span>
-      <button class="btn sm" type="button" id="e-setpcs">Correct Pcs for a range</button><span class="dim">Cash Ticket (Booklet No.)</span></div>
+    <div class="af-startset"><button class="btn sm" type="button" id="e-setrcv">Set Date Received for a range</button>
+      <button class="btn sm" type="button" id="e-setpcs">Correct Pcs for a range</button></div>
     <div class="af-offrow one" id="e-offrow" ${offHeld ? '' : 'hidden'}>
       ${partBox('e')}
     </div>`;
