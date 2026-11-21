@@ -1059,3 +1059,4 @@ table.af-reg.tr-month{min-width:0}
 @media (max-width:760px){ .af-enc.g9.bn,.af-enc.g9s.bn{grid-template-columns:1fr} }
 .cd-bnentry{margin:10px 0 4px} .sd-w-bn{width:210px}
 .rm-srow.rm-bn .rm-st{display:none} .rm-srow.rm-bn .rm-sf{grid-column:span 2}
+.cer-begh{margin:12px 0 6px; font-size:14px; font-weight:700}

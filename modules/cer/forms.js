@@ -1881,9 +1881,20 @@ export function beginningTableHtml(f, rows, canEdit) {
   if (!rows.length) return '';
   const srcText = { stock: 'Custodian\'s stock · in the Forms Register', custodian: 'From the custodian · in the Forms Register', bank: 'From the bank · this officer only', direct: 'Received directly · in the Forms Register' };
   const dirFrom = (b) => (b.receivedDirect && b.receivedFrom && b.receivedFrom !== 'Bank' ? ` (${esc(b.receivedFrom)})` : '');
-  return `<div class="cer-tbl"><table class="af-reg cer-afbeg"><thead><tr><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col">Date Issued</th><th scope="col">Unused at the Last Cash Exam</th><th scope="col" class="r">Qty</th><th scope="col">Source</th></tr></thead>
-    <tbody>${rows.map(({ b, unused, src }) => `<tr ${canEdit ? `data-begbk="${esc(b.id)}" tabindex="0" class="click"` : ''}><td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td>${src === 'stock' ? (b.receivedDate ? `<small class="dim">Received</small> ${esc(fmtDate(b.receivedDate))}` : '<span class="dim">—</span>') : issuedText(b)}</td>
-      <td class="mono">${b.noSerial ? '—' : rangesText(unused)}</td><td class="r">${countRanges(unused)}${faceOf(b) ? `<small>${peso(countRanges(unused) * faceOf(b))}</small>` : ''}</td><td><small class="dim">${srcText[src]}${dirFrom(b)}</small></td></tr>`).join('')}</tbody></table></div>`;
+  // Two tables: forms without money value (as before), and forms with money value with their Denomination and Amount
+  // (Cash Ticket (Booklet No.): its unused pieces in the Unused column).
+  const isMv = (b) => !!faceOf(b) && b.form !== 'chk';
+  const head = (b, src) => `<tr ${canEdit ? `data-begbk="${esc(b.id)}" tabindex="0" class="click"` : ''}><td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td>${src === 'stock' ? (b.receivedDate ? `<small class="dim">Received</small> ${esc(fmtDate(b.receivedDate))}` : '<span class="dim">—</span>') : issuedText(b)}</td>`;
+  const srcCell = (b, src) => `<td><small class="dim">${srcText[src]}${dirFrom(b)}</small></td>`;
+  const no = rows.filter((r) => !isMv(r.b)), mv = rows.filter((r) => isMv(r.b));
+  const noT = no.length ? `<div class="cer-tbl"><table class="af-reg cer-afbeg"><thead><tr><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col">Date Issued</th><th scope="col">Unused at the Last Cash Exam</th><th scope="col" class="r">Qty</th><th scope="col">Source</th></tr></thead>
+    <tbody>${no.map(({ b, unused, src }) => `${head(b, src)}
+      <td class="mono">${b.noSerial ? '—' : rangesText(unused)}</td><td class="r">${countRanges(unused)}</td>${srcCell(b, src)}</tr>`).join('')}</tbody></table></div>` : '';
+  const mvT = mv.length ? `<div class="cer-tbl"><table class="af-reg cer-afbeg"><thead><tr><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col">Date Issued</th><th scope="col">Unused at the Last Cash Exam</th><th scope="col" class="r">Qty</th><th scope="col" class="r">Denomination</th><th scope="col" class="r">Amount</th><th scope="col">Source</th></tr></thead>
+    <tbody>${mv.map(({ b, unused, src }) => { const q = countRanges(unused), fv = faceOf(b); return `${head(b, src)}
+      <td class="mono">${b.noSerial ? `${q.toLocaleString('en-US')} pcs` : rangesText(unused)}</td><td class="r">${q}</td><td class="r">${peso(fv)}</td><td class="r">${peso(q * fv)}</td>${srcCell(b, src)}</tr>`; }).join('')}</tbody></table></div>` : '';
+  if (!mv.length) return noT;
+  return `${no.length ? `<h4 class="cer-begh">Without Money Value</h4>${noT}` : ''}<h4 class="cer-begh">With Money Value</h4>${mvT}`;
 }
 export function openBooklet(refs, f, id) {
   const b = f.booklets.find((x) => x.id === id); if (!b) return;
