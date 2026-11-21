@@ -149,7 +149,7 @@ export async function countView(ctx) {
     <section class="panel cd-pane" id="cd-pane-cut" role="tabpanel" ${OPEN.cut ? '' : 'hidden'}>
       <div class="cd-body">
         ${auditor ? `<div class="cut-entry">
-          <div class="field cut-bk"><label for="cut-bk">Booklet</label><select class="input" id="cut-bk"><option value="">— Choose the booklet —</option>${choices.map((b) => `<option value="${esc(b.id)}">${esc(bookletName(b))}${b.noSerial ? '' : ` · ${countRanges(b.un)} unused`}</option>`).join('')}<option value="__other">Other (not in the list)…</option></select></div>
+          <div class="field cut-bk"><label for="cut-bk">Booklet</label><select class="input" id="cut-bk"><option value="">— Choose the booklet —</option>${choices.map((b) => `<option value="${esc(b.id)}">${esc(bookletName(b))}${b.noSerial ? ` · ${countRanges(b.un)} pcs left` : ` · ${countRanges(b.un)} unused`}</option>`).join('')}<option value="__other">Other (not in the list)…</option></select></div>
           <div class="field cut-oth" hidden><label for="cut-form">Form</label><select class="input" id="cut-form">${otherForms.map(([k, n]) => `<option value="${k}">${esc(n)}</option>`).join('')}</select></div>
           <div class="field cut-oth" hidden><label for="cut-from">Series From</label><input class="input mono r" id="cut-from" inputmode="numeric" autocomplete="off"></div>
           <div class="field cut-oth" hidden><label for="cut-to">Series To</label><input class="input mono r" id="cut-to" inputmode="numeric" autocomplete="off"></div>
@@ -159,12 +159,12 @@ export async function countView(ctx) {
           <button class="btn primary" type="button" id="cut-enter">Enter</button>
           <span class="crumb-i" title="The remaining forms as presented at the cut-off. Several ranges can go on one line (a skipped number is then counted as used). Checks: the unused checks; the last check issued is the one before them. A form not in the list: Other. The comparison with the beginning and the ORs encoded is in Verification.">ⓘ</span></div>` : ''}
         ${forms.length ? `<div class="af-tbl"><table class="af-reg cut-tbl"><thead><tr><th scope="col">Form</th><th scope="col">Booklet / Series</th><th scope="col">Unused Numbers</th><th scope="col" class="r">Qty</th>${mv.length ? '<th scope="col" class="r">Face Value (₱)</th>' : ''}<th scope="col"></th></tr></thead>
-          <tbody>${forms.map((x) => `<tr><td><b>${esc(x.name)}</b>${x.other ? ' <span class="pill p-stock">Not in the list</span>' : ''}</td><td class="mono">${x.ns ? 'No serial' : `${x.from} – ${x.to}`}</td><td class="mono">${x.ns ? '' : esc(x.text) || '<span class="dim">None (all used)</span>'}</td>
+          <tbody>${forms.map((x) => `<tr><td><b>${esc(x.name)}</b>${x.other ? ' <span class="pill p-stock">Not in the list</span>' : ''}</td><td class="mono">${x.ns ? `BN. ${x.bn || '—'}` : `${x.from} – ${x.to}`}</td><td class="mono">${x.ns ? '' : esc(x.text) || '<span class="dim">None (all used)</span>'}</td>
             <td class="r">${x.qty}</td>${mv.length ? `<td class="r">${x.face ? money(x.amount) : ''}</td>` : ''}<td class="r">${auditor ? `<button class="btn sm" type="button" data-rmcut="${esc(x.id)}" aria-label="Remove ${esc(x.name)} ${esc(x.text)}">Remove</button>` : ''}</td></tr>`).join('')}
             <tr class="cc-tot"><td colspan="3">Total</td><td class="r">${nFormsQty}</td>${mv.length ? `<td class="r">${money(mv.reduce((n, x) => n + x.amount, 0))}</td>` : ''}<td></td></tr></tbody></table></div>`
           : nps.length ? '' : '<div class="empty"><b>No remaining forms entered yet.</b>Choose each booklet the officer presents and type its unused numbers.</div>'}
         ${nps.length ? `<div class="af-tbl"><table class="af-reg cut-tbl cut-nptbl"><thead><tr><th scope="col">Not presented at the count</th><th scope="col">Booklet / Series</th><th scope="col">Unused per the register</th><th scope="col" class="r">Qty</th><th scope="col"></th></tr></thead>
-          <tbody>${nps.map((x) => `<tr><td><b>${esc(x.name)}</b> <span class="pill p-flag">Not presented</span></td><td class="mono">${x.ns ? 'No serial' : `${x.from} – ${x.to}`}</td><td class="mono">${esc(x.text) || '<span class="dim">—</span>'}</td><td class="r">${x.qty}</td>
+          <tbody>${nps.map((x) => `<tr><td><b>${esc(x.name)}</b> <span class="pill p-flag">Not presented</span></td><td class="mono">${x.ns ? `BN. ${x.bn || '—'}` : `${x.from} – ${x.to}`}</td><td class="mono">${esc(x.text) || '<span class="dim">—</span>'}</td><td class="r">${x.qty}</td>
             <td class="r">${auditor ? `<button class="btn sm" type="button" data-rmcut="${esc(x.id)}" aria-label="Remove ${esc(x.name)} not presented">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table>
           <p class="af-note">Not counted: they stay in the register balance and show as Not presented in Annex B (SAAF), with a finding in Verification.</p></div>` : ''}
       </div></section>
@@ -396,7 +396,7 @@ function wireCut(c) {
   const ur = $('#cut-ur'), qty = $('#cut-qty');
   const isOther = () => sel.value === '__other';
   const bk = () => choices.find((b) => b.id === sel.value) || null;
-  const nsNow = () => (isOther() ? $('#cut-form').value === 'cash' && !int($('#cut-from').value) : !!bk()?.noSerial);
+  const nsNow = () => (isOther() ? $('#cut-form').value === 'cashbn' : !!bk()?.noSerial);
   const int = (v) => { const n = parseInt(String(v ?? '').replace(/[^\d]/g, ''), 10); return isNaN(n) ? null : n; };
   const npEl = $('#cut-np'), npOn = () => !!npEl?.checked && !isOther();
   const read = () => {
@@ -404,25 +404,26 @@ function wireCut(c) {
     if (npOn()) return { line: { bookletId: bk().id, ranges: [], np: true } };
     if (isOther()) {
       const form = $('#cut-form').value, a = int($('#cut-from').value), z = int($('#cut-to').value);
-      if (nsNow()) { const q = int(ur.value) || 0; return { line: { bookletId: '', form, from: 1, to: q, ns: true, ranges: q ? [[1, q]] : [] } }; }
+      if (nsNow()) { const q = int(ur.value) || 0; if (!a) return { error: 'Type the Booklet No. (in Series From).' }; return { line: { bookletId: '', form, from: 1, to: q, ns: true, bn: a, ranges: q ? [[1, q]] : [] } }; }
       if (!a || !z || z < a) return { error: 'Type the series (from and to) of the form.' };
       const p = parseCutRanges(ur.value, a, z, 'the series'); if (p.error) return { error: p.error };
       return { line: { bookletId: '', form, from: a, to: z, ns: false, ranges: p.ranges } };
     }
     const b = bk();
-    if (b.noSerial) { const q = int(ur.value) || 0; if (q > b.qty) return { error: `More than the ${b.qty} pieces of the lot.` }; return { line: { bookletId: b.id, ranges: q ? [[b.from, b.from + q - 1]] : [] } }; }
+    if (b.noSerial) { const q = int(ur.value) || 0; if (q > b.qty) return { error: `More than the ${b.qty} pieces of the booklet.` }; return { line: { bookletId: b.id, ranges: q ? [[b.to - q + 1, b.to]] : [] } }; }
     const p = parseCutRanges(ur.value, b.from, b.to); if (p.error) return { error: p.error };
     return { line: { bookletId: b.id, ranges: p.ranges } };
   };
   const paint = () => {
     $$('.cut-oth').forEach((el) => { el.hidden = !isOther(); });
+    if (isOther()) { const bnF = $('#cut-form').value === 'cashbn'; $('label[for="cut-from"]').textContent = bnF ? 'Booklet No.' : 'Series From'; $('#cut-to').closest('.field').hidden = bnF; }
     if (npEl) { npEl.closest('label').hidden = isOther(); ur.disabled = npOn(); if (npOn()) ur.value = ''; }
     $('#cut-url').textContent = nsNow() ? 'Pieces on hand' : 'Unused numbers';
     ur.placeholder = nsNow() ? 'pcs' : isOther() ? 'e.g. 101, 105-150' : bk() ? `e.g. ${bk().from}-${bk().to}` : 'e.g. 3764072, 3764075-3764100';
     const r = sel.value && ur.value.trim() ? read() : null; qty.textContent = r && r.line ? countRanges(r.line.ranges) : '0';
   };
   // Choosing a booklet fills in its unused numbers as of the count (to check against what the officer presents).
-  sel.onchange = () => { const b = bk(); if (b && !b.noSerial && b.un) ur.value = b.un.map(([x, y]) => (x === y ? `${x}` : `${x}-${y}`)).join(', '); else if (!isOther()) ur.value = ''; paint(); };
+  sel.onchange = () => { const b = bk(); if (b && b.noSerial && b.un) ur.value = countRanges(b.un); else if (b && !b.noSerial && b.un) ur.value = b.un.map(([x, y]) => (x === y ? `${x}` : `${x}-${y}`)).join(', '); else if (!isOther()) ur.value = ''; paint(); };
   ur.oninput = paint; if (npEl) npEl.onchange = paint; ['#cut-form', '#cut-from', '#cut-to'].forEach((k) => { const el = $(k); if (el) el.oninput = el.onchange = paint; });
   ur.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('#cut-enter').click(); } };
   paint();

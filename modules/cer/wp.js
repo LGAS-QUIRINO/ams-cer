@@ -8,7 +8,7 @@ import { itemText } from './count.js';
 import { store } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, fmtDate, money, num } from './cer.js';
-import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart, repName, depsBeforeOrs, partOf } from './collections.js';
+import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart, repName, depsBeforeOrs, partOf, bnLineText } from './collections.js';
 import { accountsOf, caFund, begByFund, restFund, fundOrder } from './funds.js';
 import { saafRows, unusedFormsOf, notPresentedOf, countRanges, FORM_SHORT, faceOf } from './forms.js';
 
@@ -50,7 +50,7 @@ export function wpLines(c, paper, ver) {
     Object.values(A.fig.chains).filter((ch) => ch.kind === kind).forEach((ch) => [...ch.figs, ch.pend].forEach((g) => {
       (g.ors || []).filter((x) => partOk(part, x.form) && x.date && x.date <= to && orOk(x)).forEach((x) => {
         const cx = x.status === 'cancelled';
-        lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : ((x.items || []).map((i) => partOf(x.form, i.p)).filter(Boolean).join('; ') || partOf(x.form, '')), no: x.range ? `${x.serial}–${x.serialTo}` : String(x.serial), d: cx ? 0 : face(x), c: 0, ord: 0, sn: +x.serial || 0 });
+        lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : ((x.items || []).map((i) => partOf(x.form, i.p)).filter(Boolean).join('; ') || partOf(x.form, '')), no: x.bnLine ? bnLineText(c.f, x) : x.range ? `${x.serial}–${x.serialTo}` : String(x.serial), d: cx ? 0 : face(x), c: 0, ord: 0, sn: +x.serial || 0 });
       });
       const s = part ? ctcAlloc(ch, bs) : null, share = (d) => (part ? depPart(part, d, s) : +d.amount || 0);
       const where = g.pending ? 'not yet in a report' : `in ${repName(g.rec, ch.kind)}`;
@@ -352,7 +352,7 @@ export async function downloadReport(c, ver) {
   // up to 10 lines, more than that → See Annex B (SAAF).
   const items = (cnt.items || []).map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return { p: itemText(it.particulars), pr: +it.presented || 0, a, d: r2((+it.presented || 0) - a) }; });
   // Short names: the Name of Form columns of GF 74-A are narrow.
-  const SHORT = { af51: 'AF 51', af51b: 'AF 51', ctci: 'CTC – Ind.', ctcc: 'CTC – Corp.', chk: 'Checks' };
+  const SHORT = { af51: 'AF 51', af51b: 'AF 51', ctci: 'CTC – Ind.', ctcc: 'CTC – Corp.', chk: 'Checks', cash: 'Cash Ticket', cashbn: 'Cash Ticket' };
   const forms = unusedFormsOf(c.f, o.id, exam).map((x) => ({ ...x, name: SHORT[x.form] || x.name }));
   const mv = forms.filter((x) => x.face && x.qty), nomv = forms.filter((x) => !x.face);
   const nps = notPresentedOf(c.f, exam, A.to);
@@ -380,7 +380,7 @@ export async function downloadReport(c, ver) {
   const tA = r2(items.reduce((s, x) => s + x.a, 0)), tD = r2(items.reduce((s, x) => s + x.d, 0));
   set(ws, `AG${R(35)}`, r2(tA + tD)); set(ws, `AN${R(35)}`, tA); set(ws, `AU${R(35)}`, tD); set(ws, `AU${R(36)}`, r2(cash + tA));
   const F0 = R(41);
-  if (mvFit) mv.forEach((x, i) => { set(ws, `A${F0 + i}`, x.name); set(ws, `F${F0 + i}`, x.qty); set(ws, `J${F0 + i}`, x.ns ? 'No serial' : x.text); set(ws, `R${F0 + i}`, x.face); set(ws, `Z${F0 + i}`, x.amount); });
+  if (mvFit) mv.forEach((x, i) => { set(ws, `A${F0 + i}`, x.name); set(ws, `F${F0 + i}`, x.qty); set(ws, `J${F0 + i}`, x.text); set(ws, `R${F0 + i}`, x.face); set(ws, `Z${F0 + i}`, x.amount); });
   if (nomvFit) nomv.forEach((x, i) => { set(ws, `AF${F0 + i}`, x.name); set(ws, `AN${F0 + i}`, x.qty); set(ws, `AR${F0 + i}`, x.text.replace(/ – /g, '- ')); });
   // Nothing to list: None; more than 10 lines: see the SAAF (Annex B, or B.1 / B.2); booklets not presented: noted on the next free line.
   const seeNo = `See ${c.annexNo === 'ANNEX B.1' ? 'Annex B.1' : 'Annex B'}`, seeMv = `See ${c.annexMv === 'ANNEX B.2' ? 'Annex B.2' : 'Annex B'}`;

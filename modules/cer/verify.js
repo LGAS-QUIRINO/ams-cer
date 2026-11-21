@@ -50,7 +50,7 @@ export function endingOf(exam, st, lgu) {
 // the next cash exam's Beginning ORs.
 export function endOrsOf(f, exam, countDate) {
   const out = {};
-  const mine = f.ors.filter((x) => x.officerId === exam.officerId && !x.reportId && x.status !== 'cancelled' && x.date && x.date <= countDate && (exam.forms || []).includes(x.form));
+  const mine = f.ors.filter((x) => x.officerId === exam.officerId && !x.bnLine && !x.reportId && x.status !== 'cancelled' && x.date && x.date <= countDate && (exam.forms || []).includes(x.form));
   [...new Set(mine.map((x) => x.form))].forEach((form) => {
     const runs = [];
     mine.filter((x) => x.form === form).sort((a, b) => +a.serial - +b.serial).forEach((x) => {

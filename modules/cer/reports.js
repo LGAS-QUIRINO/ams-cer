@@ -127,7 +127,7 @@ function gf74a(c) {
   const cash = r2(bills.reduce((n, x) => n + x.v * x.n, 0) + (+cnt.coins || 0));
   const items = (cnt.items || []).map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return { ...it, particulars: itemText(it.particulars), allowed: a, dis: r2((+it.presented || 0) - a) }; });
   const allowed = r2(items.reduce((n, x) => n + x.allowed, 0)), disallowed = r2(items.reduce((n, x) => n + x.dis, 0));
-  const forms = unusedFormsOf(c.f, o.id, exam, A.to);
+  const forms = unusedFormsOf(c.f, o.id, exam, A.to).map((x) => (x.form === 'cash' || x.form === 'cashbn' ? { ...x, name: 'Cash Ticket' } : x));   // GF 74-A: both kinds are "Cash Ticket"
   const nps = notPresentedOf(c.f, exam, A.to);
   const withMv = forms.filter((x) => x.face && x.qty), without = forms.filter((x) => !x.face);
   const formsQty = without.reduce((n, x) => n + x.qty, 0), formsAmt = withMv.reduce((n, x) => n + x.amount, 0);
@@ -158,12 +158,12 @@ function gf74a(c) {
     <h3>C. INVENTORY OF UNUSED ACCOUNTABLE FORMS</h3>
     <div class="rp-two">
       <table class="rp-t"><thead><tr><th colspan="5">With Money Value</th></tr><tr><th>Name of Form</th><th class="r">Qty.</th><th>Inclusive Serial No.</th><th class="r">Denomination</th><th class="r">Amount</th></tr></thead>
-        <tbody>${withMv.length ? withMv.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${x.ns ? 'No serial' : esc(x.text)}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td></tr>`).join('') : `<tr><td colspan="5" class="c">None</td></tr>`}<tr class="tot"><td colspan="4">Total</td><td class="r">₱ ${money(formsAmt)}</td></tr></tbody></table>
+        <tbody>${withMv.length ? withMv.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${esc(x.text)}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td></tr>`).join('') : `<tr><td colspan="5" class="c">None</td></tr>`}<tr class="tot"><td colspan="4">Total</td><td class="r">₱ ${money(formsAmt)}</td></tr></tbody></table>
       <table class="rp-t"><thead><tr><th colspan="3">Without Money Value</th></tr><tr><th>Name of Form</th><th class="r">Qty.</th><th>Inclusive Serial No.</th></tr></thead>
         <tbody>${without.length ? without.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${esc(x.text) || 'None'}</td></tr>`).join('') : `<tr><td colspan="3" class="c">None</td></tr>`}
         <tr class="tot"><td>Total</td><td class="r">${formsQty}</td><td></td></tr></tbody></table>
     </div>
-    ${nps.length ? `<p class="rp-note">Forms not presented at the count: ${nps.map((x) => `${esc(x.name)} ${x.ns ? '(no serial)' : `${x.from} – ${x.to}`}`).join('; ')}. See ${c.hasMv && c.hasNo ? 'Annex B.1 and B.2' : 'Annex B'}.</p>` : ''}
+    ${nps.length ? `<p class="rp-note">Forms not presented at the count: ${nps.map((x) => `${esc(x.name)} ${x.ns ? `BN. ${x.bn || '—'}` : `${x.from} – ${x.to}`}`).join('; ')}. See ${c.hasMv && c.hasNo ? 'Annex B.1 and B.2' : 'Annex B'}.</p>` : ''}
     <h3>CERTIFICATION</h3>
     <p class="rp-just">I HEREBY CERTIFY on my official oath: (1) That upon demand by the Auditor / Examiner I produced all my cash, treasury warrants, checks, money orders, cash items, paid vouchers, unused accountable forms, etc., for which I am officially accountable; (2) That the inventory of such cash items and unused accountable forms in my possession and produced to the Auditor / Examiner at the time of cash count today, ${esc(fmtDate(audit.countDate))}, is correctly stated above and is broken down as follows:</p>
     <table class="rp-kv rp-cert"><tr><td>1) Cash and / or cash items</td><td class="r">₱ ${money(r2(cash + allowed + disallowed))}</td></tr>
@@ -204,7 +204,7 @@ function soaTable(A) {
 // A form with money value: it has a face value (denomination); checks never.
 export const isMvRow = (r) => !!r.face && r.form !== 'chk';
 // The form's full name on the SAAF with Money Value (as on the form).
-const MV_NAME = { af52: 'AF 52 Certificate of Transfer of Large Cattle', af53: 'AF 53 Certificate of Ownership of Large Cattle', af54: 'AF 54 Marriage License Fee', cash: 'Cash Tickets' };
+const MV_NAME = { af52: 'AF 52 Certificate of Transfer of Large Cattle', af53: 'AF 53 Certificate of Ownership of Large Cattle', af54: 'AF 54 Marriage License Fee', cash: 'Cash Ticket (Serial)', cashbn: 'Cash Ticket (Booklet No.)' };
 // Annex B (B.2) · Statement of Accountability for Accountable Forms with Money Value: Balance Beg., Received, Issued, Balance
 // End, each From · To · Qty. · Denomin. · Amount; one line per range, the form's name on its first line.
 export function saafMvRows(c) {
@@ -213,7 +213,7 @@ export function saafMvRows(c) {
   const groups = [];
   rows.forEach((r) => { const g = groups.find((x) => x.form === r.form && x.face === r.face) || (groups.push({ form: r.form, face: r.face, name: MV_NAME[r.form] || r.name, rows: [] }), groups[groups.length - 1]); g.rows.push(r); });
   return groups.map((g) => ({ ...g, lines: g.rows.flatMap((r) => { const cols = [r.beg, r.rec, r.issued, r.end]; const n = r.ns ? 1 : Math.max(1, ...cols.map((rs) => rs.length));
-    return Array.from({ length: n }, (_, k) => cols.map((rs) => { if (r.ns) { const q = k ? 0 : countRanges(rs); return q ? { from: '', to: '', qty: q, face: r.face, amount: r2(q * r.face) } : null; }
+    return Array.from({ length: n }, (_, k) => cols.map((rs) => { if (r.ns) { const q = k ? 0 : countRanges(rs), t = `BN. ${r.bn || '—'}`; return q ? { from: t, to: t, qty: q, face: r.face, amount: r2(q * r.face) } : null; }
       const x = rs[k]; return x ? { from: x[0], to: x[1], qty: x[1] - x[0] + 1, face: r.face, amount: r2((x[1] - x[0] + 1) * r.face) } : null; })); }) }));
 }
 function saafMv(c) {
@@ -258,7 +258,7 @@ function saaf(c) {
           const fund = r.form === 'chk' && r.fund && (i === 0 || g.rows[i - 1].fund !== r.fund) ? r.fund : '';
           return Array.from({ length: n }, (_, k) => {
             const cellK = (rs, isCount) => (isCount && r.count === null ? ['', '', ''] : r.ns ? cells(rs, true) : rs[k] ? [rs[k][0], rs[k][1], countRanges([rs[k]])] : ['', '', '']);
-            const notes = k ? [] : [fund ? `<span class="rp-fund">${esc(fund)}</span>` : '', r.other ? '<small>not in the register</small>' : '', r.ns ? '<small>no serial</small>' : ''].filter(Boolean);
+            const notes = k ? [] : [fund ? `<span class="rp-fund">${esc(fund)}</span>` : '', r.other ? '<small>not in the register</small>' : '', r.ns ? `<small>BN. ${esc(r.bn || '—')}</small>` : ''].filter(Boolean);
             return `<tr class="rp-cont"><td>${notes.join('<br>')}</td>${cols.map((rs, ci) => cellK(rs, ci === 4).map((v, j) => `<td class="${j === 2 ? 'r' : ''}">${v}</td>`).join('')).join('')}<td class="r">${k || r.diff === null ? '' : r.diff}</td><td>${k ? '' : esc(r.remarks || '')}</td></tr>`;
           }).join('');
         }).join('')).join('')
@@ -268,7 +268,7 @@ function saaf(c) {
     <div class="rp-signs">${sign('Prepared by', prep)}${sign('Accountable Officer', { name: o.name, pos: o.designation || '' })}</div></div>`;
   const xr = (rs) => rs.map(([a, z]) => (a === z ? `${a}` : `${a}-${z}`)).join(', ');
   const xs = (r, rs) => (r.ns ? (rs.length ? `${countRanges(rs)} pcs` : '') : xr(rs));
-  return { html, rows: rows.map((r) => ({ Form: r.name, Booklet: r.ns ? 'No serial' : `${r.booklet[0]}-${r.booklet[1]}`, 'Balance Beg.': xs(r, r.beg), 'Beg. Qty': countRanges(r.beg), Received: xs(r, r.rec), 'Rec. Qty': countRanges(r.rec),
+  return { html, rows: rows.map((r) => ({ Form: r.name, Booklet: r.ns ? `BN. ${r.bn || '—'}` : `${r.booklet[0]}-${r.booklet[1]}`, 'Balance Beg.': xs(r, r.beg), 'Beg. Qty': countRanges(r.beg), Received: xs(r, r.rec), 'Rec. Qty': countRanges(r.rec),
     Issued: xs(r, r.issued), 'Iss. Qty': countRanges(r.issued), 'Balance End': xs(r, r.end), 'End Qty': countRanges(r.end), 'Per Count': r.count ? xs(r, r.count) : '', 'Count Qty': r.count ? countRanges(r.count) : '', Difference: r.diff ?? '', Remarks: r.remarks || '' })) };
 }
 

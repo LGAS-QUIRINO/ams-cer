@@ -15,7 +15,7 @@
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { FORMS, fixBrgyForm, hasRole, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, personKey, samePerson } from './cer.js';
-import { loadForms, FORM_SHORT, exportXlsx, rangesText, mergeRanges, bookletUnused, countRanges, loadXlsx, excelDate } from './forms.js';
+import { loadForms, FORM_SHORT, exportXlsx, rangesText, mergeRanges, bookletUnused, countRanges, loadXlsx, excelDate, faceOf as faceOfBk } from './forms.js';
 
 // Each auditee's funds: General Fund to start; the others are added with the Funds button. A fund already used stays listed.
 const DEFAULT_FUNDS = ['General Fund'];
@@ -103,7 +103,7 @@ const OPEN = { rep: true, col: false, dep: false };   // which tab is shown (one
 export const resetTabs = () => { Object.keys(OPEN).forEach((k) => { OPEN[k] = k === 'rep'; }); };
 const NO_PART = 'No particular';   // an imported OR whose particular was left blank
 // Forms with one particular: filled in when encoding (still editable) and shown for an OR left without one. AF 51 is typed.
-export const FIXED_PART = { ctci: 'Community Tax', ctcc: 'Community Tax', af56: 'Real Property Tax', af54: 'Marriage License Fee',
+export const FIXED_PART = { cashbn: 'Market Fees', ctci: 'Community Tax', ctcc: 'Community Tax', af56: 'Real Property Tax', af54: 'Marriage License Fee',
   af52: 'Certificate of Transfer of Large Cattle', af53: 'Certificate of Ownership of Large Cattle', cash: 'Market Fees' };
 export const partOf = (form, p) => ((!p || p === NO_PART) && FIXED_PART[form] ? FIXED_PART[form] : p);
 const LASTC = { key: '', form: '', bookletId: '', serial: '', date: '', auto: true, status: 'issued', focus: '' };
@@ -123,13 +123,17 @@ export function begRangesOf(exam) {
   return out;
 }
 const inBegRanges = (br, x) => (br[x.form] || []).some(([a, z]) => a <= +x.serial && (x.range ? +x.serialTo : +x.serial) <= z);
-const outOfBooklets = (f, o, x) => !f.booklets.some((b) => b.officerId === o.id && b.form === x.form && !b.noSerial && b.from <= +x.serial && (x.range ? +x.serialTo : +x.serial) <= b.to);
+const outOfBooklets = (f, o, x) => (x.bnLine ? !f.booklets.some((b) => b.id === x.bookletId) : !f.booklets.some((b) => b.officerId === o.id && b.form === x.form && !b.noSerial && b.from <= +x.serial && (x.range ? +x.serialTo : +x.serial) <= b.to));
+// Cash Ticket (Booklet No.) line: "BN. 125 · 40 pcs".
+const bnOf = (f, x) => f.booklets.find((b) => b.id === x.bookletId)?.bn;
+export const bnLineText = (f, x) => `BN. ${bnOf(f, x) || '—'} · ${(+x.pcs || 0).toLocaleString('en-US')} pcs`;
 // An OR of the beginning (Before the period): dated before the last cash exam; or dated on the exam day itself and in the OR
 // series of the beginning balance typed in Audit Setup (when typed for its form, that series decides); with no series typed,
 // its number among those already used per the officer's beginning booklet (Partly used at the last cash exam).
 export function begOr(f, x, lx, br) {
   if (!lx || !x.date) return false;
   if (x.date < lx) return true;
+  if (x.bnLine) return false;
   if (x.date !== lx) return false;
   if (br && (br[x.form] || []).length) return inBegRanges(br, x);
   const n = +x.serial, bk = f.booklets.find((b) => b.id === x.bookletId) || f.booklets.find((b) => b.officerId === x.officerId && b.form === x.form && !b.noSerial && b.from <= n && n <= b.to);
@@ -145,8 +149,9 @@ const orAmount = (o) => (o.status === 'cancelled' || o.beg ? 0 : r2((o.items || 
 const maxSer = (x) => (x.range ? +x.serialTo : +x.serial);
 export const serialsOf = (x) => { const out = []; for (let n = +x.serial, z = maxSer(x); n <= z && out.length < 5001; n++) out.push(n); return out; };
 function rangeByForm(list) {
-  const by = {}; list.forEach((o) => { (by[o.form] = by[o.form] || []).push(o.serial, maxSer(o)); });
-  return Object.entries(by).map(([k, ns]) => `${FORM_SHORT[k] || k} ${Math.min(...ns)} – ${Math.max(...ns)}`).join('; ');
+  const by = {}, bn = {}; list.forEach((o) => { if (o.bnLine) { (bn[o.form] = bn[o.form] || new Set()).add(BKS.find((b) => b.id === o.bookletId)?.bn || '—'); return; } (by[o.form] = by[o.form] || []).push(o.serial, maxSer(o)); });
+  return [...Object.entries(by).map(([k, ns]) => `${FORM_SHORT[k] || k} ${Math.min(...ns)} – ${Math.max(...ns)}`),
+    ...Object.entries(bn).map(([k, set]) => `${FORM_SHORT[k] || k} ${[...set].sort((a, b) => a - b).map((n) => `BN. ${n}`).join(', ')}`)].join('; ');
 }
 // Every report of the officer (and the "Not yet reported" of each fund), in order, with its figures and checks.
 // exam (optional): its Audit Setup beginning balances open the first report of each report type (General Fund), unless the
@@ -253,7 +258,7 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
       if (miss.length) fig.issues.push(`${miss.length} OR${miss.length > 1 ? 's' : ''} of the range not yet encoded: ${rangesText(mergeRanges(miss))}.`);
     }
     if (rec && !rec.pending && rec.hardTotal !== null && rec.hardTotal !== undefined && rec.hardTotal !== '') fig.balanced = Math.abs(+rec.hardTotal - fig.coll) <= 0.004;
-    const byForm = {}; list.forEach((x) => { (byForm[x.form] = byForm[x.form] || []).push(x.serial, maxSer(x)); });
+    const byForm = {}; list.filter((x) => !x.bnLine).forEach((x) => { (byForm[x.form] = byForm[x.form] || []).push(x.serial, maxSer(x)); });
     if (!rs.length) Object.entries(byForm).forEach(([k, ns]) => {
       const lo = Math.min(...ns), hi = Math.max(...ns); const miss = [];
       if (hi - lo < 5000) for (let n = lo; n <= hi; n++) if (!encoded[k].has(n)) miss.push([n, n]);
@@ -387,7 +392,7 @@ export async function collectionsView(ctx) {
   // Records dated on or before a submitted report go into it (e.g. ORs encoded after the SCD was added).
   if (canEncode(refs) && misplaced(fig)) { await sweepChains(f, fig, refs); return collectionsView(ctx); }
   const isLO = (exam.functions || []).includes('liquidating');
-  const allForms = [...new Set(((exam.forms || []).length ? exam.forms : f.ors.filter((x) => x.officerId === o.id).map((x) => x.form)).map((k) => fixBrgyForm(lgu, k)))];
+  const allForms = [...new Set([...((exam.forms || []).length ? exam.forms : f.ors.filter((x) => x.officerId === o.id).map((x) => x.form)), ...(f.booklets.some((b) => b.officerId === o.id && b.form === 'cashbn') ? ['cashbn'] : [])].map((k) => fixBrgyForm(lgu, k)))];
   // Report types in use for this officer: from the forms ticked in Audit Setup, plus any already encoded.
   const active = (c) => c.figs.length || c.pend.nOrs || c.pend.dep || c.pend.remTotal || c.pend.beg;
   const usedKinds = fig.kinds.filter((k) => allForms.some((x) => kindOfForm(lgu, x) === k) || Object.values(fig.chains).some((c) => c.kind === k && active(c)));
@@ -591,14 +596,30 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const partRow = (p = {}, i = 0) => `<div class="cd-prow">${i ? '<span></span><span></span><span></span><span></span>' : orCells + dateCell}<label class="sr-only" for="cd-p${i}">Particular ${i + 1}</label><input class="input cd-p" id="cd-p${i}" list="cd-parts" value="${esc(p.p || (!i ? FIXED_PART[form] || '' : ''))}" placeholder="Type to search or add a new particular…" autocomplete="off">
       <label class="sr-only" for="cd-a${i}">Amount ${i + 1}</label><input class="input r cd-a" id="cd-a${i}" inputmode="decimal" value="${p.amt ? esc(money(p.amt)) : ''}" placeholder="0.00" autocomplete="off">
       <button class="btn sm cd-x" type="button" aria-label="Remove particular">✕</button>${i ? '<span></span>' : '<button class="btn primary" type="button" id="cd-enter">Enter</button>'}</div>`;
+  // Cash Ticket (Booklet No.): one line per day and booklet: Date | Booklet No. | Pcs | Value | Amount (Pcs × Value).
+  const bnBks = f.booklets.filter((b) => b.form === 'cashbn' && b.officerId === o.id && b.status !== 'lost').sort((a, b) => (a.bn || 0) - (b.bn || 0));
+  const bnLeft = (b) => countRanges(bookletUnused(b));
+  const bnList = bnBks.filter((b) => bnLeft(b) > 0 || b.id === LASTC.bnBk);
+  const bnSel = bnList.find((b) => b.id === LASTC.bnBk) || bnList.find((b) => bnLeft(b) > 0) || null;
+  const bnEntry = `<div class="sd-line cd-bnentry" id="cd-bnform">
+        <div class="sd-f sd-w-date"><label for="bn-date">Date</label><input class="input" type="date" id="bn-date" value="${esc(LASTC.date)}"></div>
+        <div class="sd-f sd-w-bn"><label for="bn-bk">Booklet No.</label><select class="input" id="bn-bk">${bnList.map((b) => `<option value="${esc(b.id)}" data-face="${faceOfBk(b)}" data-left="${bnLeft(b)}" ${bnSel && b.id === bnSel.id ? 'selected' : ''}>BN. ${esc(b.bn || '—')} · ${bnLeft(b).toLocaleString('en-US')} pcs left</option>`).join('')}${bnList.length ? '' : '<option value="">No booklet with pieces left</option>'}</select></div>
+        <div class="sd-f sd-w-no"><label for="bn-pcs">Pcs</label><input class="input r mono" id="bn-pcs" inputmode="numeric" autocomplete="off"></div>
+        <div class="sd-f sd-w-no"><label for="bn-val">Value (₱)</label><input class="input r" id="bn-val" value="${bnSel ? money(faceOfBk(bnSel)) : ''}" readonly tabindex="-1"></div>
+        <div class="sd-f sd-w-amt"><label for="bn-amt">Amount (₱)</label><input class="input r" id="bn-amt" inputmode="decimal" autocomplete="off"></div>
+        <div class="sd-f sd-w-txt"><label for="bn-part">Particular</label><input class="input" id="bn-part" list="bn-parts" value="${esc(LASTC.bnPart || FIXED_PART.cashbn)}" autocomplete="off"></div>
+        <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="bn-enter">Enter</button></div></div>
+      <datalist id="bn-parts">${[...new Set([FIXED_PART.cashbn, ...parts])].map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
+      <p class="af-note">Cash tickets with a booklet number only: one line per day and booklet. Amount = Pcs × Value; typing the Amount fills in the Pcs. The pieces are taken out of the booklet.</p>`;
   const colBody = !forms.length ? `<div class="cd-info">This officer has no accountable forms ticked in Audit Setup${isLO ? '. A Liquidating Officer who issues ORs himself needs Collecting and the forms ticked there' : ''}. ${isLO ? 'Remittances and deposits are entered in parts 1 and 3.' : ''}</div>`
     : `${rProg}${rDone ? `<div class="cd-info cd-rdone">All ORs of ${esc(repName(cur.rec, K))} are encoded (${esc(rangesShow(rRec))}). To encode ORs of another report, choose it in tab 1, or "Not yet in an ${K}" in Show below.</div>` : ''}${enc ? `<div class="cd-set" ${rDone ? 'hidden' : ''}>
         <div class="field"><label for="cd-form">Form Type</label><select class="input" id="cd-form">${forms.map((k) => `<option value="${esc(k)}" ${k === form ? 'selected' : ''}>${esc(FORMS.find(([x]) => x === k)?.[1] || k)}</option>`).join('')}</select></div>
-        <div class="field"><label for="cd-bk">Booklet</label><select class="input" id="cd-bk">${bks.map((b) => `<option value="${esc(b.id)}" ${bk && b.id === bk.id ? 'selected' : ''}>${b.from} – ${b.to} · ${unusedOfBk(b)} unused</option>`).join('')}<option value="" ${bk ? '' : 'selected'}>Not in the Forms Register</option></select></div>
-        <span class="cd-goes">Goes to: <b>${esc(cur.pending ? `the ${K} whose OR Range has its number` : repName(cur.rec, K))} · ${esc(curFund)}</b> <span class="crumb-i" title="Enter moves along: Date → Particulars → Amount → saves the OR, then back to Date for the next OR (Alt + Enter in Amount adds another particular). The fund follows the ${K}. Cancelled ORs have no particulars and a zero amount.">ⓘ</span></span>
+        ${form === 'cashbn' ? '' : `<div class="field"><label for="cd-bk">Booklet</label><select class="input" id="cd-bk">${bks.map((b) => `<option value="${esc(b.id)}" ${bk && b.id === bk.id ? 'selected' : ''}>${b.from} – ${b.to} · ${unusedOfBk(b)} unused</option>`).join('')}<option value="" ${bk ? '' : 'selected'}>Not in the Forms Register</option></select></div>`}
+        <span class="cd-goes">Goes to: <b>${esc(cur.pending ? (form === 'cashbn' ? `the ${K} that covers its date` : `the ${K} whose OR Range has its number`) : repName(cur.rec, K))} · ${esc(curFund)}</b> <span class="crumb-i" title="Enter moves along: Date → Particulars → Amount → saves the OR, then back to Date for the next OR (Alt + Enter in Amount adds another particular). The fund follows the ${K}. Cancelled ORs have no particulars and a zero amount.">ⓘ</span></span>
       </div>
-      ${cbMode ? '' : '<!--'}<div class="seg cd-mode" role="group" aria-label="How to encode"><a href="#" data-cmode="one" class="${LASTC.mode !== 'range' ? 'on' : ''}">One OR at a time</a><a href="#" data-cmode="range" class="${LASTC.mode === 'range' ? 'on' : ''}">By OR range</a></div>${cbMode ? '' : '-->'}
-      ${LASTC.mode === 'range' ? `<div class="sd-line cd-rgentry" id="cd-rgform">
+      ${form === 'cashbn' ? bnEntry : ''}
+      ${cbMode && form !== 'cashbn' ? '' : '<!--'}<div class="seg cd-mode" role="group" aria-label="How to encode"><a href="#" data-cmode="one" class="${LASTC.mode !== 'range' ? 'on' : ''}">One OR at a time</a><a href="#" data-cmode="range" class="${LASTC.mode === 'range' ? 'on' : ''}">By OR range</a></div>${cbMode && form !== 'cashbn' ? '' : '-->'}
+      ${LASTC.mode === 'range' && form !== 'cashbn' ? `<div class="sd-line cd-rgentry" id="cd-rgform">
         <div class="sd-f sd-w-date"><label for="rg-date">Date</label><input class="input" type="date" id="rg-date" value="${esc(LASTC.date)}"></div>
         <div class="sd-f sd-w-no"><label for="rg-from">OR From</label><input class="input mono" id="rg-from" inputmode="numeric" value="${esc(LASTC.rgNext || '')}"></div>
         <div class="sd-f sd-w-no"><label for="rg-to">OR To</label><input class="input mono" id="rg-to" inputmode="numeric"></div>
@@ -607,7 +628,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="rg-enter">Enter</button></div></div>
         <p class="af-note">From a cashbook when the ${K} is not available: one line per day, its OR range and total. The whole range counts as used.${exam.lastExamDate ? ` A line dated before ${esc(fmtDate(exam.lastExamDate))} (the last cash exam) is tagged "Before the period": its ORs are used, its amount is in the beginning balance.` : ''}</p>
         <label class="cer-tick cd-rga"><input type="checkbox" id="rg-a" ${f.settings?.['orrange|' + o.id]?.noA ? '' : 'checked'}> ORs of a booklet before the first range of the period were used before the last cash exam (not flagged as missing)</label>` : ''}
-      <div class="cd-entry cd-one" ${LASTC.mode === 'range' || rDone ? 'hidden' : ''}>
+      ${form === 'cashbn' ? '' : `<div class="cd-entry cd-one" ${LASTC.mode === 'range' || rDone ? 'hidden' : ''}>
         <div class="cd-parts cd-entryt ${LASTC.status === 'cancelled' ? 'cd-cxl' : ''}" id="cd-partsbox">
           <div class="cd-phead"><span>OR No.</span><span></span><span>Status</span><span>Date of Collection</span><span>Particulars</span><span class="r">Amount (₱)</span><span></span><span></span></div>
           <div id="cd-prows">${partRow({}, 0)}</div>
@@ -616,15 +637,15 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         </div>
         <div id="cd-skip"></div>
         <datalist id="cd-parts">${parts.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
-      </div>` : ''}
+      </div>`}` : ''}
       <div class="cd-listhead"><h3 class="cer-h3">Encoded ORs</h3>
         <label class="sr-only" for="cd-search">Search ORs</label><input class="input af-sm" id="cd-search" placeholder="Search OR No. or particular…">
         <label class="sr-only" for="cd-show">Show</label><select class="input af-sm" id="cd-show"><option value="sel" ${show === 'sel' ? 'selected' : ''}>${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</option>${cur.pending ? '' : `<option value="nyr" ${show === 'nyr' ? 'selected' : ''}>Not yet in an ${K}</option>`}<option value="all" ${show === 'all' ? 'selected' : ''}>All of this officer</option></select>
         <span class="cd-total">Total <b>₱ ${money(listOrs.reduce((n, x) => n + orAmount(x), 0))}</b></span>
         ${enc && forms.length ? '<a href="#" class="cd-link cd-tpl" id="cd-ortpl">Template</a><button class="btn" type="button" id="cd-orimp">Import from Excel</button>' : ''}<button class="btn" type="button" id="cd-xls">Export to Excel</button>${enc ? '<button class="btn danger" type="button" id="cd-delsel" hidden>Delete selected</button>' : ''}</div>
       ${listOrs.length ? `<div class="af-tbl cd-orscroll"><table class="af-reg cd-ors"><thead><tr>${enc ? '<th scope="col" style="width:30px"><input type="checkbox" id="cd-selall" aria-label="Select all ORs shown"></th>' : ''}<th scope="col">No.</th><th scope="col">OR No.</th><th scope="col">Date</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Status</th><th scope="col">${K}</th><th scope="col" class="r"></th></tr></thead>
-        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc((x.serial + ' ' + (x.items || []).map((p) => partOf(x.form, p.p)).join(' ')).toLowerCase())}">${enc ? `<td><input type="checkbox" class="cd-sel" data-sel="${esc(x.id)}" aria-label="Select OR ${x.serial}"></td>` : ''}<td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.range ? `${x.serial}–${x.serialTo} <small class="dim">${maxSer(x) - x.serial + 1} ORs</small>` : x.serial}${x.beg ? ' <span class="pill p-beg" title="Dated before the last cash exam: in the beginning balance">Before the period</span>' : ''}${outOfBooklets(f, o, x) && !inBegRanges(begRangesOf(exam), x) ? ' <span class="pill p-flag" title="Its number is in no booklet received or issued to this officer in the Forms Register">Not in a received booklet</span>' : ''}</td><td>${esc(fmtDate(x.date))}</td>
-          ${(() => { const one = enc && x.status !== 'cancelled' && (x.items || []).length <= 1, p = (x.items || [])[0]?.p || '';
+        <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc(((x.bnLine ? bnLineText(f, x) : x.serial) + ' ' + (x.items || []).map((p) => partOf(x.form, p.p)).join(' ')).toLowerCase())}">${enc ? `<td><input type="checkbox" class="cd-sel" data-sel="${esc(x.id)}" aria-label="Select OR ${x.serial}"></td>` : ''}<td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.bnLine ? `${esc(bnLineText(f, x))}${x.bnShort ? ` <span class="pill p-flag" title="More pieces than the booklet has left">${x.bnShort} pcs over</span>` : ''}` : x.range ? `${x.serial}–${x.serialTo} <small class="dim">${maxSer(x) - x.serial + 1} ORs</small>` : x.serial}${x.beg ? ' <span class="pill p-beg" title="Dated before the last cash exam: in the beginning balance">Before the period</span>' : ''}${outOfBooklets(f, o, x) && !inBegRanges(begRangesOf(exam), x) ? ' <span class="pill p-flag" title="Its number is in no booklet received or issued to this officer in the Forms Register">Not in a received booklet</span>' : ''}</td><td>${esc(fmtDate(x.date))}</td>
+          ${(() => { const one = enc && !x.bnLine && x.status !== 'cancelled' && (x.items || []).length <= 1, p = (x.items || [])[0]?.p || '';
             return `<td ${one ? `class="cd-ed" data-ip="${esc(x.id)}" tabindex="0" title="Click to change the particular"` : ''}>${x.status === 'cancelled' ? '<span class="dim">—</span>' : (x.items || []).length > 1 ? esc(x.items.map((q) => partOf(x.form, q.p)).join('; ')) : (p === NO_PART || !p) && !FIXED_PART[x.form] ? `<span class="cd-nopart">${NO_PART}</span>` : esc(partOf(x.form, p))}</td>
             <td class="r ${one ? 'cd-ed' : ''}" ${one ? `data-ia="${esc(x.id)}" tabindex="0" title="Click to change the amount"` : ''}>${x.beg ? `<span class="dim" title="In the beginning balance, not this period's">${money(+x.amount || 0)}</span>` : money(orAmount(x))}</td>`; })()}
           <td><span class="pill ${x.status === 'cancelled' ? 'p-stock' : 'p-done'}">${x.status === 'cancelled' ? 'Cancelled' : 'Issued'}</span></td><td>${repPill(x)}</td>
@@ -640,7 +661,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const DEP = isRem ? 'Remittance' : toLO ? 'Remittance to LO' : 'Deposit', DEPS = isRem ? 'Remittances' : toLO ? 'Remittances to LO' : 'Deposits';
   // Cashbook only: each deposit / remittance with the OR series it covers. The next series starts after the last one.
   const lastTo = Math.max(0, ...f.reports.filter((r) => r.officerId === o.id).flatMap((r) => (r.deposits || []).filter((d) => !d.fromLO).map((d) => +d.to || 0)));
-  const firstOr = Math.min(Infinity, ...f.ors.filter((x) => x.officerId === o.id && !x.beg && (!exam.lastExamDate || x.date >= exam.lastExamDate)).map((x) => +x.serial));
+  const firstOr = Math.min(Infinity, ...f.ors.filter((x) => x.officerId === o.id && !x.bnLine && !x.beg && (!exam.lastExamDate || x.date >= exam.lastExamDate)).map((x) => +x.serial));
   const sCell = (d) => (cbook ? `<td><input class="input mono" data-k="from" inputmode="numeric" value="${esc(d.from || '')}" aria-label="OR From" ${enc ? '' : 'disabled'}></td><td><input class="input mono" data-k="to" inputmode="numeric" value="${esc(d.to || '')}" aria-label="OR To" ${enc ? '' : 'disabled'}></td>` : '');
   const early = new Map(depsBeforeOrs(f, o, fig).map((x) => [x.d, x]));
   const earlyPill = (d) => { const x = early.get(d); return x ? ` <span class="pill p-flag" title="${esc(`${toLO ? 'Remitted' : 'Deposited'} ${fmtDate(d.date)}; its ORs are dated ${fmtDate(x.first)}${x.last !== x.first ? `–${fmtDate(x.last)}` : ''}. ORs should be issued upon receipt of the collection.`)}">Before its ORs</span>` : ''; };
@@ -777,7 +798,7 @@ function wireAll(c) {
   ['#cd-sumxls', '#cd-sumxls2'].forEach((id) => { const b = $(id); if (b) b.onclick = sumX; });
   const xls = $('#cd-xls');
   if (xls) xls.onclick = () => exportXlsx(`ORs ${o.name} ${audit.countDate}.xlsx`, 'ORs', c.listOrs.map((x) => ({
-    Form: FORM_SHORT[x.form] || x.form, 'OR No.': x.serial, Date: fmtDate(x.date), Particulars: (x.items || []).map((p) => partOf(x.form, p.p)).join('; '), 'Amounts': (x.items || []).map((p) => money(p.amt)).join('; '),
+    Form: FORM_SHORT[x.form] || x.form, 'OR No.': x.bnLine ? bnLineText(f, x) : x.serial, Date: fmtDate(x.date), Particulars: (x.items || []).map((p) => partOf(x.form, p.p)).join('; '), 'Amounts': (x.items || []).map((p) => money(p.amt)).join('; '),
     Fund: x.fund || '', Amount: orAmount(x), Status: x.status === 'cancelled' ? 'Cancelled' : 'Issued', [K]: x.reportId ? repName(f.reports.find((r) => r.id === x.reportId), K) : `Not yet in an ${K}` })));
   const sr = $('#cd-search');
   // Select ORs (the header box: all those shown by the search) and delete them at once: encoding mistakes only.
@@ -1254,7 +1275,7 @@ function wireAll(c) {
   /* By OR range */
   $$('[data-cmode]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); LASTC.mode = a.dataset.cmode; emitChange('local'); }; });
   $$('[data-rgdel]').forEach((b) => { b.onclick = async () => { const x = f.ors.find((y) => y.id === b.dataset.rgdel);
-    const ok = await modal({ title: `Delete ${x.serial}–${x.serialTo}?`, body: '<p style="margin:0">Only for an encoding mistake.</p>', buttons: [{ label: 'Keep', value: false }, { label: 'Delete', cls: 'danger', value: true }] });
+    const ok = await modal({ title: `Delete ${x.bnLine ? bnLineText(f, x) : `${x.serial}–${x.serialTo}`}?`, body: '<p style="margin:0">Only for an encoding mistake.</p>', buttons: [{ label: 'Keep', value: false }, { label: 'Delete', cls: 'danger', value: true }] });
     if (ok) { const { id, ...rec } = x; await store.save('cer_ors', id, rec, by(refs), { deleted: true }); toast('Range deleted.', 'ok'); } }; });
   if ($('#rg-a')) $('#rg-a').onchange = (e) => store.save('cer_settings', 'orrange|' + o.id, { noA: !e.target.checked }, by(refs));
   if ($('#rg-enter')) {
@@ -1280,6 +1301,39 @@ function wireAll(c) {
     $('#cd-rgform').onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); const els = ['#rg-date', '#rg-from', '#rg-to', '#rg-amt', '#rg-cx'].map((k) => $(k)); const i = els.indexOf(e.target); if (i < 0 || i >= els.length - 2) saveRg(); else els[i + 1].focus(); };
   }
   if ($('#cd-form') && LASTC.mode === 'range') $('#cd-form').onchange = (e) => { Object.assign(LASTC, { form: e.target.value, bookletId: '', serial: '' }); emitChange('local'); };
+
+  /* Cash Ticket (Booklet No.) entry: Date | Booklet No. | Pcs | Value | Amount */
+  if ($('#bn-enter')) {
+    $('#cd-form').onchange = (e) => { Object.assign(LASTC, { form: e.target.value, bookletId: '', serial: '' }); emitChange('local'); };
+    const bkSel = $('#bn-bk'), pcsIn = $('#bn-pcs'), amtIn = $('#bn-amt'), valIn = $('#bn-val');
+    const face = () => +(bkSel.selectedOptions[0]?.dataset.face || 0), left = () => +(bkSel.selectedOptions[0]?.dataset.left || 0);
+    bkSel.onchange = () => { LASTC.bnBk = bkSel.value; valIn.value = face() ? money(face()) : ''; if (int(pcsIn.value)) amtIn.value = money(r2(int(pcsIn.value) * face())); };
+    pcsIn.oninput = () => { const q = int(pcsIn.value); amtIn.value = q && face() ? money(r2(q * face())) : ''; };
+    amtIn.oninput = () => { const a = num(amtIn.value); if (a && face()) { const q = a / face(); pcsIn.value = Math.abs(q - Math.round(q)) < 1e-6 ? Math.round(q) : ''; } };
+    amtIn.onblur = () => { const v = num(amtIn.value); if (v !== null) amtIn.value = money(v); };
+    const saveBn = async () => {
+      const b = f.booklets.find((x) => x.id === bkSel.value), date = $('#bn-date').value, q = int(pcsIn.value), p = $('#bn-part').value.trim().replace(/\s+/g, ' ') || FIXED_PART.cashbn;
+      if (!date) return bad('Enter the date.');
+      if (!b) return bad('Choose the Booklet No.');
+      const a = num(amtIn.value);
+      if (!q) return bad(a ? `₱${money(a)} is not a whole number of ₱${money(face())} tickets. Check the amount.` : 'Enter the pieces (Pcs) or the amount.');
+      if (q > left()) return bad(`BN. ${b.bn} has only ${left().toLocaleString('en-US')} pieces left.`);
+      const amt = r2(q * face());
+      if (c.audit.countDate && date > c.audit.countDate) { const ok = await modal({ title: 'Date after the cash count?', body: `<p style="margin:0">The date ${esc(fmtDate(date))} is after the cash count on ${esc(fmtDate(c.audit.countDate))}. Save it anyway?</p>`, buttons: [{ label: 'Go back', value: false }, { label: 'Save', cls: 'primary', value: true }] }); if (!ok) return; }
+      const lx = c.exam.lastExamDate;
+      const rec = { lguId: audit.lguId, officerId: o.id, form: 'cashbn', bookletId: b.id, bnLine: true, range: true, pcs: q, date, status: 'issued', items: [{ p, amt }], amount: amt, fund: c.curFund,
+        reportId: c.cur.pending || hasRange(c.cur) ? placeIn(c.fig.chains[c.curKey], date, 0, 'cashbn') : c.selId, ...(lx && date < lx ? { beg: true } : {}) };
+      $('#bn-enter').disabled = true;
+      try {
+        Object.assign(LASTC, { date, bnBk: b.id, bnPart: p, form: 'cashbn' });
+        await store.save('cer_ors', newId('ceror'), rec, by(refs));
+        toast(`BN. ${b.bn} · ${q} pcs · ₱${money(amt)} saved.`, 'ok');
+        setTimeout(() => { const el = $('#bn-date'); if (el) el.focus(); }, 80);
+      } finally { const btn = $('#bn-enter'); if (btn) btn.disabled = false; }
+    };
+    $('#bn-enter').onclick = saveBn;
+    $('#cd-bnform').onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); const els = ['#bn-date', '#bn-bk', '#bn-pcs', '#bn-amt', '#bn-part'].map((k) => $(k)); const i = els.indexOf(e.target); if (i < 0 || i >= els.length - 1) saveBn(); else els[i + 1].focus(); };
+  }
 
   /* Collections entry */
   const enter = $('#cd-enter');
@@ -1570,7 +1624,7 @@ export function depsBeforeOrs(f, o, fig) {
   return out;
 }
 // ORs in a report with a range whose number is outside it (e.g. the range was corrected).
-const strays = (ch) => ch.figs.filter(hasRange).flatMap((g) => g.ors.filter((x) => !inRec(g.rec, x.serial, x.form)));
+const strays = (ch) => ch.figs.filter(hasRange).flatMap((g) => g.ors.filter((x) => !x.bnLine && !inRec(g.rec, x.serial, x.form)));
 const byDate = (a, b) => String(a.date).localeCompare(String(b.date));
 // An OR not yet in a report whose number is in the OR Range of a report of this officer (any fund or report type): it goes there.
 const rangeHome = (fig, x) => { for (const ch of Object.values(fig.chains)) { const g = ch.figs.find((y) => hasRange(y) && inRec(y.rec, +x.serial, x.form)); if (g) return { ch, id: g.id }; } return null; };

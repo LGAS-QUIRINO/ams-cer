@@ -13,17 +13,19 @@ import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate,
 import { sameFund } from './funds.js';
 
 export const FORM_SHORT = { af51: 'Accountable Form 51 – LGU', af51b: 'Accountable Form 51 – Barangay', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate',
-  af52: 'AF 52 – Transfer of Large Cattle', af53: 'AF 53 – Ownership of Large Cattle', af54: 'AF 54 – Marriage License', af56: 'AF 56 – Real Property Tax (RPT)', cash: 'Cash Tickets', chk: 'Checks' };
+  af52: 'AF 52 – Transfer of Large Cattle', af53: 'AF 53 – Ownership of Large Cattle', af54: 'AF 54 – Marriage License', af56: 'AF 56 – Real Property Tax (RPT)', cash: 'Cash Ticket (Serial)', cashbn: 'Cash Ticket (Booklet No.)', chk: 'Checks' };
 // Accountable forms with money value: face value per piece by default (a booklet may carry another denomination, set with Edit).
-export const FACE = { af52: 10, af53: 5, af54: 2, cash: 5 };
+export const FACE = { af52: 10, af53: 5, af54: 2, cash: 5, cashbn: 5 };
 export const faceOf = (b) => { const v = b && b.faceValue !== undefined && b.faceValue !== null && b.faceValue !== '' ? b.faceValue : FACE[b && b.form]; return v ? Number(v) : 0; };
 const peso = (n) => '₱' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-// Cash tickets without serial numbers are counted by quantity. Each lot is stored on its own block of internal numbers
+// Cash tickets with a booklet number only (Cash Ticket (Booklet No.)): each booklet has its Booklet No. (bn), a fixed number of
+// pieces and one denomination; its pieces are counted, not numbered. Each booklet is stored on its own block of internal numbers
 // (never shown), so the usual arithmetic (used, unused, RAAF) still works by count.
 const NS_MAX = 20000, NS_STEP = 20000;
 let nsLast = 0;
 function nsBase() { let b = (Date.now() - 1.7e12) * NS_STEP; if (b <= nsLast) b = nsLast + NS_STEP; nsLast = b; return b; }
-const serialText = (b) => (b.noSerial ? 'No serial' : rangeText(b.from, b.to));
+export const bnText = (b) => (b && b.bn ? `BN. ${b.bn}` : 'BN. —');
+const serialText = (b) => (b.noSerial ? bnText(b) : rangeText(b.from, b.to));
 const rt = (b, rs) => (b && b.noSerial ? `${countRanges(rs)} pcs` : rangesText(rs));
 // The partly-used box for a lot without serials holds a number of pieces: unused (or used) pieces of the lot [a, z].
 function nsUnused(pv, a, z) {
@@ -150,6 +152,8 @@ export async function loadForms() {
   // An OR's booklet is the one holding its number (the Forms Register decides, not the Form Type chosen when it was encoded
   // or imported): an OR with no booklet, or none of its form holding the number, takes the officer's booklet that holds it
   // (its form too). Worked out on loading; the saved OR is not rewritten.
+  // Cash tickets once entered as "No serial" are the Cash Ticket (Booklet No.) form.
+  out.booklets.forEach((b) => { if (b.noSerial && b.form === 'cash') b.form = 'cashbn'; });
   const bkById = new Map(out.booklets.map((b) => [b.id, b]));
   out.ors.forEach((o) => {
     if (o.range || !o.serial) return;
@@ -159,9 +163,22 @@ export async function loadForms() {
     const b = mine.find((x) => x.form === o.form) || (mine.length === 1 ? mine[0] : null);
     if (b) { o.bookletId = b.id; if (b.form !== o.form) { o.formTyped = o.form; o.form = b.form; } }
   });
+  // Cash Ticket (Booklet No.) lines (Date, Booklet No., Pcs): each takes its pieces from the booklet's pieces still unused, in date
+  // order, on the booklet's internal numbers (worked out on loading; only the pieces are saved).
+  const bnTake = {};
+  out.ors.filter((o) => o.bnLine).sort((x, y) => String(x.date).localeCompare(String(y.date)) || String(x.id).localeCompare(String(y.id))).forEach((o) => {
+    const b = bkById.get(o.bookletId); o.range = true; o.bnNos = [];
+    if (!b) { o.serial = 0; o.serialTo = 0; return; }
+    const left = bnTake[b.id] = bnTake[b.id] || (Array.isArray(b.unusedAtStart) ? b.unusedAtStart.map((r) => [r[0], r[1]]) : [[b.from, b.to]]);
+    let need = +o.pcs || 0;
+    while (need > 0 && left.length) { const r = left[0], k = Math.min(need, r[1] - r[0] + 1); for (let i = 0; i < k; i++) o.bnNos.push(r[0] + i); r[0] += k; need -= k; if (r[0] > r[1]) left.shift(); }
+    o.bnShort = need;   // pieces beyond what the booklet has left
+    o.serial = o.bnNos[0] || b.to + 1; o.serialTo = o.bnNos[o.bnNos.length - 1] || o.serial;
+  });
   // Numbers encoded in Collections & Deposits (issued or cancelled) are used numbers of their booklet.
   const byBk = {}; out.ors.forEach((o) => {
     if (!o.range) { if (o.bookletId) (byBk[o.bookletId] = byBk[o.bookletId] || []).push({ n: o.serial, d: o.date }); return; }
+    if (o.bnLine) { (o.bnNos || []).forEach((n) => (byBk[o.bookletId] = byBk[o.bookletId] || []).push({ n, d: o.date, bn: true, beg: !!o.beg })); return; }
     // A line by OR range (from a cashbook): each number of the range is used, in whichever booklet holds it.
     const bks = out.booklets.filter((b) => b.form === o.form && !b.noSerial && (b.officerId === o.officerId || b.id === o.bookletId));
     for (let n = +o.serial; n <= +o.serialTo && n - o.serial < 5000; n++) { const b = bks.find((x) => x.from <= n && n <= x.to); if (b) (byBk[b.id] = byBk[b.id] || []).push({ n, d: o.date, rg: true, beg: !!o.beg }); }
@@ -428,7 +445,8 @@ function encodeHtml(refs, offs, q) {
   const formSel = `<div class="field"><label for="e-form">Form Type</label><select class="input" id="e-form">${formsFor(offs.f, offs.lguId).map(([k, l]) => `<option value="${k}" ${sel(k, LAST.form)}>${esc(l)}</option>`).join('')}</select></div>`;
   const range = `<div class="field"><label for="e-from">Serial From</label><input class="input r" id="e-from" inputmode="numeric" autocomplete="off"></div>
     <div class="field"><label for="e-to">Serial To</label><input class="input r" id="e-to" inputmode="numeric" autocomplete="off"></div>`;
-  const per = `<div class="field"><label for="e-per">Per Booklet</label><input class="input r" id="e-per" inputmode="numeric" value="${LAST.per}"></div>`;
+  const per = `<div class="field"><label for="e-per">Per Booklet</label><input class="input r" id="e-per" inputmode="numeric" value="${LAST.per}"></div>
+    <div class="field" id="e-facef" hidden><label for="e-face">Denomination (₱)</label><input class="input r" id="e-face" inputmode="decimal" value="${esc(LAST.face || FACE.cashbn)}"></div>`;
   const offSel = (id, label, extra = '') => `<div class="field"><label for="${id}">${label}</label><select class="input" id="${id}">${extra.replace(`value="${LAST.off}"`, `value="${LAST.off}" selected`)}<option value="">— Choose the officer —</option>${offs.filter((o) => o.id !== custId).map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.off)}>${esc(officerLabel(refs, o))}</option>`).join('')}</select></div>`;
   let fields = '';
   const custName = refs.lgu[offs.lguId]?.data.kind === 'province' ? 'PTO' : 'MTO';
@@ -471,7 +489,6 @@ function encodeHtml(refs, offs, q) {
         <details class="af-set"><summary>⚙ Settings</summary><div class="af-setbox">${ctlHtml}</div></details>
         ${openEnc ? '<button class="btn sm" type="button" id="af-encclose" aria-label="Close the encoding">✕</button>' : ''}</div></div>
     ${openEnc ? fields : ''}
-    ${openEnc && mv !== 'issue' ? `<label class="af-chkctl af-nsbox" id="e-nsbox" hidden><input type="checkbox" id="e-ns"> Cash tickets without serial numbers <span class="dim">· counted by quantity: one lot is entered, Serial To becomes the quantity</span></label>` : ''}
     ${openEnc ? '<div class="af-note af-prev" id="e-help"></div>' : ''}
     </div></section>`;
 }
@@ -515,9 +532,9 @@ function wireRegister(ctx, f, lguId, offs) {
   const preview = () => {
     const a = int($('#e-from').value), z = int($('#e-to').value), p = int(per?.value) || PER_BOOKLET;
     if (mv === 'issue') return;
-    if (isNs()) { if (!z) { help.innerHTML = helpText; return; }
+    if (isNs()) { if (!a) { help.innerHTML = helpText; return; }
       if (mv === 'starting') { help.innerHTML = startPreview(startPlan()); return; }
-      help.innerHTML = z > NS_MAX ? `<b class="warn-t">One lot takes up to ${NS_MAX.toLocaleString('en-US')} pieces.</b>` : `One lot of <b>${z} cash tickets</b> without serial numbers · ${peso(z * FACE.cash)}.`; return; }
+      const r = bnRead(); help.innerHTML = r.error ? `<b class="warn-t">${esc(r.error)}</b>` : `<b>${r.n} booklet${r.n > 1 ? 's' : ''}</b>: ${r.a === r.z ? `BN. ${r.a}` : `BN. ${r.a} to BN. ${r.z}`} · ${r.p.toLocaleString('en-US')} pcs each at ${peso(r.face)} · ${peso(r.n * r.p * r.face)}${r.n > 1 ? ' in all' : ''}.`; return; }
     if (!a || !z || z < a) { help.innerHTML = helpText; return; }
     if (z - a + 1 > MAX_PCS) { help.innerHTML = `<b class="warn-t">That range has ${(z - a + 1).toLocaleString('en-US')} pieces, more than one entry takes (${MAX_PCS.toLocaleString('en-US')}). Check the serial numbers.</b>`; return; }
     if (mv === 'starting') { help.innerHTML = startPreview(startPlan()); return; }
@@ -525,23 +542,25 @@ function wireRegister(ctx, f, lguId, offs) {
     const mid = bookletOf(a, p)[0] !== a ? ` <b class="warn-t">${a} is in the middle of booklet ${rangeText(...bookletOf(a, p))}; check the serial numbers.</b>` : '';
     help.innerHTML = `Splits into <b>${n} booklet${n > 1 ? 's' : ''}</b>${n <= 4 ? ': ' + parts.map(([x, y]) => rangeText(x, y)).join(', ') : ''}.${mid}`;
   };
-  ['#e-from', '#e-to', '#e-per'].forEach((s) => { const el = $(s); if (el) el.oninput = preview; });
+  ['#e-from', '#e-to', '#e-per', '#e-face'].forEach((s) => { const el = $(s); if (el) el.oninput = preview; });
   // Cash tickets without serial numbers: only the quantity is typed.
   wireSrcSelect($('#e-src'), refs, f, lguId);
   wireSrcSelect($('#e-rfrom'), refs, f, lguId);
   { const b = $('#e-setrcv'); if (b) b.onclick = () => setReceivedModal(refs, f, lguId); }
-  const nsBox = $('#e-nsbox'), nsTick = $('#e-ns');
-  const syncNs = () => { if (!nsBox) return; const cash = $('#e-form').value === 'cash'; nsBox.hidden = !cash; if (!cash) nsTick.checked = false;
-    const on = isNs(); $('#e-from').closest('.field').hidden = on; if (per) per.closest('.field').hidden = on;
-    $('label[for="e-to"]').textContent = on ? 'Quantity (pcs)' : 'Serial To'; preview(); };
-  if (nsBox) { $('#e-form').addEventListener('change', syncNs); nsTick.onchange = syncNs; syncNs(); }
+  // Cash Ticket (Booklet No.): From / To are Booklet Nos.; pieces per booklet and the denomination are typed.
+  const syncNs = () => { const on = isNs(), box = $('#e-from').closest('.af-enc');
+    $('label[for="e-from"]').textContent = on ? 'Booklet No. From' : 'Serial From'; $('label[for="e-to"]').textContent = on ? 'Booklet No. To' : 'Serial To';
+    if (per) { $('label[for="e-per"]').textContent = on ? 'Pcs per Booklet' : 'Per Booklet'; if (on && +per.value === PER_BOOKLET) per.value = LAST.perBn || ''; if (!on && !per.value) per.value = LAST.per || PER_BOOKLET; }
+    const ff = $('#e-facef'); if (ff) ff.hidden = !on; if (box) box.classList.toggle('bn', on && !!ff);
+    const pt = $('#e-part'); if (pt) { const t = pt.closest('label'); if (t) t.lastChild.textContent = on ? ' Partly used (one booklet: From and To the same Booklet No.)' : ' Partly used booklets'; } preview(); };
+  $('#e-form').addEventListener('change', syncNs); syncNs();
   const heldSel = $('#e-held');
   if (heldSel) heldSel.onchange = () => { $('#e-offrow').hidden = heldSel.value === 'custodian'; preview(); };
   wirePart('e', document, preview);
-  $('#e-from').addEventListener('change', () => { const a = int($('#e-from').value), t = $('#e-to'); if (a && mv !== 'issue') autoTo(t, a, a + (int(per?.value) || PER_BOOKLET) - 1); preview(); });
+  $('#e-from').addEventListener('change', () => { const a = int($('#e-from').value), t = $('#e-to'); if (a && mv !== 'issue' && !isNs()) autoTo(t, a, a + (int(per?.value) || PER_BOOKLET) - 1); preview(); });
   enter.onclick = async () => {
     enter.disabled = true;
-    Object.assign(LAST, { form: $('#e-form').value, date: $('#e-date').value, per: int(per?.value) || LAST.per,
+    Object.assign(LAST, { form: $('#e-form').value, date: $('#e-date').value, ...(isNs() ? { perBn: int(per?.value) || LAST.perBn, face: $('#e-face')?.value || LAST.face } : { per: int(per?.value) || LAST.per }),
       src: $('#e-src') ? $('#e-src').value : LAST.src, off: $('#e-off') ? $('#e-off').value : LAST.off, rby: $('#e-rby') ? $('#e-rby').value : LAST.rby,
       held: heldSel ? heldSel.value : LAST.held, rdate: $('#e-rdate') ? $('#e-rdate').value : LAST.rdate, rfrom: $('#e-rfrom') ? $('#e-rfrom').value : LAST.rfrom });
     try {
@@ -599,22 +618,36 @@ function unusedFromTyped(ranges, mode, a, z) {
 const hist = (refs, action, date, extra = {}) => ({ action, date, by: by(refs), at: new Date().toISOString(), ...extra });
 const bad = (m) => { toast(m, 'bad'); return false; };
 
-const isNs = () => !!$('#e-ns')?.checked && $('#e-form')?.value === 'cash';
-// Receive a lot of cash tickets without serial numbers.
+const isNs = () => $('#e-form')?.value === 'cashbn';
+// Cash Ticket (Booklet No.) on the encoding line: Booklet No. From – To, pieces per booklet, denomination.
+function bnRead() {
+  const a = int($('#e-from').value), z = int($('#e-to').value) || a, p = int($('#e-per')?.value), face = parseFloat(String($('#e-face')?.value ?? '').replace(/[,₱\s]/g, ''));
+  if (!a) return { error: 'Enter the Booklet No.' };
+  if (z < a) return { error: 'Booklet No. From must not be after To.' };
+  if (z - a + 1 > 500) return { error: 'That is more than 500 booklets. Check the Booklet Nos.' };
+  if ($('#e-per') && (!p || p > NS_MAX)) return { error: `Enter the pieces per booklet (1 to ${NS_MAX.toLocaleString('en-US')}).` };
+  if ($('#e-face') && (isNaN(face) || face <= 0)) return { error: 'Enter the denomination.' };
+  return { a, z, p, face, n: z - a + 1 };
+}
+const bnTaken = (f, lguId, a, z, skipId = '') => f.booklets.find((b) => b.id !== skipId && b.form === 'cashbn' && b.lguId === lguId && b.bn >= a && b.bn <= z);
+// Receive Cash Ticket (Booklet No.) booklets: one record per Booklet No.
 async function doReceiveNs(refs, f, lguId) {
-  const q = int($('#e-to').value), date = $('#e-date').value;
-  if (!q) return bad('Enter the quantity of cash tickets.');
-  if (q > NS_MAX) return bad(`One lot takes up to ${NS_MAX.toLocaleString('en-US')} pieces.`);
+  const r = bnRead(), date = $('#e-date').value;
+  if (r.error) return bad(r.error);
   if (!date) return bad('Enter the date received.');
+  const hit = bnTaken(f, lguId, r.a, r.z); if (hit) return bad(`BN. ${hit.bn} is already in the register.`);
   const rby = $('#e-rby').value;
   const officer = rby !== 'custodian' ? f.officers.find((o) => o.id === rby) : null;
   if (rby !== 'custodian' && !officer) return bad('Choose who received the cash tickets.');
-  const base = nsBase();
   const info = { receivedDate: date, receivedFrom: $('#e-src').value, reference: $('#e-ref').value.trim(), receivedDirect: !!officer };
-  await store.save('cer_booklets', newId('cerb'), { lguId, form: 'cash', noSerial: true, from: base, to: base + q - 1, qty: q, ...info, usedBefore: null,
-    ...(officer ? { source: 'direct', status: 'issued', officerId: officer.id, issuedDate: date, history: [hist(refs, 'direct', date, { officerId: officer.id, note: `${q} cash tickets without serial numbers · ${info.receivedFrom}` })] }
-      : { source: 'received', status: 'stock', officerId: '', issuedDate: '', history: [hist(refs, 'received', date, { note: `${q} cash tickets without serial numbers · ${info.receivedFrom}` })] }) }, by(refs));
-  toast(`${q} cash tickets received${officer ? ' directly by ' + officer.name : ''}.`, 'ok');
+  for (let bn = r.a; bn <= r.z; bn++) {
+    const base = nsBase();
+    await store.save('cer_booklets', newId('cerb'), { lguId, form: 'cashbn', noSerial: true, bn, faceValue: r.face, from: base, to: base + r.p - 1, qty: r.p, ...info, usedBefore: null,
+      ...(officer ? { source: 'direct', status: 'issued', officerId: officer.id, issuedDate: date, history: [hist(refs, 'direct', date, { officerId: officer.id, note: info.receivedFrom })] }
+        : { source: 'received', status: 'stock', officerId: '', issuedDate: '', history: [hist(refs, 'received', date, { note: info.receivedFrom })] }) }, by(refs), { quiet: true });
+  }
+  emitChange('local');
+  toast(`${r.n} booklet${r.n > 1 ? 's' : ''} of cash tickets received${officer ? ' directly by ' + officer.name : ''}.`, 'ok');
   return true;
 }
 async function doReceive(refs, f, lguId) {
@@ -669,9 +702,10 @@ async function doIssue(refs, f, lguId) {
   if (z < a || z - a + 1 > MAX_PCS) return bad('Check the serial range (From must not be after To).');
   if (!off) return bad('Choose the officer.');
   if (!date) return bad('Enter the date issued.');
-  const list = f.booklets.filter((b) => b.lguId === lguId && b.form === form && b.status === 'stock' && b.from >= a && b.to <= z);
-  const partial = f.booklets.filter((b) => b.lguId === lguId && b.form === form && b.from <= z && a <= b.to && !list.includes(b));
-  if (!list.length) return bad(partial.length ? `No booklet in stock fits that range. ${rangeText(partial[0].from, partial[0].to)} is ${statusOf(partial[0]).label.toLowerCase()}.` : 'No booklet in stock within that range.');
+  const bnF = form === 'cashbn';   // Cash Ticket (Booklet No.): From / To are Booklet Nos.
+  const list = f.booklets.filter((b) => b.lguId === lguId && b.form === form && b.status === 'stock' && (bnF ? b.bn >= a && b.bn <= z : b.from >= a && b.to <= z));
+  const partial = bnF ? f.booklets.filter((b) => b.lguId === lguId && b.form === form && b.bn >= a && b.bn <= z && !list.includes(b)) : f.booklets.filter((b) => b.lguId === lguId && b.form === form && b.from <= z && a <= b.to && !list.includes(b));
+  if (!list.length) return bad(partial.length ? `No booklet in stock fits that range. ${serialText(partial[0])} is ${statusOf(partial[0]).label.toLowerCase()}.` : 'No booklet in stock within that range.');
   for (const b of list) {
     if (b.receivedDate && date < b.receivedDate) return bad(`${serialText(b)} was received ${fmtDate(b.receivedDate)}, after the date issued.`);
   }
@@ -683,12 +717,15 @@ async function doIssue(refs, f, lguId) {
 // unused: null = the whole booklet is unused; ranges = its unused numbers (partly used).
 function startPlan() {
   if (isNs()) {
-    const q = int($('#e-to').value), held = $('#e-held').value;
-    if (!q) return { error: 'Enter the quantity of cash tickets.' };
-    if (q > NS_MAX) return { error: `One lot takes up to ${NS_MAX.toLocaleString('en-US')} pieces.` };
-    const parts = [{ x: 1, y: q, unused: null }], pv = partVals('e');
-    if (held !== 'custodian' && pv.on) { const r = nsUnused(pv, 1, q); if (r.error) return { error: r.error }; parts[0].unused = r.unused; }
-    return { parts, held, ns: true, warn: '' };
+    const r = bnRead(), held = $('#e-held').value;
+    if (r.error) return { error: r.error };
+    const parts = []; for (let bn = r.a; bn <= r.z; bn++) parts.push({ bn, x: 1, y: r.p, unused: null });
+    const pv = partVals('e');
+    if (held !== 'custodian' && pv.on) {
+      if (r.n > 1) return { error: 'A partly used booklet is entered by itself: From and To the same Booklet No.' };
+      const u = nsUnused(pv, 1, r.p); if (u.error) return { error: u.error }; parts[0].unused = u.unused;
+    }
+    return { parts, held, ns: true, face: r.face, warn: '' };
   }
   const a = int($('#e-from').value), z = int($('#e-to').value), p = int($('#e-per').value) || PER_BOOKLET;
   if (!a || !z || z < a) return { error: 'Enter the serial range (From must not be after To).' };
@@ -712,8 +749,8 @@ function startPlan() {
 function startPreview(plan) {
   if (plan.error) return `<b class="warn-t">${esc(plan.error)}</b>`;
   const n = plan.parts.length, show = plan.parts.length <= 8 ? plan.parts : plan.parts.filter((s) => s.unused);
-  if (plan.ns) { const s0 = plan.parts[0], q = s0.y, un = s0.unused ? countRanges(s0.unused) : q;
-    return `Will add <b>one lot of ${q} cash tickets</b> without serial numbers ${plan.held === 'custodian' ? 'to the custodian\'s stock' : 'in the officer\'s hands'}: ${q - un} used · <b>${un} unused</b> · ${peso(un * FACE.cash)}.`; }
+  if (plan.ns) { const s0 = plan.parts[0], q = s0.y, un = s0.unused ? countRanges(s0.unused) : q, n = plan.parts.length;
+    return `Will add <b>${n} booklet${n > 1 ? 's' : ''}</b> (${n > 1 ? `BN. ${s0.bn} to BN. ${plan.parts[n - 1].bn}` : `BN. ${s0.bn}`}, ${q.toLocaleString('en-US')} pcs each at ${peso(plan.face)}) ${plan.held === 'custodian' ? 'to the custodian\'s stock' : 'in the officer\'s hands'}${s0.unused ? `: ${q - un} used · <b>${un} unused</b> · ${peso(un * plan.face)}` : ''}.`; }
   const line = (s) => { if (!s.unused) return `<li>${rangeText(s.x, s.y)} · whole, unused</li>`;
     const q = countRanges(s.unused), used = s.y - s.x + 1 - q, sk = skippedOf({ from: s.x, to: s.y, qty: s.y - s.x + 1, unusedAtStart: s.unused });
     return `<li><b>${rangeText(s.x, s.y)}</b> · ${used} used · <b>${q} unused</b>${q ? ` (${rangesText(s.unused)})` : ''}${sk.length ? ` · <b class="warn-t">skipped ${rangesText(sk)}</b>` : ''}</li>`; };
@@ -729,14 +766,15 @@ async function doStarting(refs, f, lguId) {
   if (rdate && rdate > date) return bad(`The Date Received (${fmtDate(rdate)}) must be on or before the As of date (${fmtDate(date)}).`);
   const officer = plan.held !== 'custodian' ? f.officers.find((o) => o.id === plan.held) : null;
   if (plan.held !== 'custodian' && !officer) return bad('Choose who holds the booklets.');
+  if (plan.ns) { const hit = bnTaken(f, lguId, plan.parts[0].bn, plan.parts[plan.parts.length - 1].bn); if (hit) return bad(`BN. ${hit.bn} is already in the register.`); }
   if (!plan.ns) {
     for (const s of plan.parts) { const hit = overlaps(f, form, s.x, s.y); if (hit.length) return bad(`${FORM_SHORT[form]} ${rangeText(s.x, s.y)} overlaps ${rangeText(hit[0].from, hit[0].to)} already in the register.`); }
     if (!(await confirmBig(form, plan.parts[0].x, plan.parts[plan.parts.length - 1].y, plan.parts.length))) return false;
   }
-  const shift = plan.ns ? nsBase() - 1 : 0;
   for (const s0 of plan.parts) {
+    const shift = plan.ns ? nsBase() - 1 : 0;   // each Booklet No. on its own block of internal numbers
     const s = { x: s0.x + shift, y: s0.y + shift, unused: s0.unused ? s0.unused.map(([a, z]) => [a + shift, z + shift]) : null };
-    const base = { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, receivedDate: rdate, receivedFrom: rfrom, reference: '', source: 'starting', ...(plan.ns ? { noSerial: true } : {}) };
+    const base = { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, receivedDate: rdate, receivedFrom: rfrom, reference: '', source: 'starting', ...(plan.ns ? { noSerial: true, bn: s0.bn, faceValue: plan.face } : {}) };
     await store.save('cer_booklets', newId('cerb'), officer
       ? { ...base, status: 'issued', officerId: officer.id, issuedDate: date, issuedAsOf: true, beginAs: 'ao', beginDate: date, unusedAtStart: s.unused,
           history: [hist(refs, 'starting', date, { officerId: officer.id, note: s.unused ? `In the officer's hands on the start date, partly used: ${countRanges(s.unused)} unused` : 'In the officer\'s hands on the start date' })] }
@@ -858,7 +896,8 @@ async function editBooklet(ctx, f, b, offs) {
   const dis = locked ? 'disabled' : '';
   const body = `<div class="af-edit">
       <div class="field"><label for="x-form">Form Type</label><select class="input" id="x-form" ${b.noSerial ? "disabled" : dis}>${(b.form === 'chk' ? AF_FORMS : formsFor(f, b.lguId)).map(([k, l]) => `<option value="${k}" ${sel(k, b.form)}>${esc(l)}</option>`).join('')}</select></div>
-      ${b.noSerial ? `<div class="field af-span2"><label for="x-qty">Quantity (pcs) · no serial numbers</label><input class="input r mono" id="x-qty" inputmode="numeric" value="${b.qty}" ${dis}></div>`
+      ${b.noSerial ? `<div class="field"><label for="x-bn">Booklet No.</label><input class="input r mono" id="x-bn" inputmode="numeric" value="${esc(b.bn || '')}" placeholder="type the Booklet No."></div>
+      <div class="field"><label for="x-qty">Pieces in the booklet</label><input class="input r mono" id="x-qty" inputmode="numeric" value="${b.qty}" ${dis}></div>`
         : `<div class="field"><label for="x-from">Serial From</label><input class="input r mono" id="x-from" inputmode="numeric" value="${b.from}" ${dis}></div>
       <div class="field"><label for="x-to">Serial To</label><input class="input r mono" id="x-to" inputmode="numeric" value="${b.to}" ${dis}></div>`}
       ${FACE[b.form] ? `<div class="field"><label for="x-face">Face Value (₱ per piece)</label><input class="input r" id="x-face" inputmode="decimal" value="${faceOf(b)}"><span class="hint">Default ₱${FACE[b.form]}</span></div>` : ''}
@@ -879,7 +918,10 @@ async function editBooklet(ctx, f, b, offs) {
   const read = (bg) => {
     const form = $('#x-form', bg).value;
     let a, z;
-    if (b.noSerial) { const q = int($('#x-qty', bg).value); if (!q || q > NS_MAX) return { error: `Enter the quantity (1 to ${NS_MAX.toLocaleString('en-US')}).` }; a = b.from; z = b.from + q - 1; }
+    let bn;
+    if (b.noSerial) { const q = int($('#x-qty', bg).value); if (!q || q > NS_MAX) return { error: `Enter the pieces (1 to ${NS_MAX.toLocaleString('en-US')}).` }; a = b.from; z = b.from + q - 1;
+      bn = int($('#x-bn', bg).value); if (!bn) return { error: 'Enter the Booklet No.' };
+      const hit = bnTaken(f, b.lguId, bn, bn, b.id); if (hit) return { error: `BN. ${bn} is already in the register.` }; }
     else {
       a = int($('#x-from', bg).value); z = int($('#x-to', bg).value);
       if (!a || !z || z < a) return { error: 'Enter the serial range (From must not be after To).' };
@@ -887,7 +929,7 @@ async function editBooklet(ctx, f, b, offs) {
       const hit = overlaps(f, form, a, z, b.id);
       if (hit.length) return { error: `${FORM_SHORT[form]} ${rangeText(a, z)} overlaps ${rangeText(hit[0].from, hit[0].to)} already in the register.` };
     }
-    const next = { form, from: a, to: z, qty: z - a + 1, receivedDate: $('#x-rdate', bg).value, receivedFrom: $('#x-src', bg).value, reference: $('#x-ref', bg).value.trim() };
+    const next = { form, from: a, to: z, qty: z - a + 1, receivedDate: $('#x-rdate', bg).value, receivedFrom: $('#x-src', bg).value, reference: $('#x-ref', bg).value.trim(), ...(b.noSerial ? { bn } : {}) };
     if ($('#x-acct', bg)) next.bankAccount = $('#x-acct', bg).value.trim();
     if ($('#x-fund', bg)) next.fund = $('#x-fund', bg).value;
     if ($('#x-face', bg)) { const v = parseFloat(String($('#x-face', bg).value).replace(/[,₱\s]/g, '')); if (isNaN(v) || v <= 0) return { error: 'Enter the face value per piece.' }; next.faceValue = v; }
@@ -913,7 +955,7 @@ async function editBooklet(ctx, f, b, offs) {
     box.innerHTML = `Before receipts in Collections: ${n.qty - q} used · <b>${q} unused</b>${q && q < n.qty && !b.noSerial ? ` (${rangesText(un)})` : ''}${faceOf({ ...b, ...n }) && q ? ` · ${peso(q * faceOf({ ...b, ...n }))}` : ''}${sk.length ? ` · <b class="warn-t">skipped ${rangesText(sk)}</b>` : ''}.`;
   };
   const v = await modal({ title: `Edit ${FORM_SHORT[b.form] || b.form} ${serialText(b)}`, wide: true, body,
-    onOpen: (bg) => { wireAcct(bg, 'x', f, b.officerId ? (f.officers.find((o) => o.id === b.officerId)?.lguId || b.lguId) : b.lguId); wireSrcSelect($('#x-src', bg), refs, f, b.lguId); $$('#x-from, #x-to, #x-form, #x-qty, #x-face', bg).forEach((el) => { el.oninput = () => showPrev(bg); el.onchange = () => showPrev(bg); }); wirePart('x', bg, () => showPrev(bg)); showPrev(bg); },
+    onOpen: (bg) => { wireAcct(bg, 'x', f, b.officerId ? (f.officers.find((o) => o.id === b.officerId)?.lguId || b.lguId) : b.lguId); wireSrcSelect($('#x-src', bg), refs, f, b.lguId); $$('#x-from, #x-to, #x-form, #x-qty, #x-face, #x-bn', bg).forEach((el) => { el.oninput = () => showPrev(bg); el.onchange = () => showPrev(bg); }); wirePart('x', bg, () => showPrev(bg)); showPrev(bg); },
     buttons: [{ label: 'Cancel', value: null }, { label: 'Save Correction', cls: 'primary', value: 'save', check: (bg) => {
       const r = read(bg); if (r.error) { toast(r.error, 'bad'); return false; }
       out = { next: r.next, why: $('#x-why', bg).value.trim() }; return true; } }] });
@@ -922,6 +964,7 @@ async function editBooklet(ctx, f, b, offs) {
   const un = (x) => (Array.isArray(x) ? (x.length ? rt(b, x) : 'none') : 'whole booklet');
   const changes = [];
   if (n.form !== b.form) changes.push(`form ${FORM_SHORT[b.form]} → ${FORM_SHORT[n.form]}`);
+  if (b.noSerial && n.bn !== b.bn) changes.push(`Booklet No. ${b.bn || '—'} → ${n.bn}`);
   if (n.from !== b.from || n.to !== b.to) changes.push(b.noSerial ? `quantity ${b.qty} → ${n.qty}` : `serials ${serialText(b)} → ${rangeText(n.from, n.to)}`);
   if ('faceValue' in n && n.faceValue !== faceOf(b)) changes.push(`face value ₱${faceOf(b)} → ₱${n.faceValue}`);
   if ((n.receivedDate || '') !== (b.receivedDate || '')) changes.push(`date received ${fmtDate(b.receivedDate) || '—'} → ${fmtDate(n.receivedDate) || '—'}`);
@@ -1555,7 +1598,8 @@ export const cutoffOf = (f, examId) => (f.cutoffs || []).find((c) => c.id === ex
 export function cutoffLines(f, examId) {
   const c = cutoffOf(f, examId); if (!c) return [];
   return (c.lines || []).map((l) => { const b = l.bookletId ? f.booklets.find((x) => x.id === l.bookletId) : null;
-    return { ...l, b, form: b ? b.form : l.form, from: b ? b.from : l.from, to: b ? b.to : l.to, ns: b ? !!b.noSerial : !!l.ns, ranges: l.ranges || [] }; });
+    const form = b ? b.form : l.form === 'cash' && l.ns ? 'cashbn' : l.form;
+    return { ...l, b, form, from: b ? b.from : l.from, to: b ? b.to : l.to, ns: b ? !!b.noSerial : !!l.ns, bn: b ? b.bn : l.bn, ranges: l.ranges || [] }; });
 }
 // The officer's booklets for the cut-off dropdown: in hand per the register on the count date (beginning + received), not lost.
 // Only booklets with numbers still unused per the register (ORs encoded in Collections are used) and not yet entered at this cut-off.
@@ -1569,7 +1613,7 @@ export function cutoffChoices(f, officerId, countDate, examId = '', stockReg = '
 }
 // A booklet's unused numbers as of a date (beginning, ORs encoded and checks in the CkDJ taken out): for the cut-off.
 export const unusedAt = (b, date) => rawUnused(b, date);
-export const bookletName = (b) => `${FORM_SHORT[b.form] || b.form} · ${b.noSerial ? `${b.qty} pcs (no serial)` : `${b.from}–${b.to}`}${b.form === 'chk' && b.fund ? ` · ${b.fund}` : ''}`;
+export const bookletName = (b) => `${FORM_SHORT[b.form] || b.form} · ${b.noSerial ? bnText(b) : `${b.from}–${b.to}`}${b.form === 'chk' && b.fund ? ` · ${b.fund}` : ''}`;
 export function parseCutRanges(text, from, to) { return parseRanges(text, from, to); }
 
 // For Cash Count and Reports: the remaining forms at the cut-off, one row per line entered.
@@ -1577,8 +1621,8 @@ export function unusedFormsOf(f, officerId, exam) {
   if (!exam) return [];
   return cutoffLines(f, exam.id).filter((l) => !l.np).map((l) => {
     const qty = countRanges(l.ranges), face = faceOf(l.b || { form: l.form });
-    return { id: l.id, bookletId: l.bookletId, form: l.form, name: FORM_SHORT[l.form] || l.form, from: l.ns ? '' : l.from, to: l.ns ? '' : l.to, ns: l.ns, ranges: l.ranges, qty,
-      text: l.ns ? `${qty} pcs (no serial)` : rangesText(l.ranges), face, amount: face * qty, other: !l.bookletId, fund: l.b ? l.b.fund || l.b.bankAccount || '' : '' };
+    return { id: l.id, bookletId: l.bookletId, form: l.form, name: FORM_SHORT[l.form] || l.form, from: l.ns ? '' : l.from, to: l.ns ? '' : l.to, ns: l.ns, bn: l.bn, ranges: l.ranges, qty,
+      text: l.ns ? bnText(l) : rangesText(l.ranges), face, amount: face * qty, other: !l.bookletId, fund: l.b ? l.b.fund || l.b.bankAccount || '' : '' };
   }).sort(saafOrder);
 }
 // The SAAF's order: AF 51 and the forms with money value first, then the CTCs, the checks last (grouped by fund); by serial within.
@@ -1588,7 +1632,7 @@ function saafOrder(a, b) {
 }
 // Booklets ticked Not presented at the cut-off.
 export const notPresentedOf = (f, exam, to) => (exam ? cutoffLines(f, exam.id).filter((l) => l.np).map((l) => { const un = l.b ? rawUnused(l.b, to) : [];
-  return { id: l.id, bookletId: l.bookletId, form: l.form, name: FORM_SHORT[l.form] || l.form, from: l.from, to: l.to, ns: l.ns, qty: countRanges(un), text: rangesText(un) }; }) : []);
+  return { id: l.id, bookletId: l.bookletId, form: l.form, name: FORM_SHORT[l.form] || l.form, from: l.from, to: l.to, ns: l.ns, bn: l.bn, qty: countRanges(un), text: l.ns ? `${countRanges(un)} pcs` : rangesText(un) }; }) : []);
 // The last check issued per checkbook at the cut-off: the number before the first unused one (all used: the last of the checkbook).
 export function lastChecksOf(f, examIds) {
   const out = [];
@@ -1647,7 +1691,7 @@ export function saafRows(f, officerId, exam, from, to, advs = []) {
     const count = cut ? mergeRanges(mine.filter((l) => !l.np).flatMap((l) => l.ranges)) : null;
     if (!beg.length && !rec.length && !end.length && !(count && count.length)) return;
     const issued = subtractRanges([...beg, ...rec], np || !count ? end : count);
-    out.push({ np, remarks: np ? 'Not presented' : '', id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, face: faceOf(b), beg, rec, issued, end, count,
+    out.push({ np, remarks: np ? 'Not presented' : '', id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, bn: b.bn, face: faceOf(b), beg, rec, issued, end, count,
       diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || b.bankAccount || '', date: recD || b.receivedDate || '', stock: true });
   });
   f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && b.issuedDate <= to)
@@ -1664,16 +1708,16 @@ export function saafRows(f, officerId, exam, from, to, advs = []) {
       const end = b.status === 'lost' ? [] : b.form === 'chk' && count !== null ? count : b.form === 'chk' ? subtractRanges(subtractRanges([...beg, ...rec], caUsed), (b.orNos || []).filter((x) => x.d && x.d <= to).map((x) => [x.n, x.n])) : rawUnused(b, to);
       if (!beg.length && !rec.length && !end.length && !(count && count.length)) return;
       const issued = subtractRanges([...beg, ...rec], np || !count ? end : count);
-      out.push({ np, remarks: np ? 'Not presented' : '', id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, face: faceOf(b), beg, rec, issued, end, count,
+      out.push({ np, remarks: np ? 'Not presented' : '', id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, bn: b.bn, face: faceOf(b), beg, rec, issued, end, count,
         diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || b.bankAccount || '', date: b.receivedDate && !isBeg(b, from) ? b.issuedDate || b.receivedDate : b.issuedDate || '' });
     });
-  lines.filter((l) => !l.bookletId).forEach((l) => out.push({ id: l.id, form: l.form, name: FORM_SHORT[l.form] || l.form, booklet: [l.from, l.to], ns: l.ns, face: faceOf({ form: l.form }), beg: [], rec: [], issued: [], end: [], count: l.ranges, diff: -countRanges(l.ranges), fund: '', other: true }));
+  lines.filter((l) => !l.bookletId).forEach((l) => out.push({ id: l.id, form: l.form, name: FORM_SHORT[l.form] || l.form, booklet: [l.from, l.to], ns: l.ns, bn: l.bn, face: faceOf({ form: l.form }), beg: [], rec: [], issued: [], end: [], count: l.ranges, diff: -countRanges(l.ranges), fund: '', other: true }));
   // Within a form: the beginning balance first (starting inventory / AO's beginning), then those received (by date received), then forms not in the register.
   const rank = (r) => (r.other ? 2 : r.beg.length ? 0 : 1);
   // Forms with money value and the AF 51 first, then the CTCs, the checks last.
   const grp = (r) => (r.form === 'chk' ? 2 : /^ctc/.test(r.form) ? 1 : 0);
   // Received: in the order received (the first series received first); same date: by serial.
-  return out.sort((a, b) => grp(a) - grp(b) || a.form.localeCompare(b.form) || rank(a) - rank(b) || (rank(a) === 1 ? String(a.date || '').localeCompare(String(b.date || '')) : 0) || a.booklet[0] - b.booklet[0]);
+  return out.sort((a, b) => grp(a) - grp(b) || a.form.localeCompare(b.form) || rank(a) - rank(b) || (rank(a) === 1 && !(a.bn && b.bn) ? String(a.date || '').localeCompare(String(b.date || '')) : 0) || (a.bn && b.bn ? a.bn - b.bn : 0) || a.booklet[0] - b.booklet[0]);
 }
 
 // For Verification (once encoding is complete): the cut-off against the register and the ORs encoded.
@@ -1685,9 +1729,9 @@ export function cutoffFindings(f, o, exam, from, to) {
   f.booklets.filter((b) => b.officerId === o.id && b.status !== 'stock' && b.issuedDate && b.issuedDate <= to).forEach((b) => {
     const name = `${FORM_SHORT[b.form] || b.form} ${serialText(b)}`;
     const mine = lines.filter((l) => l.bookletId === b.id);
-    if (mine.length && mine.every((l) => l.np)) { add(`npt|${b.id}`, `${name}: in the officer's hands per the register (${rangesText(rawUnused(b, to)) || 'none unused'}), but not presented at the cash count.`); return; }
+    if (mine.length && mine.every((l) => l.np)) { add(`npt|${b.id}`, `${name}: in the officer's hands per the register (${rt(b, rawUnused(b, to)) || 'none unused'}), but not presented at the cash count.`); return; }
     if (!mine.length) {
-      if (b.status !== 'lost' && statusOf(b).key !== 'done') add(`np|${b.id}`, `${name}: in the officer's hands per the register (${rangesText(rawUnused(b, to)) || 'none unused'}), but not presented at the cut-off.`);
+      if (b.status !== 'lost' && statusOf(b).key !== 'done') add(`np|${b.id}`, `${name}: in the officer's hands per the register (${rt(b, rawUnused(b, to)) || 'none unused'}), but not presented at the cut-off.`);
       return;
     }
     if (b.form === 'chk' || b.noSerial) return;

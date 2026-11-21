@@ -1051,3 +1051,10 @@ table.af-reg.tr-month{min-width:0}
 .cd-serbdc { margin: 8px 0 }
 .cd-lolock .input[disabled] { background: #f3f6fb; color: var(--ink, #1c2a44) }
 .cd-lotag { font-size: 12px; margin-top: 3px }
+/* Cash Ticket (Booklet No.) */
+.af-enc.g9.bn{grid-template-columns:1.3fr .9fr .9fr .7fr .7fr 1fr 1.5fr 1.2fr 1fr auto}
+.af-enc.g9s.bn{grid-template-columns:1.3fr .9fr .9fr .7fr .7fr 1fr 1fr 1.2fr 1.2fr auto}
+@media (max-width:1500px){ .af-enc.g9.bn{grid-template-columns:repeat(5,minmax(0,1fr))} }
+@media (max-width:1300px){ .af-enc.g9s.bn{grid-template-columns:repeat(4,minmax(0,1fr))} }
+@media (max-width:760px){ .af-enc.g9.bn,.af-enc.g9s.bn{grid-template-columns:1fr} }
+.cd-bnentry{margin:10px 0 4px} .sd-w-bn{width:210px}

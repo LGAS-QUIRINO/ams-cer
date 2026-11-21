@@ -27,7 +27,7 @@ const FUNCS_BRGY = [['collecting', 'Collecting'], ['disbursing', 'Disbursing (Ca
 const FUNC_NAME = { collecting: 'Collecting', disbursing: 'Disbursing', special: 'Special Disbursing', liquidating: 'Liquidating', custodian: 'Custodian', pettycash: 'Petty Cash Custodian' };
 // Accountable forms an officer collects with (starting list; more come with Accountable Forms).
 export const FORMS = [['af51', 'Accountable Form 51 – LGU'], ['af51b', 'Accountable Form 51 – Barangay'], ['ctci', 'CTC – Individual'], ['ctcc', 'CTC – Corporate'],
-  ['af52', 'AF 52 – Certificate of Transfer of Large Cattle'], ['af53', 'AF 53 – Certificate of Ownership of Large Cattle'], ['af54', 'AF 54 – Marriage License'], ['af56', 'AF 56 – Real Property Tax (RPT)'], ['cash', 'Cash Tickets']];
+  ['af52', 'AF 52 – Certificate of Transfer of Large Cattle'], ['af53', 'AF 53 – Certificate of Ownership of Large Cattle'], ['af54', 'AF 54 – Marriage License'], ['af56', 'AF 56 – Real Property Tax (RPT)'], ['cash', 'Cash Ticket (Serial)'], ['cashbn', 'Cash Ticket (Booklet No.)']];
 export const FORM_NAME = Object.fromEntries(FORMS);
 // AF 51 has a barangay and an LGU version: an auditee sees only its own. Older barangay setups saved with the LGU AF 51 are read as the barangay one.
 export const formsForLgu = (lgu) => FORMS.filter(([k]) => (isBrgy(lgu) ? k !== 'af51' : k !== 'af51b'));
