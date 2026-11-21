@@ -128,8 +128,7 @@ function gf74a(c) {
   const items = (cnt.items || []).map((it) => { const a = num(it.allowed ?? it.presented) ?? 0; return { ...it, particulars: itemText(it.particulars), allowed: a, dis: r2((+it.presented || 0) - a) }; });
   const allowed = r2(items.reduce((n, x) => n + x.allowed, 0)), disallowed = r2(items.reduce((n, x) => n + x.dis, 0));
   const forms = unusedFormsOf(c.f, o.id, exam, A.to);
-  const nps = notPresentedOf(c.f, exam, A.to), npMv = nps.some((x) => faceOf({ form: x.form }));
-  const SEE = `See ${c.annexNo === 'ANNEX B.1' ? 'Annex B.1' : 'Annex B'} (SAAF)`, SEEMV = `See ${c.annexMv === 'ANNEX B.2' ? 'Annex B.2' : 'Annex B'} (SAAF with Money Value)`;
+  const nps = notPresentedOf(c.f, exam, A.to);
   const withMv = forms.filter((x) => x.face && x.qty), without = forms.filter((x) => !x.face);
   const formsQty = without.reduce((n, x) => n + x.qty, 0), formsAmt = withMv.reduce((n, x) => n + x.amount, 0);
   const total = A.T('balance');
@@ -159,9 +158,9 @@ function gf74a(c) {
     <h3>C. INVENTORY OF UNUSED ACCOUNTABLE FORMS</h3>
     <div class="rp-two">
       <table class="rp-t"><thead><tr><th colspan="5">With Money Value</th></tr><tr><th>Name of Form</th><th class="r">Qty.</th><th>Inclusive Serial No.</th><th class="r">Denomination</th><th class="r">Amount</th></tr></thead>
-        <tbody>${withMv.length ? withMv.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${x.ns ? 'No serial' : esc(x.text)}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td></tr>`).join('') : `<tr><td colspan="5" class="c">${npMv ? SEEMV : 'None'}</td></tr>`}<tr class="tot"><td colspan="4">Total</td><td class="r">₱ ${money(formsAmt)}</td></tr></tbody></table>
+        <tbody>${withMv.length ? withMv.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${x.ns ? 'No serial' : esc(x.text)}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td></tr>`).join('') : `<tr><td colspan="5" class="c">None</td></tr>`}<tr class="tot"><td colspan="4">Total</td><td class="r">₱ ${money(formsAmt)}</td></tr></tbody></table>
       <table class="rp-t"><thead><tr><th colspan="3">Without Money Value</th></tr><tr><th>Name of Form</th><th class="r">Qty.</th><th>Inclusive Serial No.</th></tr></thead>
-        <tbody>${without.length ? without.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${esc(x.text) || 'None'}</td></tr>`).join('') : `<tr><td colspan="3" class="c">${c.hasNo ? SEE : 'None'}</td></tr>`}
+        <tbody>${without.length ? without.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${esc(x.text) || 'None'}</td></tr>`).join('') : `<tr><td colspan="3" class="c">None</td></tr>`}
         <tr class="tot"><td>Total</td><td class="r">${formsQty}</td><td></td></tr></tbody></table>
     </div>
     ${nps.length ? `<p class="rp-note">Forms not presented at the count: ${nps.map((x) => `${esc(x.name)} ${x.ns ? '(no serial)' : `${x.from} – ${x.to}`}`).join('; ')}. See ${c.hasMv && c.hasNo ? 'Annex B.1 and B.2' : 'Annex B'}.</p>` : ''}
@@ -205,7 +204,7 @@ function soaTable(A) {
 // A form with money value: it has a face value (denomination); checks never.
 export const isMvRow = (r) => !!r.face && r.form !== 'chk';
 // The form's full name on the SAAF with Money Value (as on the form).
-const MV_NAME = { af52: 'AF 52 Certificate of Transfer of Large Cattle', af53: 'AF 53 Certificate of Ownership of Large Cattle', af54: 'AF 54 Marriage License Certificate', cash: 'Cash Tickets' };
+const MV_NAME = { af52: 'AF 52 Certificate of Transfer of Large Cattle', af53: 'AF 53 Certificate of Ownership of Large Cattle', af54: 'AF 54 Marriage License Fee', cash: 'Cash Tickets' };
 // Annex B (B.2) · Statement of Accountability for Accountable Forms with Money Value: Balance Beg., Received, Issued, Balance
 // End, each From · To · Qty. · Denomin. · Amount; one line per range, the form's name on its first line.
 export function saafMvRows(c) {

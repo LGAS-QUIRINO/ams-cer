@@ -380,11 +380,11 @@ export async function downloadReport(c, ver) {
   const F0 = R(41);
   if (mvFit) mv.forEach((x, i) => { set(ws, `A${F0 + i}`, x.name); set(ws, `F${F0 + i}`, x.qty); set(ws, `J${F0 + i}`, x.ns ? 'No serial' : x.text); set(ws, `R${F0 + i}`, x.face); set(ws, `Z${F0 + i}`, x.amount); });
   if (nomvFit) nomv.forEach((x, i) => { set(ws, `AF${F0 + i}`, x.name); set(ws, `AN${F0 + i}`, x.qty); set(ws, `AR${F0 + i}`, x.text.replace(/ – /g, '- ')); });
-  // Nothing counted, or too many to list: see the SAAF; booklets not presented: noted on the next free line.
+  // Nothing to list: None; more than 10 lines: see the SAAF (Annex B, or B.1 / B.2); booklets not presented: noted on the next free line.
   const seeNo = `See ${c.annexNo === 'ANNEX B.1' ? 'Annex B.1' : 'Annex B'} (SAAF)`, seeMv = `See ${c.annexMv === 'ANNEX B.2' ? 'Annex B.2' : 'Annex B'} (SAAF with Money Value)`;
-  if (!nomv.length || !nomvFit) wideBox(ws, F0, 'AF', 'BA', !nomv.length && !c.hasNo ? 'None' : seeNo);
+  if (!nomv.length || !nomvFit) wideBox(ws, F0, 'AF', 'BA', !nomv.length ? 'None' : seeNo);
   else if (npLine) wideBox(ws, F0 + nomv.length, 'AF', 'BA', `Not presented: ${seeNo.replace('See', 'see')}`);
-  if (!mv.length) wideBox(ws, F0, 'A', 'AE', nps.some((x) => faceOf({ form: x.form })) ? seeMv : 'None');
+  if (!mv.length) wideBox(ws, F0, 'A', 'AE', 'None');
   else if (!mvFit) wideBox(ws, F0, 'A', 'AE', seeMv);
   const mvAmt = mv.reduce((s, x) => s + x.amount, 0), pcs = nomv.reduce((s, x) => s + x.qty, 0);
   set(ws, `AA${R(48)}`, mvAmt); set(ws, `AN${R(48)}`, pcs);

@@ -103,7 +103,7 @@ const OPEN = { rep: true, col: false, dep: false };   // which tab is shown (one
 export const resetTabs = () => { Object.keys(OPEN).forEach((k) => { OPEN[k] = k === 'rep'; }); };
 const NO_PART = 'No particular';   // an imported OR whose particular was left blank
 // Forms with one particular: filled in when encoding (still editable) and shown for an OR left without one. AF 51 is typed.
-export const FIXED_PART = { ctci: 'Community Tax', ctcc: 'Community Tax', af56: 'Real Property Tax', af54: 'Marriage License Certificate',
+export const FIXED_PART = { ctci: 'Community Tax', ctcc: 'Community Tax', af56: 'Real Property Tax', af54: 'Marriage License Fee',
   af52: 'Certificate of Transfer of Large Cattle', af53: 'Certificate of Ownership of Large Cattle', cash: 'Market Fees' };
 export const partOf = (form, p) => ((!p || p === NO_PART) && FIXED_PART[form] ? FIXED_PART[form] : p);
 const LASTC = { key: '', form: '', bookletId: '', serial: '', date: '', auto: true, status: 'issued', focus: '' };
