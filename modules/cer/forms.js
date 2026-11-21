@@ -471,7 +471,8 @@ function encodeHtml(refs, offs, q) {
       <div class="field"><label for="e-held">Held By</label><select class="input" id="e-held"><option value="custodian">${custL} · in stock</option>
         <optgroup label="Accountable Officer">${offs.filter((o) => o.id !== custId).map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.held)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>
-    <div class="af-startset"><button class="btn sm" type="button" id="e-setrcv">Set Date Received for a range</button><span class="dim">for starting inventory already entered</span></div>
+    <div class="af-startset"><button class="btn sm" type="button" id="e-setrcv">Set Date Received for a range</button><span class="dim">for starting inventory already entered</span>
+      <button class="btn sm" type="button" id="e-setpcs">Correct Pcs for a range</button><span class="dim">Cash Ticket (Booklet No.)</span></div>
     <div class="af-offrow one" id="e-offrow" ${offHeld ? '' : 'hidden'}>
       ${partBox('e')}
     </div>`;
@@ -547,6 +548,7 @@ function wireRegister(ctx, f, lguId, offs) {
   wireSrcSelect($('#e-src'), refs, f, lguId);
   wireSrcSelect($('#e-rfrom'), refs, f, lguId);
   { const b = $('#e-setrcv'); if (b) b.onclick = () => setReceivedModal(refs, f, lguId); }
+  { const b = $('#e-setpcs'); if (b) b.onclick = () => setPcsModal(refs, f, lguId); }
   // Cash Ticket (Booklet No.): From / To are Booklet Nos.; pieces per booklet and the denomination are typed.
   const syncNs = () => { const on = isNs(), box = $('#e-from').closest('.af-enc');
     $('label[for="e-from"]').textContent = on ? 'Booklet No. From' : 'Serial From'; $('label[for="e-to"]').textContent = on ? 'Booklet No. To' : 'Serial To';
@@ -814,6 +816,42 @@ async function setReceivedModal(refs, f, lguId) {
   Object.assign(LAST, { rdate: plan.d, rfrom: plan.src });
   emitChange('local');
   toast(`Date Received set on ${plan.list.length} booklet${plan.list.length > 1 ? 's' : ''}.`, 'ok');
+}
+
+// Cash Ticket (Booklet No.): the pieces per booklet corrected for a range of Booklet Nos. at once. Booklets with pieces already
+// used in Collections or counted at a cut-off keep theirs (correct those one by one with Edit).
+async function setPcsModal(refs, f, lguId) {
+  const locked = (b) => (b.orNos || []).length || (f.cutoffs || []).some((c) => (c.lines || []).some((l) => l.bookletId === b.id));
+  let plan = null;
+  const read = (bg) => { const a = int($('#sp-from', bg).value), z = int($('#sp-to', bg).value) || a, q = int($('#sp-pcs', bg).value);
+    if (!a || z < a) return { error: 'Enter the Booklet Nos. (From must not be after To).' };
+    if (!q || q > NS_MAX) return { error: `Enter the correct pieces per booklet (1 to ${NS_MAX.toLocaleString('en-US')}).` };
+    const all = f.booklets.filter((b) => b.lguId === lguId && b.form === 'cashbn' && b.bn >= a && b.bn <= z).sort((x, y) => x.bn - y.bn);
+    if (!all.length) return { error: `No Cash Ticket (Booklet No.) from BN. ${a} to BN. ${z} in this register.` };
+    const skip = all.filter(locked), list = all.filter((b) => !locked(b) && b.qty !== q);
+    return { a, z, q, list, skip, same: all.length - skip.length - list.length }; };
+  const prev = (bg) => { const r = read(bg); const box = $('#sp-prev', bg);
+    if (r.error) { box.innerHTML = int($('#sp-from', bg).value) ? `<b class="warn-t">${esc(r.error)}</b>` : ''; return; }
+    const was = [...new Set(r.list.map((b) => b.qty))].join(' / ');
+    box.innerHTML = `${r.list.length ? `<b>${r.list.length} booklet${r.list.length > 1 ? 's' : ''}</b>: ${was} → <b>${r.q.toLocaleString('en-US')} pcs</b>.` : 'Nothing to change.'}${r.same ? ` ${r.same} already ${r.q.toLocaleString('en-US')} pcs.` : ''}${r.skip.length ? ` <b class="warn-t">Skipped (pieces already used or counted; correct with Edit): ${r.skip.map((b) => 'BN. ' + b.bn).join(', ')}.</b>` : ''}`; };
+  await modal({ title: 'Correct Pcs for a range',
+    body: `<p class="af-note" style="margin-top:0">Cash Ticket (Booklet No.) in this register.</p>
+      <div class="cd-g2"><div class="field"><label for="sp-from">Booklet No. From</label><input class="input mono" id="sp-from" inputmode="numeric"></div>
+      <div class="field"><label for="sp-to">Booklet No. To</label><input class="input mono" id="sp-to" inputmode="numeric"></div>
+      <div class="field"><label for="sp-pcs">Correct Pcs per Booklet</label><input class="input mono r" id="sp-pcs" inputmode="numeric"></div><div></div></div>
+      <p class="af-note" id="sp-prev"></p>`,
+    onOpen: (bg) => { ['#sp-from', '#sp-to', '#sp-pcs'].forEach((k) => { $(k, bg).oninput = () => prev(bg); }); },
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Apply', cls: 'primary', value: 'ok', check: (bg) => { const r = read(bg); if (r.error) return bad(r.error); if (!r.list.length) return bad('Nothing to change.'); plan = r; return true; } }] });
+  if (!plan) return;
+  const today = new Date().toISOString().slice(0, 10);
+  for (const b of plan.list) {
+    const to = b.from + plan.q - 1;
+    const un = Array.isArray(b.unusedAtStart) ? b.unusedAtStart.map(([x, y]) => [x, Math.min(y, to)]).filter(([x, y]) => x <= y) : b.unusedAtStart;
+    await store.save('cer_booklets', b.id, { ...strip(b), to, qty: plan.q, ...(Array.isArray(b.unusedAtStart) ? { unusedAtStart: un } : {}),
+      history: [...(b.history || []), hist(refs, 'corrected', today, { note: `pieces ${b.qty} → ${plan.q} (corrected for BN. ${plan.a}–${plan.z})` })] }, by(refs), { quiet: true });
+  }
+  emitChange('local');
+  toast(`Pieces corrected on ${plan.list.length} booklet${plan.list.length > 1 ? 's' : ''}.`, 'ok');
 }
 
 /* ---------- one booklet: history and moves ---------- */
