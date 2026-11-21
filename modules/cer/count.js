@@ -14,8 +14,8 @@
 import { listT, liqOwners } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
-import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
-import { loadForms, stockRegOf, unusedFormsOf, notPresentedOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges, unusedAt, subtractRanges } from './forms.js';
+import { hasRole, isAuditor, by, mayView, cycleOk, cycles, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
+import { loadForms, registerOf, denomOf, MV_FORMS, stockRegOf, unusedFormsOf, notPresentedOf, exportXlsx, cutoffOf, cutoffChoices, bookletName, parseCutRanges, FORM_SHORT, rangesText, countRanges, unusedAt, subtractRanges } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, tagSameDay, ctcSplit, ctcBalance, ctcBegShare, isCtc, ctcAlloc, depPart } from './collections.js';
 import { accountsOf, caFund, restFund, fundOrder, carriedOpen, afterLast, prevSys } from './funds.js';
 
@@ -392,6 +392,8 @@ function wireCount(c) {
 
 function wireCut(c) {
   const { refs, f, exam, o, choices } = c;
+  // A form not in the register: the denomination of its cycle (forms with money value).
+  const fvOf = (form) => (MV_FORMS.includes(form) ? { faceValue: denomOf(f, registerOf(refs, c.audit.lguId), form, cycles().of[c.audit.id]) } : {});
   const sel = $('#cut-bk'); if (!sel) return;
   const ur = $('#cut-ur'), qty = $('#cut-qty');
   const isOther = () => sel.value === '__other';
@@ -404,10 +406,10 @@ function wireCut(c) {
     if (npOn()) return { line: { bookletId: bk().id, ranges: [], np: true } };
     if (isOther()) {
       const form = $('#cut-form').value, a = int($('#cut-from').value), z = int($('#cut-to').value);
-      if (nsNow()) { const q = int(ur.value) || 0; if (!a) return { error: 'Type the Booklet No. (in Series From).' }; return { line: { bookletId: '', form, from: 1, to: q, ns: true, bn: a, ranges: q ? [[1, q]] : [] } }; }
+      if (nsNow()) { const q = int(ur.value) || 0; if (!a) return { error: 'Type the Booklet No. (in Series From).' }; return { line: { bookletId: '', form, ...fvOf(form), from: 1, to: q, ns: true, bn: a, ranges: q ? [[1, q]] : [] } }; }
       if (!a || !z || z < a) return { error: 'Type the series (from and to) of the form.' };
       const p = parseCutRanges(ur.value, a, z, 'the series'); if (p.error) return { error: p.error };
-      return { line: { bookletId: '', form, from: a, to: z, ns: false, ranges: p.ranges } };
+      return { line: { bookletId: '', form, ...fvOf(form), from: a, to: z, ns: false, ranges: p.ranges } };
     }
     const b = bk();
     if (b.noSerial) { const q = int(ur.value) || 0; if (q > b.qty) return { error: `More than the ${b.qty} pieces of the booklet.` }; return { line: { bookletId: b.id, ranges: q ? [[b.to - q + 1, b.to]] : [] } }; }

@@ -9,13 +9,20 @@
 //   cer_raaf       the custodian's RAAF for a month and form             id = lguId|YYYY-MM|form   { lguId, month, form, beg, rec, iss, end, receivedDate }
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
-import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer, samePerson } from './cer.js';
+import { FORMS, FORM_NAME, hasRole, isAuditor, by, mayView, agencyName, fmtDate, loadCer, samePerson, cycles } from './cer.js';
+import { getCycle } from '../../js/cycle.js';
 import { sameFund } from './funds.js';
 
 export const FORM_SHORT = { af51: 'Accountable Form 51 – LGU', af51b: 'Accountable Form 51 – Barangay', ctci: 'CTC – Individual', ctcc: 'CTC – Corporate',
   af52: 'AF 52 – Transfer of Large Cattle', af53: 'AF 53 – Ownership of Large Cattle', af54: 'AF 54 – Marriage License', af56: 'AF 56 – Real Property Tax (RPT)', cash: 'Cash Ticket (Serial)', cashbn: 'Cash Ticket (Booklet No.)', chk: 'Checks' };
 // Accountable forms with money value: face value per piece by default (a booklet may carry another denomination, set with Edit).
 export const FACE = { af52: 10, af53: 5, af54: 2, cash: 5, cashbn: 5 };
+// Denominations per cycle and register (municipality / province), typed once (Denominations in the Forms Register):
+// cer_settings 'denom|<cycle>|<register>' { af52, af53, af54, cash, cashbn }. They fill in the denomination when forms with money
+// value are encoded in that cycle; each booklet keeps its own (saved on it), so booklets already encoded do not change.
+export const MV_FORMS = ['af52', 'af53', 'af54', 'cash', 'cashbn'];
+export const curCycleId = () => { const s = getCycle(), c = cycles(); return s === 'cur' || s === 'all' || !c.list.some((x) => x.id === s) ? c.current : s; };
+export const denomOf = (f, regId, form, cycleId = curCycleId()) => { const d = (f.settings || {})[`denom|${cycleId}|${regId}`]; const v = d ? +d[form] : 0; return v > 0 ? v : FACE[form] || 0; };
 export const faceOf = (b) => { const v = b && b.faceValue !== undefined && b.faceValue !== null && b.faceValue !== '' ? b.faceValue : FACE[b && b.form]; return v ? Number(v) : 0; };
 const peso = (n) => '₱' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // Cash tickets with a booklet number only (Cash Ticket (Booklet No.)): each booklet has its Booklet No. (bn), a fixed number of
@@ -368,7 +375,7 @@ function registerView(ctx, f, lguId) {
       <div class="af-toprow">
         <div class="field"><label for="af-lgu">Forms Register of</label><select class="input" id="af-lgu">${registers(refs).map((l) => `<option value="${esc(l.id)}" ${l.id === lguId ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
         <div class="field"><label for="af-find">Find a Serial No.</label><div class="af-pair af-findbox"><input class="input mono" id="af-find" inputmode="numeric" placeholder="e.g. 7311510" autocomplete="off"><button class="btn" type="button" id="af-findgo">Find</button></div></div>
-        <div class="af-topbtns"><a class="btn sm" href="#/cer/forms/raaf?lgu=${esc(lguId)}">RAAF Reconciliation</a><a class="btn sm" href="#/cer/forms/officer?lgu=${esc(lguId)}">By Accountable Officer</a><button class="btn sm" type="button" id="af-xls">Export to Excel</button></div>
+        <div class="af-topbtns"><button class="btn sm" type="button" id="af-denom">Denominations</button><a class="btn sm" href="#/cer/forms/raaf?lgu=${esc(lguId)}">RAAF Reconciliation</a><a class="btn sm" href="#/cer/forms/officer?lgu=${esc(lguId)}">By Accountable Officer</a><button class="btn sm" type="button" id="af-xls">Export to Excel</button></div>
       </div>
       <div class="ca-figs af-figs"><span>In stock <b>${stock.length}</b><small>booklets · ${stock.reduce((n, b) => n + b.qty, 0)} pcs</small></span>
         <span>With AOs <b style="color:#1d4fb8">${withAo.length}</b><small>${withAo.reduce((n, b) => n + unusedOf(b), 0)} unused pcs</small></span>
@@ -457,7 +464,7 @@ function encodeHtml(refs, offs, q) {
   const range = `<div class="field"><label for="e-from">Serial From</label><input class="input r" id="e-from" inputmode="numeric" autocomplete="off"></div>
     <div class="field"><label for="e-to">Serial To</label><input class="input r" id="e-to" inputmode="numeric" autocomplete="off"></div>`;
   const per = `<div class="field"><label for="e-per">Per Booklet</label><input class="input r" id="e-per" inputmode="numeric" value="${LAST.per}"></div>
-    <div class="field" id="e-facef" hidden><label for="e-face">Denomination (₱)</label><input class="input r" id="e-face" inputmode="decimal" value="${esc(LAST.face || FACE.cashbn)}"></div>`;
+    <div class="field" id="e-facef" hidden><label for="e-face">Denomination (₱)</label><input class="input r" id="e-face" inputmode="decimal" value="${esc(denomOf(offs.f, offs.lguId, LAST.form) || '')}"></div>`;
   const offSel = (id, label, extra = '') => `<div class="field"><label for="${id}">${label}</label><select class="input" id="${id}">${extra.replace(`value="${LAST.off}"`, `value="${LAST.off}" selected`)}<option value="">— Choose the officer —</option>${offs.filter((o) => o.id !== custId).map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.off)}>${esc(officerLabel(refs, o))}</option>`).join('')}</select></div>`;
   let fields = '';
   const custName = refs.lgu[offs.lguId]?.data.kind === 'province' ? 'PTO' : 'MTO';
@@ -508,6 +515,7 @@ function encodeHtml(refs, offs, q) {
 function wireRegister(ctx, f, lguId, offs) {
   const { refs } = ctx;
   $('#af-lgu').onchange = (e) => go({ lgu: e.target.value, cust: '' });
+  { const d = $('#af-denom'); if (d) d.onclick = () => denomModal(refs, f, lguId); }
   const findIn = $('#af-find');
   const doFind = () => findSerial(ctx, f, lguId, offs, findIn.value);
   $('#af-findgo').onclick = doFind;
@@ -560,11 +568,14 @@ function wireRegister(ctx, f, lguId, offs) {
   wireSrcSelect($('#e-rfrom'), refs, f, lguId);
   { const b = $('#e-setrcv'); if (b) b.onclick = () => setReceivedModal(refs, f, lguId); }
   { const b = $('#e-setpcs'); if (b) b.onclick = () => setPcsModal(refs, f, lguId); }
-  // Cash Ticket (Booklet No.): From / To are Booklet Nos.; pieces per booklet and the denomination are typed.
+  // Cash Ticket (Booklet No.): From / To are Booklet Nos.; pieces per booklet and the denomination are typed. Forms with money
+  // value: the denomination of the cycle filled in.
+  let lastForm = LAST.form;
   const syncNs = () => { const on = isNs(), box = $('#e-from').closest('.af-enc');
     $('label[for="e-from"]').textContent = on ? 'Booklet No. From' : 'Serial From'; $('label[for="e-to"]').textContent = on ? 'Booklet No. To' : 'Serial To';
     if (per) { $('label[for="e-per"]').textContent = on ? 'Pcs per Booklet' : 'Per Booklet'; if (on && +per.value === PER_BOOKLET) per.value = LAST.perBn || ''; if (!on && !per.value) per.value = LAST.per || PER_BOOKLET; }
-    const ff = $('#e-facef'); if (ff) ff.hidden = !on; if (box) box.classList.toggle('bn', on && !!ff);
+    const mvF = MV_FORMS.includes($('#e-form').value), ff = $('#e-facef'); if (ff) ff.hidden = !mvF; if (box) box.classList.toggle('bn', mvF && !!ff);
+    if (ff && mvF && $('#e-form').value !== lastForm) $('#e-face').value = denomOf(f, lguId, $('#e-form').value); lastForm = $('#e-form').value;
     const pt = $('#e-part'); if (pt) { const t = pt.closest('label'); if (t) t.lastChild.textContent = on ? ' Partly used (one booklet: From and To the same Booklet No.)' : ' Partly used booklets'; } preview(); };
   $('#e-form').addEventListener('change', syncNs); syncNs();
   const heldSel = $('#e-held');
@@ -573,7 +584,7 @@ function wireRegister(ctx, f, lguId, offs) {
   $('#e-from').addEventListener('change', () => { const a = int($('#e-from').value), t = $('#e-to'); if (a && mv !== 'issue' && !isNs()) autoTo(t, a, a + (int(per?.value) || PER_BOOKLET) - 1); preview(); });
   enter.onclick = async () => {
     enter.disabled = true;
-    Object.assign(LAST, { form: $('#e-form').value, date: $('#e-date').value, ...(isNs() ? { perBn: int(per?.value) || LAST.perBn, face: $('#e-face')?.value || LAST.face } : { per: int(per?.value) || LAST.per }),
+    Object.assign(LAST, { form: $('#e-form').value, date: $('#e-date').value, ...(isNs() ? { perBn: int(per?.value) || LAST.perBn } : { per: int(per?.value) || LAST.per }),
       src: $('#e-src') ? $('#e-src').value : LAST.src, off: $('#e-off') ? $('#e-off').value : LAST.off, rby: $('#e-rby') ? $('#e-rby').value : LAST.rby,
       held: heldSel ? heldSel.value : LAST.held, rdate: $('#e-rdate') ? $('#e-rdate').value : LAST.rdate, rfrom: $('#e-rfrom') ? $('#e-rfrom').value : LAST.rfrom });
     try {
@@ -642,6 +653,12 @@ function bnRead() {
   if ($('#e-face') && (isNaN(face) || face <= 0)) return { error: 'Enter the denomination.' };
   return { a, z, p, face, n: z - a + 1 };
 }
+// The denomination typed on the encoding line (forms with money value): { faceValue } to save on each booklet, or { error }.
+function faceTyped(form) {
+  if (!MV_FORMS.includes(form) || !$('#e-face')) return {};
+  const v = parseFloat(String($('#e-face').value).replace(/[,₱\s]/g, ''));
+  return isNaN(v) || v <= 0 ? { error: 'Enter the denomination.' } : { faceValue: v };
+}
 const bnTaken = (f, lguId, a, z, skipId = '') => f.booklets.find((b) => b.id !== skipId && b.form === 'cashbn' && b.lguId === lguId && b.bn >= a && b.bn <= z);
 // Receive Cash Ticket (Booklet No.) booklets: one record per Booklet No.
 async function doReceiveNs(refs, f, lguId) {
@@ -669,6 +686,7 @@ async function doReceive(refs, f, lguId) {
   if (!a || !z || z < a) return bad('Enter the serial range (From must not be after To).');
   if (z - a + 1 > MAX_PCS) return bad(`That range has ${z - a + 1} pieces. Check the serial numbers (one entry takes up to ${MAX_PCS.toLocaleString('en-US')}).`);
   if (!date) return bad('Enter the date received.');
+  const fv = faceTyped(form); if (fv.error) return bad(fv.error);
   const parts = splitRange(a, z, p);
   const plan = [];
   for (const [x, y] of parts) {
@@ -697,10 +715,10 @@ async function doReceive(refs, f, lguId) {
       await store.save('cer_booklets', b.id, { ...strip(b), ...info, history: [...(b.history || []), hist(refs, officer ? 'matcheddirect' : 'matched', date,
         { officerId: officer ? officer.id : '', note: officer ? `Received directly from ${info.receivedFrom}; matched to the logbook entry` : 'Receipt by the custodian matched to the logbook entry' })] }, by(refs), { quiet: true });
     } else if (officer) {
-      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...info, source: 'direct', status: 'issued', officerId: officer.id, issuedDate: date, usedBefore: null,
+      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...fv, ...info, source: 'direct', status: 'issued', officerId: officer.id, issuedDate: date, usedBefore: null,
         history: [hist(refs, 'direct', date, { officerId: officer.id, note: info.receivedFrom })] }, by(refs), { quiet: true });
     } else {
-      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...info, source: 'received', status: 'stock', officerId: '', issuedDate: '', usedBefore: null,
+      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...fv, ...info, source: 'received', status: 'stock', officerId: '', issuedDate: '', usedBefore: null,
         history: [hist(refs, 'received', date, { note: info.receivedFrom })] }, by(refs), { quiet: true });
     }
   }
@@ -776,6 +794,7 @@ async function doStarting(refs, f, lguId) {
   if (plan.error) return bad(plan.error);
   if (!date) return bad('Enter the as-of date.');
   const rdate = $('#e-rdate')?.value || '', rfrom = ($('#e-rfrom')?.value || '').replace(ADD_SRC, '');
+  const fv = plan.ns ? {} : faceTyped(form); if (fv.error) return bad(fv.error);
   if (rdate && rdate > date) return bad(`The Date Received (${fmtDate(rdate)}) must be on or before the As of date (${fmtDate(date)}).`);
   const officer = plan.held !== 'custodian' ? f.officers.find((o) => o.id === plan.held) : null;
   if (plan.held !== 'custodian' && !officer) return bad('Choose who holds the booklets.');
@@ -787,7 +806,7 @@ async function doStarting(refs, f, lguId) {
   for (const s0 of plan.parts) {
     const shift = plan.ns ? nsBase() - 1 : 0;   // each Booklet No. on its own block of internal numbers
     const s = { x: s0.x + shift, y: s0.y + shift, unused: s0.unused ? s0.unused.map(([a, z]) => [a + shift, z + shift]) : null };
-    const base = { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, receivedDate: rdate, receivedFrom: rfrom, reference: '', source: 'starting', ...(plan.ns ? { noSerial: true, bn: s0.bn, faceValue: plan.face } : {}) };
+    const base = { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...fv, receivedDate: rdate, receivedFrom: rfrom, reference: '', source: 'starting', ...(plan.ns ? { noSerial: true, bn: s0.bn, faceValue: plan.face } : {}) };
     await store.save('cer_booklets', newId('cerb'), officer
       ? { ...base, status: 'issued', officerId: officer.id, issuedDate: date, issuedAsOf: true, beginAs: 'ao', beginDate: date, unusedAtStart: s.unused,
           history: [hist(refs, 'starting', date, { officerId: officer.id, note: s.unused ? `In the officer's hands on the start date, partly used: ${countRanges(s.unused)} unused` : 'In the officer\'s hands on the start date' })] }
@@ -829,6 +848,23 @@ async function setReceivedModal(refs, f, lguId) {
   toast(`Date Received set on ${plan.list.length} booklet${plan.list.length > 1 ? 's' : ''}.`, 'ok');
 }
 
+// Denominations of the forms with money value for the cycle shown and this register (filled once per cycle).
+async function denomModal(refs, f, lguId) {
+  const cy = curCycleId(), cname = cycles().list.find((c) => c.id === cy)?.name || 'this cycle';
+  const cur = (f.settings || {})[`denom|${cy}|${lguId}`] || {};
+  const enc = canEncode(refs);
+  let out = null;
+  const v = await modal({ title: `Denominations · ${cname}`,
+    body: `<p class="af-note" style="margin-top:0">${esc(agencyName(refs, refs.lgu[lguId]))}: the denomination of each form with money value for this cycle. It is filled in when these forms are encoded in this cycle (Receive, Starting Inventory, Beginning Forms, Cash Count); a booklet can still have its own. Booklets already encoded keep theirs.</p>
+      <div class="cd-g2">${MV_FORMS.map((k) => `<div class="field"><label for="dn-${k}">${esc(FORM_SHORT[k])}</label><input class="input r" id="dn-${k}" inputmode="decimal" value="${esc(cur[k] || '')}" placeholder="${FACE[k]}" ${enc ? '' : 'disabled'}></div>`).join('')}</div>
+      <p class="af-note">Blank: ₱${MV_FORMS.map((k) => `${FACE[k]} (${FORM_SHORT[k].replace(/ –.*/, '')})`).join(', ')}.</p>`,
+    buttons: enc ? [{ label: 'Cancel', value: null }, { label: 'Save Denominations', cls: 'primary', value: 'save', check: (bg) => {
+      const d = {}; for (const k of MV_FORMS) { const t = String($(`#dn-${k}`, bg).value).replace(/[,₱\s]/g, ''); if (!t) continue; const n = parseFloat(t); if (isNaN(n) || n <= 0) return bad(`Check the denomination of ${FORM_SHORT[k]}.`); d[k] = n; }
+      out = d; return true; } }] : [{ label: 'Close', cls: 'primary', value: null }] });
+  if (v !== 'save' || !out) return;
+  await store.save('cer_settings', `denom|${cy}|${lguId}`, out, by(refs));
+  toast(`Denominations saved for ${cname}.`, 'ok');
+}
 // Cash Ticket (Booklet No.): the pieces per booklet corrected for a range of Booklet Nos. at once. Booklets with pieces already
 // used in Collections or counted at a cut-off keep theirs (correct those one by one with Edit).
 async function setPcsModal(refs, f, lguId) {
@@ -1669,7 +1705,7 @@ export function parseCutRanges(text, from, to) { return parseRanges(text, from, 
 export function unusedFormsOf(f, officerId, exam) {
   if (!exam) return [];
   return cutoffLines(f, exam.id).filter((l) => !l.np).map((l) => {
-    const qty = countRanges(l.ranges), face = faceOf(l.b || { form: l.form });
+    const qty = countRanges(l.ranges), face = faceOf(l.b || { form: l.form, faceValue: l.faceValue });
     return { id: l.id, bookletId: l.bookletId, form: l.form, name: FORM_SHORT[l.form] || l.form, from: l.ns ? '' : l.from, to: l.ns ? '' : l.to, ns: l.ns, bn: l.bn, ranges: l.ranges, qty,
       text: l.ns ? bnText(l) : rangesText(l.ranges), face, amount: face * qty, other: !l.bookletId, fund: l.b ? l.b.fund || l.b.bankAccount || '' : '' };
   }).sort(saafOrder);
@@ -1760,7 +1796,7 @@ export function saafRows(f, officerId, exam, from, to, advs = []) {
       out.push({ np, remarks: np ? 'Not presented' : '', id: b.id, form: b.form, name: FORM_SHORT[b.form] || b.form, booklet: [b.from, b.to], ns: !!b.noSerial, bn: b.bn, face: faceOf(b), beg, rec, issued, end, count,
         diff: count === null ? null : countRanges(end) - countRanges(count), fund: b.fund || b.bankAccount || '', date: b.receivedDate && !isBeg(b, from) ? b.issuedDate || b.receivedDate : b.issuedDate || '' });
     });
-  lines.filter((l) => !l.bookletId).forEach((l) => out.push({ id: l.id, form: l.form, name: FORM_SHORT[l.form] || l.form, booklet: [l.from, l.to], ns: l.ns, bn: l.bn, face: faceOf({ form: l.form }), beg: [], rec: [], issued: [], end: [], count: l.ranges, diff: -countRanges(l.ranges), fund: '', other: true }));
+  lines.filter((l) => !l.bookletId).forEach((l) => out.push({ id: l.id, form: l.form, name: FORM_SHORT[l.form] || l.form, booklet: [l.from, l.to], ns: l.ns, bn: l.bn, face: faceOf({ form: l.form, faceValue: l.faceValue }), beg: [], rec: [], issued: [], end: [], count: l.ranges, diff: -countRanges(l.ranges), fund: '', other: true }));
   // Within a form: the beginning balance first (starting inventory / AO's beginning), then those received (by date received), then forms not in the register.
   const rank = (r) => (r.other ? 2 : r.beg.length ? 0 : 1);
   // Forms with money value and the AF 51 first, then the CTCs, the checks last.
@@ -1866,12 +1902,20 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
     const src = srcNow(bg), form = src === 'bank' ? 'chk' : $('#g-form', bg).value;
     const a = int($('#g-from', bg).value), z = int($('#g-to', bg).value), p = int($('#g-per', bg).value) || (src === 'bank' ? CHK_PER : PER_BOOKLET);
     if (src === 'direct' && (!$('#g-srcsel', bg).value || $('#g-srcsel', bg).value === ADD_SRC)) return { error: 'Choose where the officer received the forms from.' };
-    if (form === 'cash' && $('#g-ns', bg).checked) {
-      if (!z) return { error: 'Enter the quantity of cash tickets.' };
-      if (z > NS_MAX) return { error: `One lot takes up to ${NS_MAX.toLocaleString('en-US')} pieces.` };
-      const parts = [{ x: 1, y: z, unused: null }], pv = partVals('g', bg);
-      if (pv.on) { const r = nsUnused(pv, 1, z); if (r.error) return { error: r.error }; parts[0].unused = r.unused; }
-      return { src, form, parts, per: p, ns: true };
+    // Forms with money value: the denomination (the cycle's, as filled in, or typed).
+    let face = 0;
+    if (src !== 'bank' && MV_FORMS.includes(form)) { face = parseFloat(String($('#g-face', bg).value).replace(/[,₱\s]/g, '')); if (isNaN(face) || face <= 0) return { error: 'Enter the denomination.' }; }
+    // Cash Ticket (Booklet No.): Booklet No. From – To, pieces per booklet; partly used: one booklet, its pieces.
+    if (form === 'cashbn') {
+      const zz = z || a, q = int($('#g-per', bg).value);
+      if (!a || zz < a) return { error: 'Enter the Booklet No. (From must not be after To).' };
+      if (zz - a + 1 > 500) return { error: 'That is more than 500 booklets. Check the Booklet Nos.' };
+      if (!q || q > NS_MAX) return { error: `Enter the pieces per booklet (1 to ${NS_MAX.toLocaleString('en-US')}).` };
+      const hit = bnTaken(f, regId, a, zz); if (hit) return { error: `BN. ${hit.bn} is already in the register${hit.officerId ? ' with ' + (f.officers.find((x) => x.id === hit.officerId)?.name || 'another officer') : ''}.` };
+      const parts = []; for (let bn = a; bn <= zz; bn++) parts.push({ bn, x: 1, y: q, unused: null });
+      const pv = partVals('g', bg);
+      if (pv.on) { if (parts.length > 1) return { error: 'A partly used booklet is entered by itself: From and To the same Booklet No.' }; const r = nsUnused(pv, 1, q); if (r.error) return { error: r.error }; parts[0].unused = r.unused; }
+      return { src, form, parts, per: q, ns: true, face };
     }
     if (!a || !z || z < a) return { error: 'Enter the serial range (From must not be after To).' };
     if (z - a + 1 > MAX_PCS) return { error: `That range has ${(z - a + 1).toLocaleString('en-US')} pieces. Check the serial numbers.` };
@@ -1896,9 +1940,9 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
       }
       return { error: `${FORM_SHORT[form]} ${rangeText(s.x, s.y)} overlaps ${rangeText(h.from, h.to)} already encoded${h.officerId ? ' with ' + (f.officers.find((x) => x.id === h.officerId)?.name || 'another officer') : h.status === 'stock' ? ' in the custodian\'s stock' : ''}.` };
     }
-    return { src, form, parts, per: p };
+    return { src, form, parts, per: p, face };
   };
-  let lastSrc = 'custodian';
+  let lastSrc = 'custodian', lastFk = '';
   const show = (bg) => {
     const src = srcNow(bg);
     $('#g-formbox', bg).hidden = src === 'bank'; $('#g-acctbox', bg).hidden = src !== 'bank'; $('#g-fundbox', bg).hidden = src !== 'bank'; $('#g-srcbox', bg).hidden = src === 'bank';
@@ -1907,14 +1951,16 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
     $('#g-srcnote', bg).textContent = src === 'bank' ? 'Checkbooks from the bank: shown only on this officer\'s records, never in the custodian\'s register.'
       : src === 'custodian' ? `Issued by the custodian (${cust}): added to the Forms Register as forms already in the officer's hands.`
       : `Received by the officer directly from ${$('#g-srcsel', bg).value}, not through the ${cust}: shown in the Forms Register marked "Received directly", never in the custodian's stock or RAAF.`;
-    const cash = src !== 'bank' && $('#g-form', bg).value === 'cash'; $('#g-nsbox', bg).hidden = !cash; if (!cash) $('#g-ns', bg).checked = false;
-    const ns = $('#g-ns', bg).checked;
-    $('#g-from', bg).closest('.field').hidden = ns; $('#g-per', bg).closest('.field').hidden = ns; $('label[for="g-to"]', bg).textContent = ns ? 'Quantity (pcs)' : 'Serial To';
+    const fk = src === 'bank' ? 'chk' : $('#g-form', bg).value, ns = fk === 'cashbn', mvF = MV_FORMS.includes(fk);
+    $('label[for="g-from"]', bg).textContent = ns ? 'Booklet No. From' : 'Serial From'; $('label[for="g-to"]', bg).textContent = ns ? 'Booklet No. To' : 'Serial To';
+    $('label[for="g-per"]', bg).textContent = ns ? 'Pcs per Booklet' : 'Per Booklet';
+    if (ns && fk !== lastFk && +$('#g-per', bg).value === LAST.per) $('#g-per', bg).value = LAST.perBn || ''; if (!ns && lastFk === 'cashbn' && src !== 'bank') $('#g-per', bg).value = LAST.per;
+    $('#g-facef', bg).hidden = !mvF; if (mvF && fk !== lastFk) $('#g-face', bg).value = denomOf(f, regId, fk, opts.cycleId || curCycleId()); lastFk = fk;
     const box = $('#g-prev', bg);
-    if ((!ns && !int($('#g-from', bg).value)) || !int($('#g-to', bg).value)) { box.innerHTML = ''; return; }
+    if (!int($('#g-from', bg).value) || (!ns && !int($('#g-to', bg).value))) { box.innerHTML = ''; return; }
     const r = read(bg);
     const st = r.error ? [] : r.parts.filter((s) => s.stock);
-    box.innerHTML = r.error ? `<b class="warn-t">${esc(r.error)}</b>` : startPreview({ parts: r.parts, held: o.id, ns: r.ns }).replace('in the officer\'s hands', `in ${esc(o.name)}'s hands ${cut ? 'at the cut-off' : 'at the last cash exam'}`)
+    box.innerHTML = r.error ? `<b class="warn-t">${esc(r.error)}</b>` : startPreview({ parts: r.parts, held: o.id, ns: r.ns, face: r.face }).replace('in the officer\'s hands', `in ${esc(o.name)}'s hands ${cut ? 'at the cut-off' : 'at the last cash exam'}`)
       + (st.length ? `<div class="msg info af-fromstock">${st.map((s) => `<b>${rangeText(s.x, s.y)}</b>`).join(', ')} ${st.length > 1 ? 'are' : 'is'} in the custodian's stock${st.length === 1 && st[0].stock.receivedDate ? ` (received ${esc(fmtDate(st[0].stock.receivedDate))})` : ''}: issued to ${esc(o.name)} ${cut ? 'as presented at the cut-off' : 'as beginning forms'} (the same booklet, not a second copy).</div>` : '');
   };
   // The officer's own forms (ticked in Audit Setup) only; the custodian, or an officer with none ticked yet, sees them all.
@@ -1937,8 +1983,8 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
         <div class="field"><label for="g-from">Serial From</label><input class="input r mono" id="g-from" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="g-to">Serial To</label><input class="input r mono" id="g-to" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="g-per">Per Booklet</label><input class="input r" id="g-per" inputmode="numeric" value="${LAST.per}"></div>
-        <label class="cer-chip af-span af-nschip" id="g-nsbox" hidden><input type="checkbox" id="g-ns"> Cash tickets without serial numbers (counted by quantity)</label>
-        <div class="af-span">${partBox('g', { note: `Partly used (numbers used ${cut ? 'before the cut-off' : 'on or before the last cash exam'}, ${fmtDate(asOf)}); for cash tickets without serials, type the number of pieces` })}</div>
+        <div class="field" id="g-facef" hidden><label for="g-face">Denomination (₱)</label><input class="input r" id="g-face" inputmode="decimal"></div>
+        <div class="af-span">${partBox('g', { note: `Partly used (numbers used ${cut ? 'before the cut-off' : 'on or before the last cash exam'}, ${fmtDate(asOf)}); Cash Ticket (Booklet No.): one booklet, type the number of pieces` })}</div>
       </div>
       <p class="af-note">Enter complete series. ${cut ? `For a booklet the officer presented at the cash count (${esc(fmtDate(asOf))}) that is not in the register yet. Then type its unused numbers in the cut-off.` : `Everything here is the officer's beginning <b>as of the last cash exam (${esc(fmtDate(asOf))})</b>;`} the real date received and date issued, if known, are added later with Edit in Accountable Forms. Receipts encoded in Collections &amp; Deposits are taken out on top of this.</p>
       <div class="af-note" id="g-prev"></div>`,
@@ -1946,22 +1992,22 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
       wireAcct(bg, 'g', f, o.lguId);
       $$('input[name="g-kind"]', bg).forEach((r) => { r.onchange = () => show(bg); });
       wireSrcSelect($('#g-srcsel', bg), refs, f, regId, () => show(bg), true);
-      $$('#g-from, #g-to, #g-per, #g-form, #g-ns', bg).forEach((el) => { el.oninput = () => show(bg); el.onchange = () => show(bg); });
+      $$('#g-from, #g-to, #g-per, #g-form, #g-face', bg).forEach((el) => { el.oninput = () => show(bg); el.onchange = () => show(bg); });
       // Other form…: the full list, with a reminder to tick the form in Audit Setup.
       const gf = $('#g-form', bg); gf.addEventListener('change', () => {
         if (gf.value === '__other') { gf.innerHTML = formOpts(allForms, ''); gf.selectedIndex = 0; $('#g-formhint', bg).textContent = ''; }
         const k = gf.value; $('#g-formhint', bg).textContent = mine.length && !mine.some(([x]) => x === k) ? 'Not ticked in Audit Setup for this officer: tick it there too.' : (mine.length ? '' : $('#g-formhint', bg).textContent);
         show(bg);
       });
-      $('#g-from', bg).addEventListener('change', () => { const a = int($('#g-from', bg).value), t = $('#g-to', bg); if (a && autoTo(t, a, bookletOf(a, int($('#g-per', bg).value) || (srcNow(bg) === 'bank' ? CHK_PER : PER_BOOKLET))[1])) show(bg); });
+      $('#g-from', bg).addEventListener('change', () => { const a = int($('#g-from', bg).value), t = $('#g-to', bg); if ($('#g-form', bg).value === 'cashbn' && srcNow(bg) !== 'bank') return show(bg); if (a && autoTo(t, a, bookletOf(a, int($('#g-per', bg).value) || (srcNow(bg) === 'bank' ? CHK_PER : PER_BOOKLET))[1])) show(bg); });
       wirePart('g', bg, () => show(bg)); show(bg); },
     buttons: [{ label: 'Cancel', value: null }, { label: cut ? 'Add Booklet' : 'Save Beginning Forms', cls: 'primary', value: 'save', check: (bg) => {
       const r = read(bg); if (r.error) { toast(r.error, 'bad'); return false; }
       plan = { ...r, acct: $('#g-acct', bg).value.trim(), fund: $('#g-fund', bg).value, other: $('#g-srcsel', bg).value }; return true; } }] });
   if (v !== 'save' || !plan) return false;
   if (!plan.ns && !(await confirmBig(plan.form, plan.parts[0].x, plan.parts[plan.parts.length - 1].y, plan.parts.length))) return false;
-  if (plan.ns) { const shift = nsBase() - 1; plan.parts = plan.parts.map((s) => ({ x: s.x + shift, y: s.y + shift, unused: s.unused ? s.unused.map(([a, z]) => [a + shift, z + shift]) : null })); }
-  if (plan.src === 'bank') Object.assign(LASTCHK, { acct: plan.acct, per: plan.per, fund: plan.fund }); else Object.assign(LAST, { form: plan.form, per: plan.per });
+  if (plan.ns) plan.parts = plan.parts.map((s) => { const shift = nsBase() - 1; return { bn: s.bn, x: s.x + shift, y: s.y + shift, unused: s.unused ? s.unused.map(([a, z]) => [a + shift, z + shift]) : null }; });
+  if (plan.src === 'bank') Object.assign(LASTCHK, { acct: plan.acct, per: plan.per, fund: plan.fund }); else Object.assign(LAST, { form: plan.form, ...(plan.ns ? { perBn: plan.per } : { per: plan.per }) });
   const from = { custodian: '', bank: 'Bank', direct: plan.other }[plan.src];
   const direct = plan.src !== 'custodian';
   for (const s of plan.parts) {
@@ -1973,7 +2019,7 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
       continue;
     }
     // The officer's beginning as of the last cash exam: dates not yet known (added with Edit when found).
-    const rec = { lguId: regId, form: plan.form, from: s.x, to: s.y, qty: s.y - s.x + 1, reference: '', status: 'issued', officerId: o.id, ...(plan.ns ? { noSerial: true } : {}),
+    const rec = { lguId: regId, form: plan.form, from: s.x, to: s.y, qty: s.y - s.x + 1, reference: '', status: 'issued', officerId: o.id, ...(plan.ns ? { noSerial: true, bn: s.bn } : {}), ...(plan.face ? { faceValue: plan.face } : {}),
       issuedDate: asOf, issuedAsOf: true, ...(cut ? { foundAtCount: true } : { beginAs: 'ao', beginDate: asOf }), usedBefore: null, unusedAtStart: s.unused,
       receivedDate: '', receivedFrom: from, receivedDirect: direct, source: plan.src === 'bank' ? 'officer' : 'starting',
       ...(plan.src === 'bank' ? { bankAccount: plan.acct, fund: plan.fund || '' } : {}),

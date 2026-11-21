@@ -762,7 +762,7 @@ function wireSetup(refs, cer, q, rerender) {
     if (add && o) add.onclick = async () => {
       // Saved straight to the booklet records; the unsaved Audit Setup stays as typed.
       const set = OPEN[location.hash] || (OPEN[location.hash] = new Set()); set.clear(); set.add('forms');
-      await FM.addBeginningForms(refs, FX, FM.registerOf(refs, st.lguId), o, lastExam, 'beginning', { forms: st.forms || [], custodian: (st.functions || []).includes('custodian') });
+      await FM.addBeginningForms(refs, FX, FM.registerOf(refs, st.lguId), o, lastExam, 'beginning', { forms: st.forms || [], custodian: (st.functions || []).includes('custodian'), cycleId: st.cycleId || '' });
     };
     $$('[data-begchk]').forEach((b) => { b.onclick = () => begChecksModal(refs, cer, st, b.dataset.begchk, b.dataset.edit === '1'); });
     $$('[data-restfund]').forEach((sel) => { sel.onchange = () => { st.caRestFund = sel.value; touch(); }; });
