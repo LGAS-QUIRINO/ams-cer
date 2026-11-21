@@ -1036,7 +1036,7 @@ async function editBooklet(ctx, f, b, offs) {
     if (r.error) { box.innerHTML = `<b class="warn-t">${esc(r.error)}</b>`; return; }
     if (!withOff) { box.innerHTML = ''; return; }
     const n = r.next, un = n.unusedAtStart === null ? [[n.from, n.to]] : n.unusedAtStart, q = countRanges(un);
-    const sk = n.unusedAtStart ? skippedOf({ from: n.from, to: n.to, qty: n.qty, unusedAtStart: un }) : [];
+    const sk = n.unusedAtStart && !b.noSerial ? skippedOf({ from: n.from, to: n.to, qty: n.qty, unusedAtStart: un }) : [];   // Booklet No.: pieces, no numbers to skip
     box.innerHTML = `Before receipts in Collections: ${n.qty - q} used · <b>${q} unused</b>${q && q < n.qty && !b.noSerial ? ` (${rangesText(un)})` : ''}${faceOf({ ...b, ...n }) && q ? ` · ${peso(q * faceOf({ ...b, ...n }))}` : ''}${sk.length ? ` · <b class="warn-t">skipped ${rangesText(sk)}</b>` : ''}.`;
   };
   const v = await modal({ title: `Edit ${FORM_SHORT[b.form] || b.form} ${serialText(b)}`, wide: true, body,
