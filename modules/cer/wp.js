@@ -356,10 +356,12 @@ export async function downloadReport(c, ver) {
   const forms = unusedFormsOf(c.f, o.id, exam).map((x) => ({ ...x, name: SHORT[x.form] || x.name }));
   const mv = forms.filter((x) => x.face && x.qty), nomv = forms.filter((x) => !x.face);
   const nps = notPresentedOf(c.f, exam, A.to);
-  const MAXF = 10, npLine = nps.length && nomv.length ? 1 : 0;
-  const mvFit = mv.length <= MAXF, nomvFit = nomv.length + npLine <= MAXF;
+  // Booklets not presented at the count: "See Annex B…" on the next free line of their side's list (when it has lines).
+  const npMv = nps.some((x) => faceOf({ form: x.form }) && x.form !== 'chk'), npNo = nps.some((x) => !faceOf({ form: x.form }) || x.form === 'chk');
+  const MAXF = 10, npLine = npNo && nomv.length ? 1 : 0, npMvLine = npMv && mv.length ? 1 : 0;
+  const mvFit = mv.length + npMvLine <= MAXF, nomvFit = nomv.length + npLine <= MAXF;
   const k1 = Math.max(0, items.length - 7);
-  const k2 = Math.max(0, (mvFit ? mv.length : 0) - 7, (nomvFit ? nomv.length + npLine : 0) - 7);
+  const k2 = Math.max(0, (mvFit ? mv.length + npMvLine : 0) - 7, (nomvFit ? nomv.length + npLine : 0) - 7);
   growRows(ws, 35, k1, 33); growRows(ws, 48 + k1, k2, 47 + k1);
   const R = (t) => t + (t >= 35 ? k1 : 0) + (t >= 48 ? k2 : 0);
   const qty = new Set(['G28', 'G29', 'G30', 'G31', 'G32', 'G33', `AN${R(48)}`, `AQ${R(57)}`]);
@@ -381,11 +383,12 @@ export async function downloadReport(c, ver) {
   if (mvFit) mv.forEach((x, i) => { set(ws, `A${F0 + i}`, x.name); set(ws, `F${F0 + i}`, x.qty); set(ws, `J${F0 + i}`, x.ns ? 'No serial' : x.text); set(ws, `R${F0 + i}`, x.face); set(ws, `Z${F0 + i}`, x.amount); });
   if (nomvFit) nomv.forEach((x, i) => { set(ws, `AF${F0 + i}`, x.name); set(ws, `AN${F0 + i}`, x.qty); set(ws, `AR${F0 + i}`, x.text.replace(/ – /g, '- ')); });
   // Nothing to list: None; more than 10 lines: see the SAAF (Annex B, or B.1 / B.2); booklets not presented: noted on the next free line.
-  const seeNo = `See ${c.annexNo === 'ANNEX B.1' ? 'Annex B.1' : 'Annex B'} (SAAF)`, seeMv = `See ${c.annexMv === 'ANNEX B.2' ? 'Annex B.2' : 'Annex B'} (SAAF with Money Value)`;
+  const seeNo = `See ${c.annexNo === 'ANNEX B.1' ? 'Annex B.1' : 'Annex B'}`, seeMv = `See ${c.annexMv === 'ANNEX B.2' ? 'Annex B.2' : 'Annex B'}`;
   if (!nomv.length || !nomvFit) wideBox(ws, F0, 'AF', 'BA', !nomv.length ? 'None' : seeNo);
-  else if (npLine) wideBox(ws, F0 + nomv.length, 'AF', 'BA', `Not presented: ${seeNo.replace('See', 'see')}`);
+  else if (npLine) wideBox(ws, F0 + nomv.length, 'AF', 'BA', seeNo);
   if (!mv.length) wideBox(ws, F0, 'A', 'AE', 'None');
   else if (!mvFit) wideBox(ws, F0, 'A', 'AE', seeMv);
+  else if (npMvLine) wideBox(ws, F0 + mv.length, 'A', 'AE', seeMv);
   const mvAmt = mv.reduce((s, x) => s + x.amount, 0), pcs = nomv.reduce((s, x) => s + x.qty, 0);
   set(ws, `AA${R(48)}`, mvAmt); set(ws, `AN${R(48)}`, pcs);
   set(ws, `D${R(53)}`, fmtDate(audit.countDate)); set(ws, `AQ${R(55)}`, r2(cash + tA)); set(ws, `AQ${R(56)}`, mvAmt); set(ws, `AQ${R(57)}`, pcs); set(ws, `J${R(59)}`, tD);
