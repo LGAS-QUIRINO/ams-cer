@@ -269,6 +269,44 @@ function growRows(ws, before, n, src) {
   }
   if (ws.pageSetup.printArea) ws.pageSetup.printArea = String(ws.pageSetup.printArea).replace(/(\d+)$/, (x) => +x + n);
 }
+// Annex B / B.2 · Statement of Accountability for Accountable Forms with Money Value: Name of Form, then Balance Beg.,
+// Received, Issued, Balance End, each From · To · Qty. · Denomin. · Amount. Same font and paper as the SAAF.
+function saafMvSheet(wb, after, groups, c) {
+  const { audit, o, agency, station, prep } = c;
+  const ws = wb.addWorksheet('SAAF-MV');
+  if (after) ws.orderNo = after.orderNo + 0.5;
+  const F = { name: 'Times New Roman', size: 11 };
+  const thin = { style: 'thin' }, box = { top: thin, left: thin, bottom: thin, right: thin };
+  const W = [30, ...Array(4).fill([10, 10, 7, 9, 12]).flat()];
+  W.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  const put = (r, k, v, o2 = {}) => { const cl = ws.getCell(r, k); cl.value = clean(v); cl.font = { ...F, bold: !!o2.bold }; cl.alignment = { horizontal: o2.h || 'left', vertical: 'middle', wrapText: !!o2.wrap };
+    if (o2.border) cl.border = box; if (typeof v === 'number') cl.numFmt = o2.qty ? '0' : '#,##0.00'; return cl; };
+  const N = W.length;
+  ws.mergeCells(1, N - 2, 1, N); put(1, N - 2, c.annexMv || 'ANNEX B', { bold: true, h: 'center' });
+  ws.mergeCells(2, 1, 2, N); put(2, 1, 'STATEMENT OF ACCOUNTABILITY FOR ACCOUNTABLE FORMS WITH MONEY VALUE', { h: 'center' });
+  put(3, 8, 'As of '); ws.mergeCells(3, 9, 3, 11); put(3, 9, D(audit.countDate), { h: 'center' }).numFmt = 'mmmm d, yyyy';
+  [['Name of Accountable Officer:', o.name, true], ['Designation:', o.designation || ''], ['Office/Station:', `${agency}, ${station}`]].forEach(([l, v, b], i) => { put(5 + i, 1, l); ws.mergeCells(5 + i, 2, 5 + i, 8); put(5 + i, 2, v, { bold: b }); });
+  const H1 = 9, H2 = 10;
+  ws.mergeCells(H1, 1, H2, 1); put(H1, 1, 'Name of Form', { bold: true, h: 'center', border: true, wrap: true }); ws.getCell(H2, 1).border = box;
+  ['Balance Beg.', 'Received', 'Issued', 'Balance End'].forEach((t, g) => { const k0 = 2 + g * 5; ws.mergeCells(H1, k0, H1, k0 + 4); put(H1, k0, t, { bold: true, h: 'center', border: true });
+    ['From', 'To', 'Qty.', 'Denomin.', 'Amount'].forEach((h, j) => put(H2, k0 + j, h, { bold: true, h: 'center', border: true })); });
+  let r = H2 + 1;
+  const sum = (ls, i, k) => ls.reduce((n, l) => n + (l[i] ? l[i][k] : 0), 0);
+  const line = (cells, name, bold) => { put(r, 1, name, { bold, border: true, wrap: true }); for (let g = 0; g < 4; g++) { const x = cells[g], k0 = 2 + g * 5;
+    [x?.from, x?.to, x?.qty, x?.face, x?.amount].forEach((v, j) => put(r, k0 + j, v === '' || v === undefined ? null : v, { h: j < 2 ? 'center' : 'right', border: true, qty: j < 3, bold: bold && !cells.some(Boolean) })); } r++; };
+  const totLine = (label, ls) => { put(r, 1, label, { bold: true, border: true, wrap: true }); for (let g = 0; g < 4; g++) { const k0 = 2 + g * 5, q = sum(ls, g, 'qty');
+    [null, null, q || null, null, q ? Math.round(sum(ls, g, 'amount') * 100) / 100 : null].forEach((v, j) => put(r, k0 + j, v, { h: 'right', border: true, bold: true, qty: j < 3 })); } r++; };
+  groups.forEach((g) => { g.lines.forEach((l, k) => line(l, k ? '' : g.name, !k)); if (groups.length > 1) totLine(`Total ${g.name}`, g.lines); });
+  totLine('Total', groups.flatMap((g) => g.lines));
+  r += 1;
+  ws.mergeCells(r, 12, r, N); put(r, 12, 'I HEREBY CERTIFY that the above Statement of Accountability', { h: 'center' }); r++;
+  put(r, 2, 'Prepared by:'); ws.mergeCells(r, 12, r, N); put(r, 12, 'for Accountable Forms with Money Value is true and correct.', { h: 'center' }); r += 4;
+  ws.mergeCells(r, 2, r, 7); put(r, 2, prep.name, { bold: true, h: 'center' }); ws.mergeCells(r, 14, r, 19); put(r, 14, o.name, { bold: true, h: 'center' });
+  ws.mergeCells(r + 1, 2, r + 1, 7); put(r + 1, 2, prep.pos, { h: 'center' }); ws.mergeCells(r + 1, 14, r + 1, 19); put(r + 1, 14, o.designation || '', { h: 'center' });
+  [2, 14].forEach((k) => { ws.getCell(r, k).border = { top: thin }; });
+  ws.pageSetup = { paperSize: 14, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 }, printArea: `A1:U${r + 1}`, printTitlesRow: '9:10' };
+  return ws;
+}
 const hideRows = (ws, from, to) => { for (let r = from; r <= to; r++) ws.getRow(r).hidden = true; };
 async function save(wb, file) {
   // Excel refuses a file whose first tab (from the original workbook) is past the last sheet, or whose filters point to a removed sheet.
@@ -343,10 +381,11 @@ export async function downloadReport(c, ver) {
   if (mvFit) mv.forEach((x, i) => { set(ws, `A${F0 + i}`, x.name); set(ws, `F${F0 + i}`, x.qty); set(ws, `J${F0 + i}`, x.ns ? 'No serial' : x.text); set(ws, `R${F0 + i}`, x.face); set(ws, `Z${F0 + i}`, x.amount); });
   if (nomvFit) nomv.forEach((x, i) => { set(ws, `AF${F0 + i}`, x.name); set(ws, `AN${F0 + i}`, x.qty); set(ws, `AR${F0 + i}`, x.text.replace(/ – /g, '- ')); });
   // Nothing counted, or too many to list: see the SAAF; booklets not presented: noted on the next free line.
-  if (!nomv.length || !nomvFit) wideBox(ws, F0, 'AF', 'BA', 'See Annex B (SAAF)');
-  else if (npLine) wideBox(ws, F0 + nomv.length, 'AF', 'BA', 'Not presented: see Annex B (SAAF)');
-  if (!mv.length) wideBox(ws, F0, 'A', 'AE', nps.some((x) => faceOf({ form: x.form })) ? 'See Annex B (SAAF)' : 'None');
-  else if (!mvFit) wideBox(ws, F0, 'A', 'AE', 'See Annex B (SAAF)');
+  const seeNo = `See ${c.annexNo === 'ANNEX B.1' ? 'Annex B.1' : 'Annex B'} (SAAF)`, seeMv = `See ${c.annexMv === 'ANNEX B.2' ? 'Annex B.2' : 'Annex B'} (SAAF with Money Value)`;
+  if (!nomv.length || !nomvFit) wideBox(ws, F0, 'AF', 'BA', !nomv.length && !c.hasNo ? 'None' : seeNo);
+  else if (npLine) wideBox(ws, F0 + nomv.length, 'AF', 'BA', `Not presented: ${seeNo.replace('See', 'see')}`);
+  if (!mv.length) wideBox(ws, F0, 'A', 'AE', nps.some((x) => faceOf({ form: x.form })) ? seeMv : 'None');
+  else if (!mvFit) wideBox(ws, F0, 'A', 'AE', seeMv);
   const mvAmt = mv.reduce((s, x) => s + x.amount, 0), pcs = nomv.reduce((s, x) => s + x.qty, 0);
   set(ws, `AA${R(48)}`, mvAmt); set(ws, `AN${R(48)}`, pcs);
   set(ws, `D${R(53)}`, fmtDate(audit.countDate)); set(ws, `AQ${R(55)}`, r2(cash + tA)); set(ws, `AQ${R(56)}`, mvAmt); set(ws, `AQ${R(57)}`, pcs); set(ws, `J${R(59)}`, tD);
@@ -376,7 +415,11 @@ export async function downloadReport(c, ver) {
   set(ws, 'T9', 'Remarks'); ws.getCell('T9').style = JSON.parse(JSON.stringify(ws.getCell('Q9').style || {})); ws.getCell('T10').style = JSON.parse(JSON.stringify(ws.getCell('S10').style || {}));
   ws.getColumn('T').width = 15; if (ws.pageSetup.printArea) ws.pageSetup.printArea = String(ws.pageSetup.printArea).replace(/\$?S\$?140/, '$T$140');
   set(ws, 'I3', fmtDate(audit.countDate)); set(ws, 'B5', o.name); set(ws, 'B6', des); set(ws, 'B7', `${agency}, ${station}`);
-  const rows = saafRows(c.f, o.id, exam, A.from, A.to, c.advs);
+  const allRows = saafRows(c.f, o.id, exam, A.from, A.to, c.advs);
+  const isMv = (x) => !!x.face && x.form !== 'chk';
+  const rows = allRows.filter((x) => !isMv(x)), mvRows = allRows.filter(isMv);
+  set(ws, 'Q1', c.annexNo || 'ANNEX B');
+  if (!mvRows.length) set(ws, 'A2', 'STATEMENT OF ACCOUNTABILITY FOR ACCOUNTABLE FORMS');
   let r = 12; const FIRST = 12, LAST = 131;
   const groups = []; rows.forEach((x) => { const g = groups.find((y) => y.form === x.form) || (groups.push({ form: x.form, name: x.form === 'af51' || x.form === 'af51b' ? 'AF 51' : x.name, rows: [] }), groups[groups.length - 1]); g.rows.push(x); });
   const T = { beg: 0, rec: 0, iss: 0, end: 0, cnt: 0, diff: 0 };
@@ -411,6 +454,12 @@ export async function downloadReport(c, ver) {
   hideRows(ws, Math.max(r, FIRST + 1), LAST);
   set(ws, 'D132', T.beg); set(ws, 'G132', T.rec); set(ws, 'J132', T.iss); set(ws, 'M132', T.end); set(ws, 'P132', T.cnt); set(ws, 'S132', T.diff);
   set(ws, 'B139', prep.name); set(ws, 'B140', prep.pos); set(ws, 'N139', o.name); set(ws, 'N140', des);
+  // Annex B (B.2) · SAAF with Money Value, a sheet of its own after the SAAF
+  if (mvRows.length) {
+    const { saafMvRows } = await import('./reports.js');
+    saafMvSheet(wb, ws, saafMvRows(c), c);
+    if (!rows.length) wb.removeWorksheet(ws.id);
+  }
   // Annex C, Annex D: months within the scope
   // Entries dated before the last cash exam (counted on purpose) go on the beginning line, not as a month.
   const inS = (y) => !A.from || y.date >= A.from;

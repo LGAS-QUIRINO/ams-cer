@@ -55,11 +55,17 @@ export async function reportsView(ctx) {
   const audit = pickAudit(audits, q);
   const exams = f.exams.filter((e) => e.auditId === audit.id).map((e) => ({ ...e, o: f.officers.find((x) => x.id === e.officerId) })).filter((e) => e.o);
   const exam = pickExam(exams, q, audit) || exams[0] || null; remember(refs, audit, exam);
-  const rep = REPORTS.some(([k]) => k === q.get('rep')) ? q.get('rep') : '74a';
+  // SAAF: forms with money value (a face value: AF 52, AF 53, AF 54, cash tickets) and without. Both: Annex B.1 (without)
+  // and B.2 (with money value); only one kind: Annex B.
+  const A0 = exam ? accountability(refs, f, audit, exam, advs, liqs, counts) : null;
+  const sRows = exam ? saafRows(f, exam.o.id, exam, A0.from, A0.to, advs) : [];
+  const hasMv = sRows.some(isMvRow), hasNo = sRows.some((r) => !isMvRow(r)) || !sRows.length, both = hasMv && hasNo;
+  const REPS = REPORTS.flatMap((x) => (x[0] !== 'saaf' ? [x] : both ? [['saaf', 'Annex B.1 · SAAF (without money value)'], ['saafm', 'Annex B.2 · SAAF with Money Value']] : hasMv ? [['saafm', 'Annex B · SAAF with Money Value']] : [x]));
+  const rep = REPS.some(([k]) => k === q.get('rep')) ? q.get('rep') : q.get('rep') === 'saaf' && hasMv ? 'saafm' : q.get('rep') === 'saafm' && !hasMv ? 'saaf' : '74a';
   const top = `<div class="panel cd-bar rp-bar">
       <div class="field"><label for="rp-audit">Cash Examination</label><select class="input" id="rp-audit">${audits.map((a) => `<option value="${esc(a.id)}" ${a.id === audit.id ? 'selected' : ''}>${esc(agencyName(refs, refs.lgu[a.lguId]))} · ${esc(fmtDate(a.countDate))}</option>`).join('')}</select></div>
       <div class="field"><label for="rp-exam">Accountable Officer</label><select class="input" id="rp-exam">${exams.length ? exams.map((e) => `<option value="${esc(e.id)}" ${exam && e.id === exam.id ? 'selected' : ''}>${esc(e.o.name)}${e.o.designation ? ' · ' + esc(e.o.designation) : ''}</option>`).join('') : '<option value="">No officer in this examination</option>'}</select></div>
-      <div class="field"><label for="rp-rep">Report</label><select class="input" id="rp-rep">${REPORTS.map(([k, l]) => `<option value="${k}" ${k === rep ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div></div>`;
+      <div class="field"><label for="rp-rep">Report</label><select class="input" id="rp-rep">${REPS.map(([k, l]) => `<option value="${k}" ${k === rep ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div></div>`;
   const wireTop = () => {
     $('#rp-audit').onchange = (e) => go({ a: e.target.value, e: '' });
     $('#rp-exam').onchange = (e) => go({ e: e.target.value });
@@ -67,7 +73,7 @@ export async function reportsView(ctx) {
   };
   if (!exam) return { crumb, body: hello + top + '<div class="panel"><div class="empty"><b>No accountable officer in this cash examination.</b>Add the officers in Audit Setup.</div></div>', wire: wireTop };
 
-  const A = accountability(refs, f, audit, exam, advs, liqs, counts);
+  const A = A0;
   const ver = ver0.map(flat).find((v) => v.id === exam.id) || null;
   const lgu = A.lgu, o = exam.o;
   const agency = agencyName(refs, lgu);
@@ -77,10 +83,10 @@ export async function reportsView(ctx) {
   const prepId = audit.preparedBy || autoPreparer(refs, lgu), revId = audit.reviewedBy || autoReviewer(refs, lgu);
   const prep = person(prepId), rev = person(revId);
   const sign = (label, p, extra = '') => `<div class="rp-sign"><span>${label}</span><b>${esc(p.name || ' ')}</b><small>${esc([p.pos, p.des].filter(Boolean).join(' · ') || extra)}</small></div>`;
-  const ctx2 = { refs, f, audit, exam, o, A, agency, station, prep, rev, sign, ver, advs, liqs };
+  const ctx2 = { refs, f, audit, exam, o, A, agency, station, prep, rev, sign, ver, advs, liqs, annexNo: both ? 'ANNEX B.1' : 'ANNEX B', annexMv: both ? 'ANNEX B.2' : 'ANNEX B', hasMv, hasNo: sRows.some((r) => !isMvRow(r)) };
   const isWp = WP[rep];
   const w = isWp ? wpLines(ctx2, rep, ver) : null;
-  const doc = rep === '74a' ? gf74a(ctx2) : rep === 'saaf' ? saaf(ctx2) : rep === 'soac' ? soa(ctx2, 'col') : rep === 'soad' ? soa(ctx2, 'ca')
+  const doc = rep === '74a' ? gf74a(ctx2) : rep === 'saaf' ? saaf(ctx2) : rep === 'saafm' ? saafMv(ctx2) : rep === 'soac' ? soa(ctx2, 'col') : rep === 'soad' ? soa(ctx2, 'ca')
     : rep === 'rsa' ? { html: rsaHtml(ctx2, ver) } : rep === 'cnp' ? cnpHtml(ctx2) : rep === 'fnp' ? fnpHtml(ctx2) : { html: wpHtml(ctx2, rep, ver, true) };
   const miss = [!prepId && 'the ATM in Prepared by', !revId && 'the ATL in Reviewed by'].filter(Boolean);
   const who = miss.length ? `<div class="cd-info">Choose ${miss.join(' and ')} in Audit Setup; the reports show blank names until then.</div>` : '';
@@ -123,7 +129,7 @@ function gf74a(c) {
   const allowed = r2(items.reduce((n, x) => n + x.allowed, 0)), disallowed = r2(items.reduce((n, x) => n + x.dis, 0));
   const forms = unusedFormsOf(c.f, o.id, exam, A.to);
   const nps = notPresentedOf(c.f, exam, A.to), npMv = nps.some((x) => faceOf({ form: x.form }));
-  const SEE = 'See Annex B (SAAF)';
+  const SEE = `See ${c.annexNo === 'ANNEX B.1' ? 'Annex B.1' : 'Annex B'} (SAAF)`, SEEMV = `See ${c.annexMv === 'ANNEX B.2' ? 'Annex B.2' : 'Annex B'} (SAAF with Money Value)`;
   const withMv = forms.filter((x) => x.face && x.qty), without = forms.filter((x) => !x.face);
   const formsQty = without.reduce((n, x) => n + x.qty, 0), formsAmt = withMv.reduce((n, x) => n + x.amount, 0);
   const total = A.T('balance');
@@ -153,12 +159,12 @@ function gf74a(c) {
     <h3>C. INVENTORY OF UNUSED ACCOUNTABLE FORMS</h3>
     <div class="rp-two">
       <table class="rp-t"><thead><tr><th colspan="5">With Money Value</th></tr><tr><th>Name of Form</th><th class="r">Qty.</th><th>Inclusive Serial No.</th><th class="r">Denomination</th><th class="r">Amount</th></tr></thead>
-        <tbody>${withMv.length ? withMv.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${x.ns ? 'No serial' : esc(x.text)}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td></tr>`).join('') : `<tr><td colspan="5" class="c">${npMv ? SEE : 'None'}</td></tr>`}<tr class="tot"><td colspan="4">Total</td><td class="r">₱ ${money(formsAmt)}</td></tr></tbody></table>
+        <tbody>${withMv.length ? withMv.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${x.ns ? 'No serial' : esc(x.text)}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td></tr>`).join('') : `<tr><td colspan="5" class="c">${npMv ? SEEMV : 'None'}</td></tr>`}<tr class="tot"><td colspan="4">Total</td><td class="r">₱ ${money(formsAmt)}</td></tr></tbody></table>
       <table class="rp-t"><thead><tr><th colspan="3">Without Money Value</th></tr><tr><th>Name of Form</th><th class="r">Qty.</th><th>Inclusive Serial No.</th></tr></thead>
-        <tbody>${without.length ? without.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${esc(x.text) || 'None'}</td></tr>`).join('') : `<tr><td colspan="3" class="c">${SEE}</td></tr>`}
+        <tbody>${without.length ? without.map((x) => `<tr><td>${esc(x.name)}</td><td class="r">${x.qty}</td><td>${esc(x.text) || 'None'}</td></tr>`).join('') : `<tr><td colspan="3" class="c">${c.hasNo ? SEE : 'None'}</td></tr>`}
         <tr class="tot"><td>Total</td><td class="r">${formsQty}</td><td></td></tr></tbody></table>
     </div>
-    ${nps.length ? `<p class="rp-note">Forms not presented at the count: ${nps.map((x) => `${esc(x.name)} ${x.ns ? '(no serial)' : `${x.from} – ${x.to}`}`).join('; ')}. See Annex B (SAAF).</p>` : ''}
+    ${nps.length ? `<p class="rp-note">Forms not presented at the count: ${nps.map((x) => `${esc(x.name)} ${x.ns ? '(no serial)' : `${x.from} – ${x.to}`}`).join('; ')}. See ${c.hasMv && c.hasNo ? 'Annex B.1 and B.2' : 'Annex B'}.</p>` : ''}
     <h3>CERTIFICATION</h3>
     <p class="rp-just">I HEREBY CERTIFY on my official oath: (1) That upon demand by the Auditor / Examiner I produced all my cash, treasury warrants, checks, money orders, cash items, paid vouchers, unused accountable forms, etc., for which I am officially accountable; (2) That the inventory of such cash items and unused accountable forms in my possession and produced to the Auditor / Examiner at the time of cash count today, ${esc(fmtDate(audit.countDate))}, is correctly stated above and is broken down as follows:</p>
     <table class="rp-kv rp-cert"><tr><td>1) Cash and / or cash items</td><td class="r">₱ ${money(r2(cash + allowed + disallowed))}</td></tr>
@@ -196,18 +202,53 @@ function soaTable(A) {
 }
 
 /* ---------- Annex B · SAAF ---------- */
+// A form with money value: it has a face value (denomination); checks never.
+export const isMvRow = (r) => !!r.face && r.form !== 'chk';
+// The form's full name on the SAAF with Money Value (as on the form).
+const MV_NAME = { af52: 'AF 52 Certificate of Transfer of Large Cattle', af53: 'AF 53 Certificate of Ownership of Large Cattle', af54: 'AF 54 Marriage License Certificate', cash: 'Cash Tickets' };
+// Annex B (B.2) · Statement of Accountability for Accountable Forms with Money Value: Balance Beg., Received, Issued, Balance
+// End, each From · To · Qty. · Denomin. · Amount; one line per range, the form's name on its first line.
+export function saafMvRows(c) {
+  const { f, exam, o, A } = c;
+  const rows = saafRows(f, o.id, exam, A.from, A.to, c.advs).filter(isMvRow);
+  const groups = [];
+  rows.forEach((r) => { const g = groups.find((x) => x.form === r.form && x.face === r.face) || (groups.push({ form: r.form, face: r.face, name: MV_NAME[r.form] || r.name, rows: [] }), groups[groups.length - 1]); g.rows.push(r); });
+  return groups.map((g) => ({ ...g, lines: g.rows.flatMap((r) => { const cols = [r.beg, r.rec, r.issued, r.end]; const n = r.ns ? 1 : Math.max(1, ...cols.map((rs) => rs.length));
+    return Array.from({ length: n }, (_, k) => cols.map((rs) => { if (r.ns) { const q = k ? 0 : countRanges(rs); return q ? { from: '', to: '', qty: q, face: r.face, amount: r2(q * r.face) } : null; }
+      const x = rs[k]; return x ? { from: x[0], to: x[1], qty: x[1] - x[0] + 1, face: r.face, amount: r2((x[1] - x[0] + 1) * r.face) } : null; })); }) }));
+}
+function saafMv(c) {
+  const { audit, o, agency, station, prep, sign } = c;
+  const groups = saafMvRows(c);
+  const sum = (lines, i, k) => lines.reduce((n, l) => n + (l[i] ? l[i][k] : 0), 0);
+  const cell = (x) => (x ? `<td>${x.from}</td><td>${x.to}</td><td class="r">${x.qty}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td>` : '<td></td><td></td><td></td><td></td><td></td>');
+  const totRow = (label, lines) => `<tr class="tot"><td>${label}</td>${[0, 1, 2, 3].map((i) => `<td></td><td></td><td class="r">${sum(lines, i, 'qty') || ''}</td><td></td><td class="r">${sum(lines, i, 'qty') ? money(r2(sum(lines, i, 'amount'))) : ''}</td>`).join('')}</tr>`;
+  const all = groups.flatMap((g) => g.lines);
+  const html = `<div class="rp-page rp-wide"><div class="rp-top"><span></span><span class="r"><b>${esc(c.annexMv || 'ANNEX B')}</b></span></div>
+    <h2 class="rp-title">STATEMENT OF ACCOUNTABILITY FOR ACCOUNTABLE FORMS WITH MONEY VALUE</h2><p class="c">As of ${esc(fmtDate(audit.countDate))}</p>
+    <table class="rp-kv"><tr><td>Name of Accountable Officer</td><td><b>${esc(o.name)}</b></td></tr><tr><td>Designation</td><td>${esc(o.designation || '')}</td></tr><tr><td>Office / Station</td><td>${esc(agency)}, ${esc(station)}</td></tr></table>
+    <table class="rp-t rp-saaf rp-saafm"><thead><tr><th rowspan="2">Name of Form</th><th colspan="5">Balance Beg.</th><th colspan="5">Received</th><th colspan="5">Issued</th><th colspan="5">Balance End</th></tr>
+      <tr>${'<th>From</th><th>To</th><th class="r">Qty.</th><th class="r">Denomin.</th><th class="r">Amount</th>'.repeat(4)}</tr></thead>
+      <tbody>${groups.length ? groups.map((g) => g.lines.map((l, k) => `<tr class="${k ? 'rp-cont' : 'rp-form'}"><td>${k ? '' : `<b>${esc(g.name)}</b>`}</td>${l.map(cell).join('')}</tr>`).join('')
+          + (groups.length > 1 ? totRow(`Total ${esc(g.name)}`, g.lines) : '')).join('')
+        : '<tr><td colspan="21" class="c">No accountable forms with money value for this officer within the scope of audit.</td></tr>'}
+      ${totRow('Total', all)}</tbody></table>
+    <p class="rp-just">I HEREBY CERTIFY that the above Statement of Accountability for Accountable Forms with Money Value is true and correct.</p>
+    <div class="rp-signs">${sign('Prepared by', prep)}${sign('Accountable Officer', { name: o.name, pos: o.designation || '' })}</div></div>`;
+  return { html };
+}
 // Checkbooks grouped by fund, funds in the order they first appear.
 export function byFund(rows) { const order = [...new Set(rows.map((r) => r.fund || ''))]; return rows.map((r, i) => [r, i]).sort((a, b) => order.indexOf(a[0].fund || '') - order.indexOf(b[0].fund || '') || a[1] - b[1]).map(([r]) => r); }
 function saaf(c) {
   const { f, audit, exam, o, A, agency, station, prep, sign } = c;
-  const rows = saafRows(f, o.id, exam, A.from, A.to, c.advs);
+  const rows = saafRows(f, o.id, exam, A.from, A.to, c.advs).filter((r) => !isMvRow(r));
   const cells = (rs, ns) => rs.length ? (ns ? ['', '', countRanges(rs)] : [rs.map(([a]) => a).join('<br>'), rs.map(([, z]) => z).join('<br>'), countRanges(rs)]) : ['', '', ''];
   const groups = [];
   rows.forEach((r) => { const g = groups.find((x) => x.form === r.form) || (groups.push({ form: r.form, name: r.name, rows: [] }), groups[groups.length - 1]); g.rows.push(r); });
   groups.forEach((g) => { if (g.form === 'chk') g.rows = byFund(g.rows); });
   const tot = (k) => rows.reduce((n, r) => n + countRanges(r[k] || []), 0);
-  const html = `<div class="rp-page rp-wide"><div class="rp-top"><span></span><span class="r"><b>ANNEX B</b></span></div>
-    <h2 class="rp-title">STATEMENT OF ACCOUNTABILITY FOR ACCOUNTABLE FORMS</h2><p class="c">As of ${esc(fmtDate(audit.countDate))}</p>
+  const html = `<div class="rp-page rp-wide"><div class="rp-top"><span></span><span class="r"><b>${esc(c.annexNo || 'ANNEX B')}</b></span></div>
+    <h2 class="rp-title">STATEMENT OF ACCOUNTABILITY FOR ACCOUNTABLE FORMS${c.hasMv ? ' WITHOUT MONEY VALUE' : ''}</h2><p class="c">As of ${esc(fmtDate(audit.countDate))}</p>
     <table class="rp-kv"><tr><td>Name of Accountable Officer</td><td><b>${esc(o.name)}</b></td></tr><tr><td>Designation</td><td>${esc(o.designation || '')}</td></tr><tr><td>Office / Station</td><td>${esc(agency)}, ${esc(station)}</td></tr></table>
     <table class="rp-t rp-saaf"><thead><tr><th rowspan="2">Name of Form</th><th colspan="3">Balance Beg.</th><th colspan="3">Received</th><th colspan="3">Issued</th><th colspan="3">Balance End</th><th colspan="3">Balance per Count</th><th rowspan="2" class="r">Difference</th><th rowspan="2">Remarks</th></tr>
       <tr>${'<th>From</th><th>To</th><th class="r">Qty.</th>'.repeat(5)}</tr></thead>
