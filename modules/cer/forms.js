@@ -307,7 +307,8 @@ const rangeText = (a, z) => `${a} – ${z}`;
 export function outOfSequence(f) {
   const out = new Set();
   const byKey = {};
-  f.booklets.filter(held).forEach((b) => { const k = b.officerId + '|' + b.form; (byKey[k] = byKey[k] || []).push(b); });
+  // Cash Ticket (Booklet No.) left out: several booklets are used at the same time (Days with AO is its monitor).
+  f.booklets.filter(held).filter((b) => !b.noSerial).forEach((b) => { const k = b.officerId + '|' + b.form; (byKey[k] = byKey[k] || []).push(b); });
   Object.values(byKey).forEach((list) => {
     list.sort((a, b) => a.from - b.from);
     list.forEach((b, i) => { if (usedOf(b) > 0 && list.slice(0, i).some((e) => unusedOf(e) > 0)) out.add(b.id); });
