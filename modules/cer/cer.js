@@ -659,7 +659,6 @@ function officerHtml(refs, cer, st, edit) {
   if (!opens.size) { const nx = ACC_ORDER.find((k) => k !== 'exam' && h[k] && h[k][1] === 'need'); if (nx) opens.add(nx); }
   const begRows = begFormsOf(o, st, lastExam);
   const stockReg = o && FM && FX ? FM.stockRegOf(FX, o, { functions: st.functions || [] }) : '';
-  const moneyForms = begRows.reduce((n, x) => n + FM.countRanges(x.unused) * FM.faceOf(x.b), 0);
   const during = o && FM && FX ? FM.receivedDuringOf(FX, o.id, lastExam, st.countDate) : [];
   const begBody = !o ? '<p class="cer-wait">Choose the accountable officer first.</p>'
     : !lastExam ? '<p class="cer-wait">Set the last cash exam date (Examination Period) first. The beginning forms are the ones on hand on that date.</p>'
@@ -726,8 +725,8 @@ function officerHtml(refs, cer, st, edit) {
           return `<tr><td><b>${esc(r.label)}</b>${bl}${ser}</td><td class="dim">${esc(r.fn)}</td>
             <td class="r"><label class="sr-only" for="bal-${r.key}">${esc(r.label)} balance</label><input class="input amt" id="bal-${r.key}" data-bal="${r.key}" inputmode="decimal" value="${esc(val)}" ${carried ? 'readonly disabled' : dis}></td>
             <td>${carried ? '<span class="pill ok">Carried from last exam</span>' : `<span class="pill blue">${lastFromPrev ? 'Typed' : 'Typed (first exam)'}</span>`}</td></tr>`;
-        }).join('')}${moneyForms ? `<tr class="cer-mvrow"><td><b>Unused accountable forms with money value</b></td><td class="dim">Forms</td><td class="r"><b>${money(moneyForms)}</b></td><td><span class="pill">From Beginning Inventory</span></td></tr>` : ''}</tbody></table></div>
-        <span class="hint">Rows follow the officer's ticked functions and forms. Collecting and disbursing balances stay separate.${rows.some((r) => BEG_CA[r.key]) ? ' Cash advances: type the lump sum, enter the checks unliquidated at the last cash exam (Beginning checks), or both. What is not itemized stays as one beginning balance in Cash Advances.' : ''}${moneyForms ? ' The forms with money value (AF 52, AF 53, AF 54, Cash Tickets) come from the Beginning Inventory of Accountable Forms below, at face value.' : ''}</span>`
+        }).join('')}</tbody></table></div>
+        <span class="hint">Rows follow the officer's ticked functions and forms. Collecting and disbursing balances stay separate.${rows.some((r) => BEG_CA[r.key]) ? ' Cash advances: type the lump sum, enter the checks unliquidated at the last cash exam (Beginning checks), or both. What is not itemized stays as one beginning balance in Cash Advances.' : ''}</span>`
       : `<p class="cer-wait">${(st.functions || []).length === 1 && st.functions[0] === 'custodian' ? 'Custodian accountability is kept in Accountable Forms by quantity, not in pesos.' : 'Tick the officer\'s functions to list the balances.'}</p>`}
       ${(st.functions || []).includes('custodian') && rows.length ? '<span class="hint">Custodian accountability is kept in Accountable Forms by quantity, not in pesos.</span>' : ''}`, opens.has('bal'))}
 
