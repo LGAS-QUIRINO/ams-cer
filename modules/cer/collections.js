@@ -347,7 +347,10 @@ function loDays(f, o, chains, countDate) {
     its.forEach((it) => {
       let need = it.amount, dep = null;
       while (need > 0.004 && di < ds.length) { const take = Math.min(need, left); need = r2(need - take); left = r2(left - take); dep = ds[di]; if (left <= 0.004) { di++; left = ds[di] ? ds[di].amount : 0; } }
-      out.push({ ...it, depDate: need > 0.004 ? '' : dep?.date || '', depRef: need > 0.004 ? '' : dep?.ref || '', days: it.date ? Math.max(0, days(it.date, need > 0.004 ? countDate : dep?.date || it.date)) : null, undeposited: need > 0.004 });
+      // Which slip covered which remittance is not known: only whether it is deposited, and the date (the RCD's deposit date;
+      // several dates: the last one, so the days with the LO are never understated).
+      const lastD = ds.length ? ds[ds.length - 1].date : '';
+      out.push({ ...it, depDate: need > 0.004 ? '' : lastD || dep?.date || '', days: it.date ? Math.max(0, days(it.date, need > 0.004 ? countDate : lastD || dep?.date || it.date)) : null, undeposited: need > 0.004 });
     });
   });
   return out.sort((a, b) => String(a.date).localeCompare(String(b.date)));
@@ -720,12 +723,12 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <div class="cd-sumt"><span>${remish ? 'Unremitted' : 'Undeposited'}, end</span><span>${money(cur.end)}</span></div>
       ${agree}${cur.issues.filter((t) => t.startsWith('Series ') || t.startsWith(NIB)).map((t) => `<p class="cd-serchk">⚠ ${esc(t)}</p>`).join('')}</div>
     ${isLO ? `<div class="cd-block"><h3 class="cer-h3">Days with the LO · received → deposited</h3>
-      ${lo.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th scope="col">Date Received</th><th scope="col">From</th><th scope="col">Collector's RCD No.</th><th scope="col">Fund</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Deposited</th><th scope="col">Deposit Reference</th><th scope="col" class="r">Days with LO</th><th scope="col">In</th>${enc ? '<th scope="col"></th>' : ''}</tr></thead>
+      ${lo.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th scope="col">Date Received</th><th scope="col">From</th><th scope="col">Collector's RCD No.</th><th scope="col">Fund</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Date Deposited</th><th scope="col">Status</th><th scope="col" class="r">Days with LO</th><th scope="col">In</th>${enc ? '<th scope="col"></th>' : ''}</tr></thead>
         <tbody>${lo.map((x) => `<tr><td>${esc(fmtDate(x.date))}</td><td>${esc(x.from)}</td><td class="mono">${esc(x.no || '')}</td><td>${esc(x.fund)}</td><td class="r">${money(x.amount)}</td>
-          <td>${x.undeposited ? '<span class="pill p-stock">Undeposited</span>' : esc(fmtDate(x.depDate))}</td><td>${esc(x.depRef || '')}</td><td class="r">${x.days ?? '—'}${x.undeposited ? ' <span class="dim">to the count</span>' : ''}</td>
+          <td>${x.undeposited ? '<span class="dim">—</span>' : esc(fmtDate(x.depDate))}</td><td>${x.undeposited ? '<span class="pill p-stock">Undeposited</span>' : '<span class="pill p-done">Deposited</span>'}</td><td class="r">${x.days ?? '—'}${x.undeposited ? ' <span class="dim">to the count</span>' : ''}</td>
           <td>${x.own ? '' : `<a href="#" class="cd-link" data-lorep="${esc(x.repId)}">${esc(x.pending ? 'Not yet in an RCD' : x.repName)}</a>`}</td>
           ${enc ? `<td>${x.own ? '' : `<button class="btn sm" type="button" data-lodel="${esc(x.repId)}" data-lokey="${esc(x.m.fromCol ? 'c|' + x.m.key : `t|${x.m.collectorId}|${x.m.date}|${r2(+x.m.amount || 0)}|${x.m.from || ''}`)}" title="${x.m.fromCol ? 'Take it out of the RCD (the collector\'s record stays)' : 'Delete this remittance typed by the LO'}" aria-label="Remove">✕</button>`}</td>` : ''}</tr>`).join('')}</tbody></table></div>
-        <p class="af-note">Days with LO = date received to date deposited; each RCD's deposits cover that RCD's remittances, in date order. An undeposited remittance counts up to the cash count on ${esc(fmtDate(audit.countDate))}.</p>`
+        <p class="af-note">Days with LO = date received to date deposited. Each RCD's deposits cover that RCD's remittances; the date is the RCD's deposit date (several dates: the last). The deposit slips are in the Deposits register. An undeposited remittance counts up to the cash count on ${esc(fmtDate(audit.countDate))}.</p>`
       : '<div class="empty"><b>No remittances received yet.</b>Enter them in part 1.</div>'}</div>` : ''}
     ${depReg}`;
 
