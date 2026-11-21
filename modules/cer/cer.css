@@ -966,7 +966,7 @@ table.af-reg.tr-month{min-width:0}
 .rm-line{display:grid; grid-template-columns:150px minmax(190px,2fr) 140px minmax(560px,4fr) auto; gap:8px; align-items:start; margin-top:4px}
 .rm-line > .field{margin:0}
 .rm-line > .field label, .rm-shead label{display:block; font-size:13px; font-weight:700; margin-bottom:6px; height:18px}
-.rm-shead, .rm-srow{display:grid; grid-template-columns:118px 1fr 1fr 62px 1.1fr 30px; gap:8px; align-items:center}
+.rm-shead, .rm-srow{display:grid; grid-template-columns:190px 1fr 1fr 62px 1.1fr 30px; gap:8px; align-items:center}
 .rm-srow .rm-sp{padding-left:6px; padding-right:6px}
 .rm-srow:not(.rm-cash) .rm-sp{background:transparent; border-color:transparent; color:var(--muted,#5b6b84); box-shadow:none; cursor:default}
 .rm-srow.rm-cash .rm-sp{visibility:visible}
@@ -1058,3 +1058,4 @@ table.af-reg.tr-month{min-width:0}
 @media (max-width:1300px){ .af-enc.g9s.bn{grid-template-columns:repeat(4,minmax(0,1fr))} }
 @media (max-width:760px){ .af-enc.g9.bn,.af-enc.g9s.bn{grid-template-columns:1fr} }
 .cd-bnentry{margin:10px 0 4px} .sd-w-bn{width:210px}
+.rm-srow.rm-bn .rm-st{display:none} .rm-srow.rm-bn .rm-sf{grid-column:span 2}

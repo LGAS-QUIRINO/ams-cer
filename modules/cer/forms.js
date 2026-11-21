@@ -146,7 +146,7 @@ const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin
 /* ---------- data ---------- */
 export async function loadForms() {
   const cer = await loadCer();
-  const [booklets, checks, raaf, settings, ors, cutoffs, ckdj] = await Promise.all([store.list('cer_booklets'), store.list('cer_formcheck'), store.list('cer_raaf'), store.list('cer_settings'), store.list('cer_ors'), store.list('cer_cutoff'), store.list('src_ckdj')]);
+  const [booklets, checks, raaf, settings, ors, cutoffs, ckdj, reps] = await Promise.all([store.list('cer_booklets'), store.list('cer_formcheck'), store.list('cer_raaf'), store.list('cer_settings'), store.list('cer_ors'), store.list('cer_cutoff'), store.list('src_ckdj'), store.list('cer_reports')]);
   const flat = (r) => ({ id: r.id, ...r.data });
   const out = { ...cer, booklets: booklets.map(flat), checks: checks.map(flat), cutoffs: cutoffs.map(flat), raaf: raaf.map(flat), settings: Object.fromEntries(settings.map((s) => [s.id, s.data])), ors: ors.map(flat) };
   // An OR's booklet is the one holding its number (the Forms Register decides, not the Form Type chosen when it was encoded
@@ -165,9 +165,20 @@ export async function loadForms() {
   });
   // Cash Ticket (Booklet No.) lines (Date, Booklet No., Pcs): each takes its pieces from the booklet's pieces still unused, in date
   // order, on the booklet's internal numbers (worked out on loading; only the pieces are saved).
+  // A Liquidating Officer's typed remittance of a collector's Cash Ticket (Booklet No.) takes its pieces from the collector's
+  // booklet of that No. too, unless the collector's own Collections already has lines of that booklet (not counted twice).
+  const bnOwn = new Set(out.ors.filter((o) => o.bnLine).map((o) => o.bookletId));
+  const remBn = reps.map(flat).flatMap((r) => (r.remittances || []).map((m, i) => ({ m, id: `rem|${r.id}|${i}` })))
+    .filter(({ m }) => !m.fromCol && m.bn && +m.pcs > 0 && (m.form === 'cashbn' || (m.form === 'cash' && !m.from)))
+    .map(({ m, id }) => { const b = out.booklets.find((x) => x.form === 'cashbn' && x.bn === +m.bn && x.officerId === m.collectorId); return b && !bnOwn.has(b.id) ? { id, date: m.date, pcs: +m.pcs, bookletId: b.id, rem: true } : null; }).filter(Boolean);
+  const remNos = {};
   const bnTake = {};
-  out.ors.filter((o) => o.bnLine).sort((x, y) => String(x.date).localeCompare(String(y.date)) || String(x.id).localeCompare(String(y.id))).forEach((o) => {
-    const b = bkById.get(o.bookletId); o.range = true; o.bnNos = [];
+  [...out.ors.filter((o) => o.bnLine), ...remBn].sort((x, y) => String(x.date).localeCompare(String(y.date)) || String(x.id).localeCompare(String(y.id))).forEach((o) => {
+    const b = bkById.get(o.bookletId); o.bnNos = [];
+    if (o.rem) { if (b) { const left = bnTake[b.id] = bnTake[b.id] || (Array.isArray(b.unusedAtStart) ? b.unusedAtStart.map((r) => [r[0], r[1]]) : [[b.from, b.to]]);
+      let need = o.pcs; while (need > 0 && left.length) { const r = left[0], k = Math.min(need, r[1] - r[0] + 1); for (let i = 0; i < k; i++) (remNos[b.id] = remNos[b.id] || []).push({ n: r[0] + i, d: o.date, bn: true }); r[0] += k; need -= k; if (r[0] > r[1]) left.shift(); } }
+      return; }
+    o.range = true;
     if (!b) { o.serial = 0; o.serialTo = 0; return; }
     const left = bnTake[b.id] = bnTake[b.id] || (Array.isArray(b.unusedAtStart) ? b.unusedAtStart.map((r) => [r[0], r[1]]) : [[b.from, b.to]]);
     let need = +o.pcs || 0;
@@ -188,7 +199,7 @@ export async function loadForms() {
   ckdj.map(flat).forEach((c) => { const n = +String(c.checkNo || '').replace(/\D/g, '') || 0; if (!n) return;
     const hits = chks.filter((b) => b.from <= n && n <= b.to); const b = hits.find((x) => x.lguId === c.lguId) || hits[0];
     if (b) (byBk[b.id] = byBk[b.id] || []).push({ n, d: c.date, jr: true }); });
-  out.booklets.forEach((b) => { b.orNos = byBk[b.id] || []; });
+  out.booklets.forEach((b) => { b.orNos = [...(byBk[b.id] || []), ...(remNos[b.id] || [])]; });
   out.ckdj = ckdj.map(flat);   // the RCI / CkDJ checks: their bank account gives a cash advance's fund
   return out;
 }
