@@ -124,6 +124,8 @@ export function begRangesOf(exam) {
 }
 const inBegRanges = (br, x) => (br[x.form] || []).some(([a, z]) => a <= +x.serial && (x.range ? +x.serialTo : +x.serial) <= z);
 const outOfBooklets = (f, o, x) => (x.bnLine ? !f.booklets.some((b) => b.id === x.bookletId) : !f.booklets.some((b) => b.officerId === o.id && b.form === x.form && !b.noSerial && b.from <= +x.serial && (x.range ? +x.serialTo : +x.serial) <= b.to));
+// Forms with money value encoded by OR range on the Collections line (Date, OR From, OR To; amount = pieces × denomination).
+const MV_SER = ['af52', 'af53', 'af54', 'cash'];
 // Cash Ticket (Booklet No.) line: "BN. 125 · 40 pcs".
 const bnOf = (f, x) => f.booklets.find((b) => b.id === x.bookletId)?.bn;
 export const bnLineText = (f, x) => `BN. ${bnOf(f, x) || '—'} · ${(+x.pcs || 0).toLocaleString('en-US')} pcs`;
@@ -621,13 +623,27 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="bn-enter">Enter</button></div></div>
       <datalist id="bn-parts">${[...new Set([FIXED_PART.cashbn, ...parts])].map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
       <p class="af-note">Cash tickets with a booklet number only: one line per day and booklet. Amount = Pcs × Value; typing the Amount fills in the Pcs. The pieces are taken out of the booklet.</p>`;
+  // AF 52, AF 53, AF 54, Cash Ticket (Serial): Date | OR From | OR To | Pcs | Value | Amount. Each OR of the range is saved at the
+  // denomination (the particular fixed by the form); the cancelled ones typed are saved as Cancelled.
+  const mvOn = MV_SER.includes(form) && LASTC.mode !== 'range';
+  const mvFace = bk ? faceOfBk(bk) : faceOfBk({ form });
+  const mvEntry = `<div class="sd-line cd-mventry" id="cd-mvform">
+        <div class="sd-f sd-w-date"><label for="mv-date">Date</label><input class="input" type="date" id="mv-date" value="${esc(LASTC.date)}"></div>
+        <div class="sd-f sd-w-no"><label for="mv-from">OR From</label><input class="input mono" id="mv-from" inputmode="numeric" value="${esc(serial)}" autocomplete="off"></div>
+        <div class="sd-f sd-w-no"><label for="mv-to">OR To</label><input class="input mono" id="mv-to" inputmode="numeric" autocomplete="off"></div>
+        <div class="sd-f sd-w-pcs"><label for="mv-pcs">Pcs</label><input class="input r" id="mv-pcs" readonly tabindex="-1"></div>
+        <div class="sd-f sd-w-no"><label for="mv-val">Value (₱)</label><input class="input r" id="mv-val" value="${mvFace ? money(mvFace) : ''}" readonly tabindex="-1"></div>
+        <div class="sd-f sd-w-amt"><label for="mv-amt">Amount (₱)</label><input class="input r" id="mv-amt" readonly tabindex="-1"></div>
+        <div class="sd-f sd-w-txt"><label for="mv-cx">Cancelled (optional)</label><input class="input mono" id="mv-cx" placeholder="e.g. 7262455, 7262460" autocomplete="off"></div>
+        <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="mv-enter">Enter</button></div></div>
+      <p class="af-note">${esc(FIXED_PART[form] || '')}: each OR of the range is saved at its denomination; Pcs and Amount count the issued ones (the cancelled ones typed are saved as Cancelled).</p>`;
   const colBody = !forms.length ? `<div class="cd-info">This officer has no accountable forms ticked in Audit Setup${isLO ? '. A Liquidating Officer who issues ORs himself needs Collecting and the forms ticked there' : ''}. ${isLO ? 'Remittances and deposits are entered in parts 1 and 3.' : ''}</div>`
     : `${rProg}${rDone ? `<div class="cd-info cd-rdone">All ORs of ${esc(repName(cur.rec, K))} are encoded (${esc(rangesShow(rRec))}). To encode ORs of another report, choose it in tab 1, or "Not yet in an ${K}" in Show below.</div>` : ''}${enc ? `<div class="cd-set" ${rDone ? 'hidden' : ''}>
         <div class="field"><label for="cd-form">Form Type</label><select class="input" id="cd-form">${forms.map((k) => `<option value="${esc(k)}" ${k === form ? 'selected' : ''}>${esc(FORMS.find(([x]) => x === k)?.[1] || k)}</option>`).join('')}</select></div>
         ${form === 'cashbn' ? '' : `<div class="field"><label for="cd-bk">Booklet</label><select class="input" id="cd-bk">${bks.map((b) => `<option value="${esc(b.id)}" ${bk && b.id === bk.id ? 'selected' : ''}>${b.from} – ${b.to} · ${unusedOfBk(b)} unused</option>`).join('')}<option value="" ${bk ? '' : 'selected'}>Not in the Forms Register</option></select></div>`}
         <span class="cd-goes">Goes to: <b>${esc(cur.pending ? (form === 'cashbn' ? `the ${K} that covers its date` : `the ${K} whose OR Range has its number`) : repName(cur.rec, K))} · ${esc(curFund)}</b> <span class="crumb-i" title="Enter moves along: Date → Particulars → Amount → saves the OR, then back to Date for the next OR (Alt + Enter in Amount adds another particular). The fund follows the ${K}. Cancelled ORs have no particulars and a zero amount.">ⓘ</span></span>
       </div>
-      ${form === 'cashbn' ? bnEntry : ''}
+      ${form === 'cashbn' ? bnEntry : mvOn ? mvEntry : ''}
       ${cbMode && form !== 'cashbn' ? '' : '<!--'}<div class="seg cd-mode" role="group" aria-label="How to encode"><a href="#" data-cmode="one" class="${LASTC.mode !== 'range' ? 'on' : ''}">One OR at a time</a><a href="#" data-cmode="range" class="${LASTC.mode === 'range' ? 'on' : ''}">By OR range</a></div>${cbMode && form !== 'cashbn' ? '' : '-->'}
       ${LASTC.mode === 'range' && form !== 'cashbn' ? `<div class="sd-line cd-rgentry" id="cd-rgform">
         <div class="sd-f sd-w-date"><label for="rg-date">Date</label><input class="input" type="date" id="rg-date" value="${esc(LASTC.date)}"></div>
@@ -638,7 +654,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="rg-enter">Enter</button></div></div>
         <p class="af-note">From a cashbook when the ${K} is not available: one line per day, its OR range and total. The whole range counts as used.${exam.lastExamDate ? ` A line dated before ${esc(fmtDate(exam.lastExamDate))} (the last cash exam) is tagged "Before the period": its ORs are used, its amount is in the beginning balance.` : ''}</p>
         <label class="cer-tick cd-rga"><input type="checkbox" id="rg-a" ${f.settings?.['orrange|' + o.id]?.noA ? '' : 'checked'}> ORs of a booklet before the first range of the period were used before the last cash exam (not flagged as missing)</label>` : ''}
-      ${form === 'cashbn' ? '' : `<div class="cd-entry cd-one" ${LASTC.mode === 'range' || rDone ? 'hidden' : ''}>
+      ${form === 'cashbn' || mvOn ? '' : `<div class="cd-entry cd-one" ${LASTC.mode === 'range' || rDone ? 'hidden' : ''}>
         <div class="cd-parts cd-entryt ${LASTC.status === 'cancelled' ? 'cd-cxl' : ''}" id="cd-partsbox">
           <div class="cd-phead"><span>OR No.</span><span></span><span>Status</span><span>Date of Collection</span><span>Particulars</span><span class="r">Amount (₱)</span><span></span><span></span></div>
           <div id="cd-prows">${partRow({}, 0)}</div>
@@ -1319,6 +1335,57 @@ function wireAll(c) {
     $('#cd-rgform').onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); const els = ['#rg-date', '#rg-from', '#rg-to', '#rg-amt', '#rg-cx'].map((k) => $(k)); const i = els.indexOf(e.target); if (i < 0 || i >= els.length - 2) saveRg(); else els[i + 1].focus(); };
   }
   if ($('#cd-form') && LASTC.mode === 'range') $('#cd-form').onchange = (e) => { Object.assign(LASTC, { form: e.target.value, bookletId: '', serial: '' }); emitChange('local'); };
+
+  /* AF 52 / 53 / 54, Cash Ticket (Serial): Date | OR From | OR To | Pcs | Value | Amount, each OR saved at the denomination */
+  if ($('#mv-enter')) {
+    $('#cd-form').onchange = (e) => { Object.assign(LASTC, { form: e.target.value, bookletId: '', serial: '' }); emitChange('local'); };
+    $('#cd-bk').onchange = (e) => { Object.assign(LASTC, { form: $('#cd-form').value, bookletId: e.target.value || '__none', serial: '' }); emitChange('local'); };
+    const form = $('#cd-form').value, fromIn = $('#mv-from'), toIn = $('#mv-to'), cxIn = $('#mv-cx');
+    const bkAt = (n) => f.booklets.find((b) => b.officerId === o.id && b.form === form && !b.noSerial && b.from <= n && n <= b.to) || null;
+    const faceAt = (n) => faceOfBk(bkAt(n) || { form });
+    const read = () => { const a = int(fromIn.value), z = int(toIn.value) || a;
+      const cx = [...new Set(String(cxIn.value).split(/[^\d]+/).filter(Boolean).map(Number))];
+      return { a, z, cx, ok: a && z >= a && z - a < 500 }; };
+    const paint = () => { const r = read();
+      if (!r.ok) { $('#mv-pcs').value = ''; $('#mv-amt').value = ''; return; }
+      let q = 0, amt = 0; for (let n = r.a; n <= r.z; n++) if (!r.cx.includes(n)) { q++; amt += faceAt(n); }
+      $('#mv-pcs').value = q; $('#mv-val').value = money(faceAt(r.a)); $('#mv-amt').value = money(r2(amt)); };
+    [fromIn, toIn, cxIn].forEach((el) => { el.oninput = paint; });
+    $('#mv-date').onchange = () => { LASTC.date = $('#mv-date').value; };
+    const saveMv = async () => {
+      const date = $('#mv-date').value, r = read();
+      if (!date) return bad('Enter the date.');
+      if (!r.a) return bad('Enter the OR From.');
+      if (r.z < r.a) return bad('OR To must not be before OR From.');
+      if (r.z - r.a >= 500) return bad('That range is too long (500 at most). Check the numbers.');
+      const out = r.cx.filter((n) => n < r.a || n > r.z); if (out.length) return bad(`Cancelled ${out.join(', ')} is outside ${r.a}–${r.z}.`);
+      const done = f.ors.filter((x) => x.form === form && !x.bnLine && +x.serial <= r.z && r.a <= maxSer(x));
+      if (done.length) return bad(`${FORM_SHORT[form] || form} ${done[0].range ? `${done[0].serial}–${done[0].serialTo}` : done[0].serial} is already encoded (${fmtDate(done[0].date)}).`);
+      if (c.rMode) { for (let n = r.a; n <= r.z; n++) if (!inRec(c.rRec, n, form)) return bad(`${FORM_SHORT[form] || form} ${n} is not in the OR Range of ${repName(c.cur.rec, K)} (${rangesShow(c.rRec)}). Check the numbers, or choose "Not yet in an ${K}" to encode ORs of another report.`); }
+      if (c.audit.countDate && date > c.audit.countDate) { const ok = await modal({ title: 'Date after the cash count?', body: `<p style="margin:0">The date ${esc(fmtDate(date))} is after the cash count on ${esc(fmtDate(c.audit.countDate))}. Save it anyway?</p>`, buttons: [{ label: 'Go back', value: false }, { label: 'Save', cls: 'primary', value: true }] }); if (!ok) return; }
+      const p = FIXED_PART[form] || NO_PART, lx = c.exam.lastExamDate, br = begRangesOf(c.exam);
+      $('#mv-enter').disabled = true;
+      try {
+        let q = 0, tot = 0;
+        for (let n = r.a; n <= r.z; n++) {
+          const b = bkAt(n), cxd = r.cx.includes(n), fv = faceAt(n);
+          const rec = { lguId: audit.lguId, officerId: o.id, form, bookletId: b ? b.id : '', serial: n, date, status: cxd ? 'cancelled' : 'issued', items: cxd ? [] : [{ p, amt: fv }], amount: cxd ? 0 : fv, fund: c.curFund,
+            reportId: c.cur.pending || hasRange(c.cur) ? placeIn(c.fig.chains[c.curKey], date, n, form) : c.selId,
+            ...(begOr(f, { date, serial: n, bookletId: b ? b.id : '', officerId: o.id, form }, lx, br) ? { beg: true } : {}) };
+          await store.save('cer_ors', newId('ceror'), rec, by(refs), { quiet: true });
+          if (!cxd) { q++; tot += fv; }
+        }
+        const last = bkAt(r.z);
+        Object.assign(LASTC, { form, date, bookletId: last ? last.id : LASTC.bookletId, serial: last && r.z < last.to ? r.z + 1 : '', goMiss: !!c.rMode });
+        emitChange('local');
+        toast(`${FORM_SHORT[form] || form} ${r.a === r.z ? r.a : `${r.a}–${r.z}`} saved: ${q} issued · ₱${money(r2(tot))}${r.cx.length ? ` · ${r.cx.length} cancelled` : ''}.`, 'ok');
+        setTimeout(() => { const el = $('#mv-to'); if (el) el.focus(); }, 80);
+      } finally { const btn = $('#mv-enter'); if (btn) btn.disabled = false; }
+    };
+    $('#mv-enter').onclick = saveMv;
+    $('#cd-mvform').onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); const els = ['#mv-date', '#mv-from', '#mv-to', '#mv-cx'].map((k) => $(k)); const i = els.indexOf(e.target); if (i < 0 || i >= els.length - 1) saveMv(); else els[i + 1].focus(); };
+    paint();
+  }
 
   /* Cash Ticket (Booklet No.) entry: Date | Booklet No. | Pcs | Value | Amount */
   if ($('#bn-enter')) {
