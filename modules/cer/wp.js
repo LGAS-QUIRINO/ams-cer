@@ -293,7 +293,8 @@ function saafMvSheet(wb, after, groups, c) {
   let r = H2 + 1;
   const sum = (ls, i, k) => ls.reduce((n, l) => n + (l[i] ? l[i][k] : 0), 0);
   const line = (cells, name, bold) => { put(r, 1, name, { bold, border: true, wrap: true }); for (let g = 0; g < 4; g++) { const x = cells[g], k0 = 2 + g * 5;
-    [x?.from, x?.to, x?.qty, x?.face, x?.amount].forEach((v, j) => put(r, k0 + j, v === '' || v === undefined ? null : v, { h: j < 2 ? 'center' : 'right', border: true, qty: j < 3, bold: bold && !cells.some(Boolean) })); } r++; };
+    [x?.from, x?.bn ? null : x?.to, x?.qty, x?.face, x?.amount].forEach((v, j) => put(r, k0 + j, v === '' || v === undefined ? null : v, { h: j < 2 ? 'center' : 'right', border: true, qty: j < 3, bold: bold && !cells.some(Boolean) }));
+    if (x?.bn) ws.mergeCells(r, k0, r, k0 + 1); } r++; };   // Cash Ticket (Booklet No.): "BN. 125" across From and To
   const totLine = (label, ls) => { put(r, 1, label, { bold: true, border: true, wrap: true }); for (let g = 0; g < 4; g++) { const k0 = 2 + g * 5, q = sum(ls, g, 'qty');
     [null, null, q || null, null, q ? Math.round(sum(ls, g, 'amount') * 100) / 100 : null].forEach((v, j) => put(r, k0 + j, v, { h: 'right', border: true, bold: true, qty: j < 3 })); } r++; };
   groups.forEach((g) => { g.lines.forEach((l, k) => line(l, k ? '' : g.name, !k)); if (groups.length > 1) totLine(`Total ${g.name}`, g.lines); });

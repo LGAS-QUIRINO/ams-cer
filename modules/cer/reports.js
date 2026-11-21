@@ -213,14 +213,15 @@ export function saafMvRows(c) {
   const groups = [];
   rows.forEach((r) => { const g = groups.find((x) => x.form === r.form && x.face === r.face) || (groups.push({ form: r.form, face: r.face, name: MV_NAME[r.form] || r.name, rows: [] }), groups[groups.length - 1]); g.rows.push(r); });
   return groups.map((g) => ({ ...g, lines: g.rows.flatMap((r) => { const cols = [r.beg, r.rec, r.issued, r.end]; const n = r.ns ? 1 : Math.max(1, ...cols.map((rs) => rs.length));
-    return Array.from({ length: n }, (_, k) => cols.map((rs) => { if (r.ns) { const q = k ? 0 : countRanges(rs), t = `BN. ${r.bn || '—'}`; return q ? { from: t, to: t, qty: q, face: r.face, amount: r2(q * r.face) } : null; }
+    return Array.from({ length: n }, (_, k) => cols.map((rs) => { if (r.ns) { const q = k ? 0 : countRanges(rs), t = `BN. ${r.bn || '—'}`; return q ? { from: t, to: t, bn: true, qty: q, face: r.face, amount: r2(q * r.face) } : null; }
       const x = rs[k]; return x ? { from: x[0], to: x[1], qty: x[1] - x[0] + 1, face: r.face, amount: r2((x[1] - x[0] + 1) * r.face) } : null; })); }) }));
 }
 function saafMv(c) {
   const { audit, o, agency, station, prep, sign } = c;
   const groups = saafMvRows(c);
   const sum = (lines, i, k) => lines.reduce((n, l) => n + (l[i] ? l[i][k] : 0), 0);
-  const cell = (x) => (x ? `<td>${x.from}</td><td>${x.to}</td><td class="r">${x.qty}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td>` : '<td></td><td></td><td></td><td></td><td></td>');
+  // Cash Ticket (Booklet No.): "BN. 125" in one cell across From and To.
+  const cell = (x) => (x ? `${x.bn ? `<td colspan="2" class="c">${esc(x.from)}</td>` : `<td>${x.from}</td><td>${x.to}</td>`}<td class="r">${x.qty}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td>` : '<td></td><td></td><td></td><td></td><td></td>');
   const totRow = (label, lines) => `<tr class="tot"><td>${label}</td>${[0, 1, 2, 3].map((i) => `<td></td><td></td><td class="r">${sum(lines, i, 'qty') || ''}</td><td></td><td class="r">${sum(lines, i, 'qty') ? money(r2(sum(lines, i, 'amount'))) : ''}</td>`).join('')}</tr>`;
   const all = groups.flatMap((g) => g.lines);
   const html = `<div class="rp-page rp-wide"><div class="rp-top"><span></span><span class="r"><b>${esc(c.annexMv || 'ANNEX B')}</b></span></div>
