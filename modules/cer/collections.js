@@ -1337,6 +1337,8 @@ function wireAll(c) {
   }
   if ($('#cd-form') && LASTC.mode === 'range') $('#cd-form').onchange = (e) => { Object.assign(LASTC, { form: e.target.value, bookletId: '', serial: '' }); emitChange('local'); };
 
+  // The OR Range's "to go" link: the entry line jumps to the next number not yet encoded (every kind of entry line).
+  { const gm = $('#cd-gomiss'); if (gm) gm.onclick = (e) => { e.preventDefault(); LASTC.goMiss = true; emitChange('local'); }; }
   /* AF 52 / 53 / 54, Cash Ticket (Serial): Date | OR From | OR To | Pcs | Value | Amount, each OR saved at the denomination */
   if ($('#mv-enter')) {
     $('#cd-form').onchange = (e) => { Object.assign(LASTC, { form: e.target.value, bookletId: '', serial: '' }); emitChange('local'); };
@@ -1478,7 +1480,6 @@ function wireAll(c) {
     };
   };
   orIn.oninput = checkSkip; checkSkip();
-  { const gm = $('#cd-gomiss'); if (gm) gm.onclick = (e) => { e.preventDefault(); LASTC.goMiss = true; emitChange('local'); }; }
   orIn.onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); dateIn.focus(); };
   enter.onclick = async () => {
     const b = bkOf(), n = int(orIn.value), date = dateIn.value, st = LASTC.status === 'cancelled' ? 'cancelled' : 'issued';
