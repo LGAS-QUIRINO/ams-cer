@@ -1384,7 +1384,7 @@ function wireAll(c) {
         Object.assign(LASTC, { form, date, bookletId: last ? last.id : LASTC.bookletId, serial: last && r.z < last.to ? r.z + 1 : '', goMiss: !!c.rMode });
         emitChange('local');
         toast(`${FORM_SHORT[form] || form} ${r.a === r.z ? r.a : `${r.a}–${r.z}`} saved: ${q} issued · ₱${money(r2(tot))}${r.cx.length ? ` · ${r.cx.length} cancelled` : ''}.`, 'ok');
-        setTimeout(() => { const el = $('#mv-to'); if (el) el.focus(); }, 80);
+        setTimeout(() => { const el = $('#mv-date'); if (el) el.focus(); }, 80);   // the date is what changes next
       } finally { const btn = $('#mv-enter'); if (btn) btn.disabled = false; }
     };
     $('#mv-enter').onclick = saveMv;
