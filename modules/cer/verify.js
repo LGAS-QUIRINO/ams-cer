@@ -164,7 +164,7 @@ export async function verifyView(ctx) {
     const grs = rcdGroups(refs, f, audit.lguId);
     grs.forEach((g) => g.offDate.filter((p) => mine.has(p.id)).forEach((p) => add(`rcdd|${g.key}|${p.id}`, 'Collections', `RCD No. ${g.no} is dated ${fmtDate(p.date)} here but ${fmtDate(g.regDate)} on the hard copy (Source Documents › RCD (LGU)).`, `#/src/rcd?l=${audit.lguId}`)));
     grs.filter((g) => g.diff !== null && Math.abs(g.diff) >= 0.005 && g.parts.some((p) => mine.has(p.id))).forEach((g) =>
-      add(`rcdw|${g.key}`, 'Collections', `RCD No. ${g.no}: the parts of the Liquidating Officers (${g.parts.map((p) => `${p.o.name} ₱${money(p.coll)}`).join(' + ')} = ₱${money(g.sum)}) are ${g.diff > 0 ? 'short of' : 'over'} the whole total per hard copy ₱${money(g.whole)} by ₱${money(Math.abs(g.diff))}.`, `#/src/rcd?l=${audit.lguId}`, '', null, g.diff));
+      add(`rcdw|${g.key}`, 'Collections', `RCD No. ${g.no}: the parts of the Liquidating Officers (${g.parts.map((p) => `${p.o.name} ₱${money(p.amt ?? p.coll)}`).join(' + ')} = ₱${money(g.sum)}) are ${g.diff > 0 ? 'short of' : 'over'} the whole total per hard copy ₱${money(g.whole)} by ₱${money(Math.abs(g.diff))}.`, `#/src/rcd?l=${audit.lguId}`, '', null, g.diff));
   }
   unrep.forEach((g) => add(`nyr|${g.id}`, 'Collections', `${g.nOrs} OR${g.nOrs > 1 ? 's' : ''} (₱${money(g.orsTotal)}) not yet in a submitted ${g.kind}, ${g.fund}.`, '#/cer/collections', 'nyr', [esc(g.range || '—'), String(g.nOrs), esc(g.from ? `${fmtDate(g.from)}${g.to && g.to !== g.from ? ` – ${fmtDate(g.to)}` : ''}` : '—'), esc(`${g.kind} · ${g.fund}`), money(g.orsTotal)], g.orsTotal));
   { const eb = depsBeforeOrs(f, o, fig).filter((x) => inScope(x.d.date) || (from && x.d.date < from));
