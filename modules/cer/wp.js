@@ -8,7 +8,7 @@ import { itemText } from './count.js';
 import { store } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { by, fmtDate, money, num } from './cer.js';
-import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart, repName, depsBeforeOrs, partOf, bnLineText } from './collections.js';
+import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart, repName, depsBeforeOrs, partOf, bnLineText, formOfSer } from './collections.js';
 import { accountsOf, caFund, begByFund, restFund, fundOrder } from './funds.js';
 import { saafRows, unusedFormsOf, notPresentedOf, countRanges, FORM_SHORT, faceOf } from './forms.js';
 
@@ -24,6 +24,25 @@ export function wpBook(A, paper) {
   if (paper === 'a2a') return A.books.find((b) => b.key === 'ca') || null;
   if (paper === 'a1b') return A.books.find((b) => isCtcKey(b.key)) || null;
   return A.books.find((b) => b.key === 'col-SCD' || b.key === 'col-RCD') || null;
+}
+// A remittance received by the Liquidating Officer, as working-paper lines: one per series (form, OR From – To, amount).
+// Typed: its own series. From the collector's report (ticked) with several series: each series with the collector's ORs in it,
+// any rest on a line of its own.
+const WP_FORM = { af51: 'AF 51', af51b: 'AF 51', af52: 'AF 52', af53: 'AF 53', af54: 'AF 54', af56: 'AF 56', ctci: 'CTC', ctcc: 'CTC', cash: 'Cash Ticket', cashbn: 'Cash Ticket' };
+const WP_RANK = { cash: 0, cashbn: 0, af51: 1, af51b: 1, af52: 2, af53: 3, af54: 4, af56: 5, ctci: 6, ctcc: 6 };
+function remSeries(f, m) {
+  const who = f.officers.find((x) => x.id === m.collectorId)?.name || 'Collector', no = m.fromCol ? m.colNo || '' : m.reportNo || '';
+  const one = (fk, from, to, bn, amount) => ({ part: [who, no, WP_FORM[fk] || ''].filter(Boolean).join(' · '), from: bn ? '' : String(from || ''), to: bn ? '' : String(to && String(to) !== String(from) ? to : ''), bn: bn ? `BN. ${bn}` : '', fr: WP_RANK[fk] ?? 7, sn: +bn || +from || 0, amount: r2(amount) });
+  const fk = formOfSer(m);
+  if (fk === 'cashbn') return [one(fk, '', '', m.bn || '—', +m.amount || 0)];
+  if (m.fromCol && m.serList && m.serList.length > 1) {
+    const ors = f.ors.filter((x) => x.officerId === m.collectorId && x.status !== 'cancelled' && (!m.colReportId || x.reportId === m.colReportId));
+    const out = m.serList.map(([a, z, k]) => one(k || fk, a, z, '', ors.filter((x) => !x.bnLine && +x.serial >= a && +(x.range ? x.serialTo : x.serial) <= z).reduce((n, x) => n + (x.items || []).reduce((t, i) => t + (+i.amt || 0), 0), 0)));
+    const rest = r2((+m.amount || 0) - out.reduce((n, x) => n + x.amount, 0));
+    if (Math.abs(rest) > 0.004) out.push(one('', '', '', '', rest));
+    return out;
+  }
+  return [one(fk, m.from, m.to, '', +m.amount || 0)];
 }
 export function wpLines(c, paper, ver) {
   const { f, A, exam, advs, liqs } = c;
@@ -50,7 +69,7 @@ export function wpLines(c, paper, ver) {
     Object.values(A.fig.chains).filter((ch) => ch.kind === kind).forEach((ch) => [...ch.figs, ch.pend].forEach((g) => {
       (g.ors || []).filter((x) => partOk(part, x.form) && x.date && x.date <= to && orOk(x)).forEach((x) => {
         const cx = x.status === 'cancelled';
-        lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : ((x.items || []).map((i) => partOf(x.form, i.p)).filter(Boolean).join('; ') || partOf(x.form, '')), no: x.bnLine ? bnLineText(c.f, x) : x.range ? `${x.serial}–${x.serialTo}` : String(x.serial), d: cx ? 0 : face(x), c: 0, ord: 0, sn: +x.serial || 0 });
+        lines.push({ key: `or|${x.id}`, date: x.date, part: cx ? 'Cancelled' : ((x.items || []).map((i) => partOf(x.form, i.p)).filter(Boolean).join('; ') || partOf(x.form, '')), no: x.bnLine ? bnLineText(c.f, x) : x.range ? `${x.serial}–${x.serialTo}` : String(x.serial), ...(x.bnLine ? { bn: c.f.booklets.find((b) => b.id === x.bookletId)?.bn || '—' } : { from: String(x.serial), to: x.range ? String(x.serialTo) : '' }), d: cx ? 0 : face(x), c: 0, ord: 0, sn: +x.serial || 0 });
       });
       const s = part ? ctcAlloc(ch, bs) : null, share = (d) => (part ? depPart(part, d, s) : +d.amount || 0);
       const where = g.pending ? 'not yet in a report' : `in ${repName(g.rec, ch.kind)}`;
@@ -58,8 +77,10 @@ export function wpLines(c, paper, ver) {
       const earlyNote = (d) => { const x = early.get(d); return x ? ` · before its ORs (${d.from}–${d.to || d.from}, dated ${fmtDate(x.first)}${x.last !== x.first ? `–${fmtDate(x.last)}` : ''})` : ''; };
       if (part !== 'ctc') {
         const rs = (g.rec?.remittances || []).filter((m) => m.date && m.date <= to && !m.beg);
-        rs.filter((m) => !pre(m.date)).forEach((m, i) => lines.push({ key: `rem|${g.id}|${i}|${m.date}|${m.amount}`, date: m.date, part: `Remittance from ${c.f.officers.find((x) => x.id === m.collectorId)?.name || 'collector'}${m.reportNo ? ', ' + m.reportNo : ''}`, no: '', d: +m.amount || 0, c: 0, ord: 0 }));
-        rs.filter((m) => pre(m.date)).forEach((m, i) => lines.push({ key: `remx|${g.id}|${i}|${m.date}|${m.amount}`, date: m.date, sd: from, part: `Remittance from ${c.f.officers.find((x) => x.id === m.collectorId)?.name || 'collector'}${m.reportNo ? ', ' + m.reportNo : ''} · received before the last cash exam; ${where}`, no: '', d: +m.amount || 0, c: 0, ord: -1 }));
+        // The Liquidating Officer's working paper: one line per series remitted, Particulars "Collector · RCD No. · Form",
+        // OR From / OR To (Cash Ticket (Booklet No.): its Booklet No. across both); within a date grouped by form.
+        rs.filter((m) => !pre(m.date)).forEach((m, i) => remSeries(c.f, m).forEach((x, j) => lines.push({ key: `rem|${g.id}|${i}|${m.date}|${m.amount}${j ? '|' + j : ''}`, date: m.date, part: x.part, no: '', from: x.from, to: x.to, bn: x.bn, fr: x.fr, sn: x.sn, rem: true, d: x.amount, c: 0, ord: 0 })));
+        rs.filter((m) => pre(m.date)).forEach((m, i) => remSeries(c.f, m).forEach((x, j) => lines.push({ key: `remx|${g.id}|${i}|${m.date}|${m.amount}${j ? '|' + j : ''}`, date: m.date, sd: from, part: `${x.part} · received before the last cash exam; ${where}`, no: '', from: x.from, to: x.to, bn: x.bn, fr: x.fr, sn: x.sn, rem: true, d: x.amount, c: 0, ord: -1 })));
       }
       const ds = (g.rec?.deposits || []).filter((d) => d.date && d.date <= to && (!part || share(d)));
       const depText = (d) => (kind === 'SCR' ? `Remittance to MTO${depRefText(d, true) ? ', ' + depRefText(d, true) : ''}` : d.toLO ? `Remittance to the Liquidating Officer${d.ref ? ', ' + d.ref : ''}` : `Deposit${depRefText(d) ? ', ' + depRefText(d) : ''}${part && share(d) !== r2(+d.amount || 0) ? ` (${part === 'ctc' ? 'CTC' : 'AF 51'} part of ₱${money(d.amount)})` : ''}`);
@@ -67,7 +88,7 @@ export function wpLines(c, paper, ver) {
       ds.filter((d) => pre(d.date)).forEach((d, i) => lines.push({ key: `depx|${g.id}|${i}|${d.date}|${d.amount}`, date: d.date, sd: from, part: depText(d) + preNote(d) + earlyNote(d), no: '', d: 0, c: share(d), ord: -1 }));
     }));
   }
-  lines.sort((x, y) => String(x.sd || x.date).localeCompare(String(y.sd || y.date)) || x.ord - y.ord || String(x.date).localeCompare(String(y.date)) || (x.sn || 0) - (y.sn || 0));
+  lines.sort((x, y) => String(x.sd || x.date).localeCompare(String(y.sd || y.date)) || x.ord - y.ord || String(x.date).localeCompare(String(y.date)) || (x.fr ?? 9) - (y.fr ?? 9) || (x.sn || 0) - (y.sn || 0));
   const edits = ver?.wp?.[paper] || {};
   const beg = r2(A.moves[book.key].beg);
   let ga = beg, gb = beg;
@@ -98,7 +119,7 @@ export function wpLines(c, paper, ver) {
       return { fund, beg: b0, lines: ls, tot: { d: t('d'), c: t('c'), cd: t('cd'), cc: t('cc'), k: t('k') }, end: a1, endCb: b1 };
     });
   }
-  return { paper, book, beg, lines, groups, tot: { d: sum('d'), c: sum('c'), cd: sum('cd'), cc: sum('cc'), k: sum('k') }, end: ga, endCb: gb, edited: lines.filter((l) => l.edited).length };
+  return { paper, book, beg, lines, groups, lo: lines.some((l) => l.rem), tot: { d: sum('d'), c: sum('c'), cd: sum('cd'), cc: sum('cc'), k: sum('k') }, end: ga, endCb: gb, edited: lines.filter((l) => l.edited).length };
 }
 
 /* ---------- Annex E, F, G: Reconciliation Statements of Accountability ---------- */
@@ -127,18 +148,21 @@ export function wpHtml(c, paper, ver, edit) {
     : paper === 'a1b' ? (w?.book.kind === 'RCD' ? ['DETAILED STATEMENT OF COLLECTIONS AND DEPOSITS', 'CTC', 'CTC No.', 'Collections', 'Deposits'] : ['DETAILED STATEMENT OF COLLECTIONS AND REMITTANCES', 'CTC', 'CTC No.', 'Collections', 'Remittance'])
       : ['DETAILED STATEMENT OF COLLECTIONS AND DEPOSITS', 'OFFICIAL RECEIPTS', 'OR No.', 'Collections', 'Deposits'];
   if (!w) return `<div class="rp-page"><p class="c">${paper === 'a2a' ? 'No cash advance accountability for this officer.' : paper === 'a1b' ? 'No CTC collections for this officer.' : 'No collection accountability for this officer.'}</p></div>`;
+  // The Liquidating Officer's working paper: OR No. as From and To (Cash Ticket (Booklet No.): "BN. 98" across both).
+  const lo = !!w.lo, E = lo ? '<td></td><td></td>' : '<td></td>';
+  const noTd = (l) => (!lo ? `<td class="mono">${esc(l.no)}</td>` : l.bn ? `<td class="mono c" colspan="2">${esc(l.bn)}</td>` : `<td class="mono">${esc(l.from ?? l.no ?? '')}</td><td class="mono">${esc(l.to || '')}</td>`);
   const cell = (l, f2, v) => (edit ? `<button type="button" class="wp-cb${l.edited ? ' wp-ed' : ''}" data-cb="${esc(l.key)}" data-f="${f2}" title="Click to type what the cashbook shows">${amt(v)}</button>` : amt(v));
   return `<div class="rp-page rp-wide wp-page"><div class="rp-top"><span></span><span class="r"><b>${WP[paper]}</b></span></div>
     <h2 class="rp-title">${title[0]}</h2><p class="c"><b>${title[1]}</b><br>${esc(fmtDate(A.from))} to ${esc(fmtDate(A.to))}</p>
     <p class="c">${esc(c.o.name)} · ${esc(c.o.designation || '')} · ${esc(agency)}, ${esc(station)}</p>
-    <table class="rp-t wp-t"><thead><tr><th rowspan="2">Date</th><th rowspan="2">Particulars</th><th rowspan="2">${title[2]}</th><th colspan="3">Per Audit</th><th colspan="3">Per CashBook</th><th rowspan="2" class="r">Reconciling amount</th></tr>
-      <tr><th class="r">${title[3]}</th><th class="r">${title[4]}</th><th class="r">Balance</th><th class="r">${title[3]}</th><th class="r">${title[4]}</th><th class="r">Balance</th></tr></thead>
-      <tbody>${(w.groups && w.groups.length > 1 ? w.groups : [{ fund: '', beg: w.beg, lines: w.lines }]).map((g) => `${g.fund ? `<tr class="rp-form"><td colspan="10"><b>${esc(g.fund)}</b></td></tr>` : ''}
-      <tr><td>${esc(fmtDate(A.from))}</td><td>Beginning Balance</td><td></td><td></td><td></td><td class="r">${amt(g.beg)}</td><td></td><td></td><td class="r">${amt(g.beg)}</td><td class="r">-</td></tr>
-      ${g.lines.map((l) => `<tr${l.edited ? ' class="wp-diff"' : ''}><td>${esc(fmtDate(l.date))}</td><td>${esc(l.part)}</td><td class="mono">${esc(l.no)}</td><td class="r">${amt(l.d)}</td><td class="r">${amt(l.c)}</td><td class="r">${amt(l.ga)}</td>
+    <table class="rp-t wp-t"><thead><tr><th rowspan="2">Date</th><th rowspan="2">Particulars</th>${lo ? `<th colspan="2">${title[2]}</th>` : `<th rowspan="2">${title[2]}</th>`}<th colspan="3">Per Audit</th><th colspan="3">Per CashBook</th><th rowspan="2" class="r">Reconciling amount</th></tr>
+      <tr>${lo ? '<th>From</th><th>To</th>' : ''}<th class="r">${title[3]}</th><th class="r">${title[4]}</th><th class="r">Balance</th><th class="r">${title[3]}</th><th class="r">${title[4]}</th><th class="r">Balance</th></tr></thead>
+      <tbody>${(w.groups && w.groups.length > 1 ? w.groups : [{ fund: '', beg: w.beg, lines: w.lines }]).map((g) => `${g.fund ? `<tr class="rp-form"><td colspan="${lo ? 11 : 10}"><b>${esc(g.fund)}</b></td></tr>` : ''}
+      <tr><td>${esc(fmtDate(A.from))}</td><td>Beginning Balance</td>${E}<td></td><td></td><td class="r">${amt(g.beg)}</td><td></td><td></td><td class="r">${amt(g.beg)}</td><td class="r">-</td></tr>
+      ${g.lines.map((l) => `<tr${l.edited ? ' class="wp-diff"' : ''}><td>${esc(fmtDate(l.date))}</td><td>${esc(l.part)}</td>${noTd(l)}<td class="r">${amt(l.d)}</td><td class="r">${amt(l.c)}</td><td class="r">${amt(l.ga)}</td>
         <td class="r">${cell(l, 'd', l.cd)}</td><td class="r">${cell(l, 'c', l.cc)}</td><td class="r">${amt(l.gb)}</td><td class="r">${amt(l.k)}</td></tr>`).join('')}
-      ${g.fund ? `<tr class="rp-sub"><td></td><td><i>Subtotal, ${esc(g.fund)}</i></td><td></td><td class="r">${amt(g.tot.d)}</td><td class="r">${amt(g.tot.c)}</td><td class="r">${amt(g.end)}</td><td class="r">${amt(g.tot.cd)}</td><td class="r">${amt(g.tot.cc)}</td><td class="r">${amt(g.endCb)}</td><td class="r">${amt(g.tot.k)}</td></tr>` : ''}`).join('')}
-      <tr class="tot"><td></td><td>Total</td><td></td><td class="r">${amt(w.tot.d)}</td><td class="r">${amt(w.tot.c)}</td><td class="r">${amt(w.end)}</td><td class="r">${amt(w.tot.cd)}</td><td class="r">${amt(w.tot.cc)}</td><td class="r">${amt(w.endCb)}</td><td class="r">${amt(w.tot.k)}</td></tr></tbody></table>
+      ${g.fund ? `<tr class="rp-sub"><td></td><td><i>Subtotal, ${esc(g.fund)}</i></td>${E}<td class="r">${amt(g.tot.d)}</td><td class="r">${amt(g.tot.c)}</td><td class="r">${amt(g.end)}</td><td class="r">${amt(g.tot.cd)}</td><td class="r">${amt(g.tot.cc)}</td><td class="r">${amt(g.endCb)}</td><td class="r">${amt(g.tot.k)}</td></tr>` : ''}`).join('')}
+      <tr class="tot"><td></td><td>Total</td>${E}<td class="r">${amt(w.tot.d)}</td><td class="r">${amt(w.tot.c)}</td><td class="r">${amt(w.end)}</td><td class="r">${amt(w.tot.cd)}</td><td class="r">${amt(w.tot.cc)}</td><td class="r">${amt(w.endCb)}</td><td class="r">${amt(w.tot.k)}</td></tr></tbody></table>
     <div class="rp-signs">${sign('Prepared by', prep)}${sign('Reviewed by', rev)}</div></div>`;
 }
 export function rsaHtml(c, ver) {
@@ -557,26 +581,30 @@ function wpSheetNew(wb, c, paper, ver, name) {
     : paper === 'a1b' ? (w.book.kind === 'RCD' ? ['DETAILED STATEMENT OF COLLECTIONS AND DEPOSITS', 'CTC', 'CTC No.', 'Collections', 'Deposits'] : ['DETAILED STATEMENT OF COLLECTIONS AND REMITTANCES', 'CTC', 'CTC No.', 'Collections', 'Remittance'])
       : ['DETAILED STATEMENT OF COLLECTIONS AND DEPOSITS', 'OFFICIAL RECEIPTS', 'OR No.', 'Collections', 'Deposits'];
   const ws = wb.addWorksheet(name);
-  ws.columns = [12, 44, 13, 14, 14, 14, 14, 14, 14, 14].map((width) => ({ width }));
+  // The Liquidating Officer's working paper: OR No. as From and To (one more column).
+  const lo = !!w.lo, X = lo ? 1 : 0, N = 10 + X;
+  ws.columns = (lo ? [12, 44, 12, 12, 14, 14, 14, 14, 14, 14, 14] : [12, 44, 13, 14, 14, 14, 14, 14, 14, 14]).map((width) => ({ width }));
   wpPage(ws, true, '7:8');
-  wcell(ws, 1, 10, WP[paper], { b: true, al: 'right', wrap: false });
-  wtitle(ws, 2, 10, title[0], { b: true, sz: 12 }); wtitle(ws, 3, 10, title[1], { b: true });
-  wtitle(ws, 4, 10, `${fmtDate(A.from)} to ${fmtDate(A.to)}`); wtitle(ws, 5, 10, `${o.name} · ${o.designation || ''} · ${agency}, ${station}`);
+  wcell(ws, 1, N, WP[paper], { b: true, al: 'right', wrap: false });
+  wtitle(ws, 2, N, title[0], { b: true, sz: 12 }); wtitle(ws, 3, N, title[1], { b: true });
+  wtitle(ws, 4, N, `${fmtDate(A.from)} to ${fmtDate(A.to)}`); wtitle(ws, 5, N, `${o.name} · ${o.designation || ''} · ${agency}, ${station}`);
   const H = { b: true, box: true, al: 'center', fill: 'FFF0F0F0' };
-  [[1, 'Date'], [2, 'Particulars'], [3, title[2]], [10, 'Reconciling amount']].forEach(([col, t]) => { wcell(ws, 7, col, t, H); wcell(ws, 8, col, null, { ...H, keep: true }); ws.mergeCells(7, col, 8, col); });
-  [[4, 'Per Audit'], [7, 'Per CashBook']].forEach(([col, t]) => { wcell(ws, 7, col, t, H); wcell(ws, 7, col + 1, null, { ...H, keep: true }); wcell(ws, 7, col + 2, null, { ...H, keep: true }); ws.mergeCells(7, col, 7, col + 2); });
-  [title[3], title[4], 'Balance', title[3], title[4], 'Balance'].forEach((t, k) => wcell(ws, 8, 4 + k, t, H));
+  [[1, 'Date'], [2, 'Particulars'], ...(lo ? [] : [[3, title[2]]]), [N, 'Reconciling amount']].forEach(([col, t]) => { wcell(ws, 7, col, t, H); wcell(ws, 8, col, null, { ...H, keep: true }); ws.mergeCells(7, col, 8, col); });
+  if (lo) { wcell(ws, 7, 3, title[2], H); wcell(ws, 7, 4, null, { ...H, keep: true }); ws.mergeCells(7, 3, 7, 4); wcell(ws, 8, 3, 'From', H); wcell(ws, 8, 4, 'To', H); }
+  [[4 + X, 'Per Audit'], [7 + X, 'Per CashBook']].forEach(([col, t]) => { wcell(ws, 7, col, t, H); wcell(ws, 7, col + 1, null, { ...H, keep: true }); wcell(ws, 7, col + 2, null, { ...H, keep: true }); ws.mergeCells(7, col, 7, col + 2); });
+  [title[3], title[4], 'Balance', title[3], title[4], 'Balance'].forEach((t, k) => wcell(ws, 8, 4 + X + k, t, H));
   let r = 9;
-  const line = (vals, o2 = {}) => { vals.forEach((v, k) => wcell(ws, r, k + 1, v, { box: true, ...(k === 0 || k === 2 ? { al: 'center' } : {}), ...o2 })); r++; };
+  const line = (vals, o2 = {}, bn = false) => { vals.forEach((v, k) => wcell(ws, r, k + 1, v, { box: true, ...(k === 0 || k === 2 || (lo && k === 3) ? { al: 'center' } : {}), ...o2 })); if (bn) ws.mergeCells(r, 3, r, 4); r++; };
+  const nos = (l) => (lo ? (l ? (l.bn ? [l.bn, null] : [l.from ?? l.no ?? '', l.to || '']) : ['', '']) : [l ? l.no || '' : '']);
   const groups = w.groups && w.groups.length > 1 ? w.groups : [{ fund: '', beg: w.beg, lines: w.lines }];
   groups.forEach((g) => {
-    if (g.fund) { wcell(ws, r, 1, g.fund, { b: true, box: true, fill: 'FFF7F9FC' }); for (let k = 2; k <= 10; k++) wcell(ws, r, k, null, { box: true, fill: 'FFF7F9FC', keep: true }); ws.mergeCells(r, 1, r, 10); r++; }
-    line([fmtDate(A.from), 'Beginning Balance', '', null, null, g.beg, null, null, g.beg, 0]);
-    g.lines.forEach((l) => line([fmtDate(l.date), l.part, l.no || '', l.d || 0, l.c || 0, l.ga, l.cd || 0, l.cc || 0, l.gb, l.k], l.edited ? { fill: 'FFFFF4E5' } : {}));
-    if (g.fund) line(['', `Subtotal, ${g.fund}`, '', g.tot.d, g.tot.c, g.end, g.tot.cd, g.tot.cc, g.endCb, g.tot.k], { i: true, b: true });
+    if (g.fund) { wcell(ws, r, 1, g.fund, { b: true, box: true, fill: 'FFF7F9FC' }); for (let k = 2; k <= N; k++) wcell(ws, r, k, null, { box: true, fill: 'FFF7F9FC', keep: true }); ws.mergeCells(r, 1, r, N); r++; }
+    line([fmtDate(A.from), 'Beginning Balance', ...nos(null), null, null, g.beg, null, null, g.beg, 0]);
+    g.lines.forEach((l) => line([fmtDate(l.date), l.part, ...nos(l), l.d || 0, l.c || 0, l.ga, l.cd || 0, l.cc || 0, l.gb, l.k], l.edited ? { fill: 'FFFFF4E5' } : {}, lo && !!l.bn));
+    if (g.fund) line(['', `Subtotal, ${g.fund}`, ...nos(null), g.tot.d, g.tot.c, g.end, g.tot.cd, g.tot.cc, g.endCb, g.tot.k], { i: true, b: true });
   });
-  line(['', 'Total', '', w.tot.d, w.tot.c, w.end, w.tot.cd, w.tot.cc, w.endCb, w.tot.k], { b: true, fill: 'FFF3F4F6' });
-  wsigns(ws, r + 2, prep, rev, 2, 7);
+  line(['', 'Total', ...nos(null), w.tot.d, w.tot.c, w.end, w.tot.cd, w.tot.cc, w.endCb, w.tot.k], { b: true, fill: 'FFF3F4F6' });
+  wsigns(ws, r + 2, prep, rev, 2, 7 + X);
 }
 function bankSheetNew(wb, bank) {
   if (!bank.length) return;

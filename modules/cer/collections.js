@@ -1565,7 +1565,7 @@ const remForm = (k) => (k === 'af51b' ? 'af51' : k || 'af51');
 const remFormName = (k) => (REM_FORMS.find(([x]) => x === remForm(k)) || [, 'AF 51'])[1];
 // The form of a remittance's series: the booklet holding its OR From decides (the collector's first), else the form chosen.
 let BKS = [];
-const formOfSer = (m) => { if (!m) return remForm(''); const fk = remForm(m.form); const n = +String(m.from || '').replace(/\D/g, '');
+export const formOfSer = (m) => { if (!m) return remForm(''); const fk = remForm(m.form); const n = +String(m.from || '').replace(/\D/g, '');
   if (fk === 'cashbn' || (fk === 'cash' && !n)) return 'cashbn';   // cash tickets once typed without numbers: Booklet No. kind
   if (!n || fk === 'cash') return fk;
   const hold = BKS.filter((b) => !b.noSerial && b.form !== 'chk' && b.from <= n && n <= b.to), b = hold.find((x) => x.officerId === m.collectorId) || hold[0];
