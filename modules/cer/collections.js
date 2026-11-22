@@ -1057,7 +1057,7 @@ function wireAll(c) {
     const box = $('#rm-srows');
     const rows = () => $$('.rm-srow', box);
     const blank = (r) => !['.rm-sf', '.rm-st', '.rm-sp', '.rm-sa'].some((k) => $(k, r).value.trim());
-    const order = () => [$('#rm-date'), $('#rm-col'), $('#rm-no'), ...rows().flatMap((r) => ['.rm-sf', '.rm-st', ...(r.classList.contains('rm-cash') ? ['.rm-sp'] : []), '.rm-sa'].map((k) => $(k, r)))];
+    const order = () => [$('#rm-date'), $('#rm-col'), $('#rm-no'), ...rows().flatMap((r) => ['.rm-sf', '.rm-st', ...(r.classList.contains('rm-cash') ? ['.rm-sp'] : []), '.rm-sa'].map((k) => $(k, r)).filter((el) => !el.readOnly))];
     const total = () => { const rs = rows().filter((r) => !blank(r)), t = r2(rs.reduce((n, r) => n + (num($('.rm-sa', r).value) || 0), 0));
       $('#rm-tot').innerHTML = rs.length > 1 ? `Total <b>₱ ${money(t)}</b> · ${rs.length} series` : '';
       rows().forEach((r) => { $('.rm-sx', r).style.visibility = rows().length > 1 ? 'visible' : 'hidden'; }); };
@@ -1074,9 +1074,16 @@ function wireAll(c) {
         return faceOfBk(bs.find((b) => b.officerId === cid) || bs[0] || { form: 'cashbn' }); };
       $('.rm-sp', r).addEventListener('input', () => { if (!r.classList.contains('rm-bn')) return; const q = int($('.rm-sp', r).value); if (q) { $('.rm-sa', r).value = money(r2(q * bnFace())); total(); } });
       $('.rm-sa', r).addEventListener('input', () => { if (!r.classList.contains('rm-bn')) return; const a = num($('.rm-sa', r).value), fv = bnFace(); if (a && fv) { const q = a / fv; if (Math.abs(q - Math.round(q)) < 1e-6) $('.rm-sp', r).value = Math.round(q); } });
-      $('.rm-sk', r).onchange = () => { r.dataset.picked = '1'; kind(); };
+      $('.rm-sk', r).onchange = () => { r.dataset.picked = '1'; kind(); mvAmt(); };
+      // AF 52 / 53 / 54, Cash Ticket (Serial): Amount = Pcs × the denomination of the booklet holding the numbers (computed, not typed).
+      const mvF = () => MV_SER.includes($('.rm-sk', r).value);
+      const serFace = (n) => { const fk = $('.rm-sk', r).value, cid = resolveCol($('#rm-col').value)?.id; const bs = f.booklets.filter((b) => b.form === fk && !b.noSerial && b.from <= n && n <= b.to);
+        return faceOfBk(bs.find((b) => b.officerId === cid) || bs[0] || { form: fk }); };
+      const mvAmt = () => { const sa = $('.rm-sa', r); sa.readOnly = mvF(); sa.tabIndex = mvF() ? -1 : 0; sa.title = mvF() ? 'Pcs × denomination' : '';
+        if (!mvF()) return; const a = +$('.rm-sf', r).value.replace(/\D/g, ''), z = +$('.rm-st', r).value.replace(/\D/g, '') || a;
+        if (!a || z < a || z - a > 5000) { sa.value = ''; total(); return; } let t = 0; for (let n = a; n <= z; n++) t += serFace(n); sa.value = money(r2(t)); total(); };
       function pcsFill() { const a = +$('.rm-sf', r).value.replace(/\D/g, ''), z = +$('.rm-st', r).value.replace(/\D/g, '') || a;
-        if (!r.classList.contains('rm-cash')) { $('.rm-sp', r).value = a && z >= a ? z - a + 1 : ''; return; }
+        if (!r.classList.contains('rm-cash')) { $('.rm-sp', r).value = a && z >= a ? z - a + 1 : ''; mvAmt(); return; }
         if (a && z >= a && (!$('.rm-sp', r).value || r.dataset.autopcs)) { $('.rm-sp', r).value = z - a + 1; r.dataset.autopcs = '1'; } }
       $('.rm-sp', r).addEventListener('input', () => { delete r.dataset.autopcs; });
       // The form from the booklet the number is in (Accountable Forms), unless chosen by hand.
@@ -1087,6 +1094,7 @@ function wireAll(c) {
       ['.rm-sf', '.rm-st'].forEach((k) => $(k, r).addEventListener('input', () => { if (!r.classList.contains('rm-cash')) pcsFill(); }));
       $('.rm-sa', r).onblur = () => { const v = num($('.rm-sa', r).value); if (v !== null) $('.rm-sa', r).value = money(v); total(); };
       ['.rm-sf', '.rm-st', '.rm-sa'].forEach((k) => { $(k, r).oninput = total; });
+      { const sa = $('.rm-sa', r); sa.readOnly = mvF(); sa.tabIndex = mvF() ? -1 : 0; }
     };
     rows().forEach(wireRow); total();
     // The collector's report No.: already in another RCD of this LO, or already in the app on the collector's side → stopped;
