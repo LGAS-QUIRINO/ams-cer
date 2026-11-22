@@ -533,7 +533,7 @@ export async function collectionsView(ctx) {
       <p class="af-note">Each remittance is encoded once: typed when the collector's SCR / RCD is not in the app, ticked when it is. The check compares the collector's ORs in the range with the amount. A remittance dated before the last cash exam is in the beginning balance.</p></div>` : '';
   // SCD tab: the entry line on top (a new report, or the selected one to edit), a notice of records not yet in a report,
   // then the table of the officer's submitted reports (click a row to select it).
-  const realFigs = fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind)).flatMap((k) => fig.chains[k].figs).sort((a, b) => byDate(a.rec, b.rec) || (a.rec.dupe || 0) - (b.rec.dupe || 0));
+  const realFigs = fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind)).flatMap((k) => fig.chains[k].figs).sort(byRepNo);
   const pends = fig.keys.map((k) => fig.chains[k]).filter((ch) => usedKinds.includes(ch.kind) && (ch.pend.nOrs || ch.pend.dep || ch.pend.remTotal));
   const notice = pends.map((ch) => { const p = ch.pend, last = ch.figs[ch.figs.length - 1];
     const what = [p.nOrs ? `${p.nOrs} OR${p.nOrs > 1 ? 's' : ''} (₱ ${money(p.orsTotal)})` : '', p.dep ? `₱ ${money(p.dep)} ${ch.kind === 'SCR' ? 'remitted' : 'deposits'}` : '', p.remTotal ? `₱ ${money(p.remTotal)} remittances received` : ''].filter(Boolean).join(' and ');
@@ -1741,6 +1741,10 @@ export function depsBeforeOrs(f, o, fig) {
 // ORs in a report with a range whose number is outside it (e.g. the range was corrected).
 const strays = (ch) => ch.figs.filter(hasRange).flatMap((g) => g.ors.filter((x) => !x.bnLine && !inRec(g.rec, x.serial, x.form)));
 const byDate = (a, b) => String(a.date).localeCompare(String(b.date));
+// The reports as listed: by report No. (numbered ones first), those without a No. after them by date. Shown only: the
+// figures (undeposited carried from report to report) still follow the date order.
+const byRepNo = (x, y) => { const a = String(x.rec.no || '').trim(), b = String(y.rec.no || '').trim();
+  return (a ? 0 : 1) - (b ? 0 : 1) || (a && b ? a.localeCompare(b, undefined, { numeric: true }) : 0) || byDate(x.rec, y.rec) || (x.rec.dupe || 0) - (y.rec.dupe || 0); };
 // An OR not yet in a report whose number is in the OR Range of a report of this officer (any fund or report type): it goes there.
 const rangeHome = (fig, x) => { for (const ch of Object.values(fig.chains)) { const g = ch.figs.find((y) => hasRange(y) && inRec(y.rec, +x.serial, x.form)); if (g) return { ch, id: g.id }; } return null; };
 const pendOrs = (fig) => Object.values(fig.chains).flatMap((ch) => ch.pend.ors);
