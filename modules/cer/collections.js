@@ -631,12 +631,13 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         <div class="sd-f sd-w-date"><label for="mv-date">Date</label><input class="input" type="date" id="mv-date" value="${esc(LASTC.date)}"></div>
         <div class="sd-f sd-w-no"><label for="mv-from">OR From</label><input class="input mono" id="mv-from" inputmode="numeric" value="${esc(serial)}" autocomplete="off"></div>
         <div class="sd-f sd-w-no"><label for="mv-to">OR To</label><input class="input mono" id="mv-to" inputmode="numeric" autocomplete="off"></div>
+        <div class="sd-f"><label>Status</label><div class="seg cd-st" role="group" aria-label="Status"><a href="#" data-mvst="issued" class="${LASTC.mvSt !== 'cancelled' ? 'on' : ''}" aria-pressed="${LASTC.mvSt !== 'cancelled'}">Issued</a><a href="#" data-mvst="cancelled" class="${LASTC.mvSt === 'cancelled' ? 'on' : ''}" aria-pressed="${LASTC.mvSt === 'cancelled'}">Cancelled</a></div></div>
         <div class="sd-f sd-w-pcs"><label for="mv-pcs">Pcs</label><input class="input r" id="mv-pcs" readonly tabindex="-1"></div>
         <div class="sd-f sd-w-no"><label for="mv-val">Value (₱)</label><input class="input r" id="mv-val" value="${mvFace ? money(mvFace) : ''}" readonly tabindex="-1"></div>
         <div class="sd-f sd-w-amt"><label for="mv-amt">Amount (₱)</label><input class="input r" id="mv-amt" readonly tabindex="-1"></div>
-        <div class="sd-f sd-w-txt"><label for="mv-cx">Cancelled (optional)</label><input class="input mono" id="mv-cx" placeholder="e.g. 7262455, 7262460" autocomplete="off"></div>
+        <div class="sd-f sd-w-txt" ${LASTC.mvSt === 'cancelled' ? 'style="display:none"' : ''}><label for="mv-cx">Cancelled (optional)</label><input class="input mono" id="mv-cx" placeholder="e.g. 7262455, 7262460" autocomplete="off"></div>
         <div class="sd-f sd-w-btn"><label>&nbsp;</label><button class="btn primary" type="button" id="mv-enter">Enter</button></div></div>
-      <p class="af-note">${esc(FIXED_PART[form] || '')}: each OR of the range is saved at its denomination; Pcs and Amount count the issued ones (the cancelled ones typed are saved as Cancelled).</p>`;
+      <p class="af-note">${esc(FIXED_PART[form] || '')}: each OR of the range is saved at its denomination; Pcs and Amount count the issued ones (the cancelled ones typed are saved as Cancelled). Status Cancelled: every OR from OR From to OR To is saved as Cancelled.</p>`;
   const colBody = !forms.length ? `<div class="cd-info">This officer has no accountable forms ticked in Audit Setup${isLO ? '. A Liquidating Officer who issues ORs himself needs Collecting and the forms ticked there' : ''}. ${isLO ? 'Remittances and deposits are entered in parts 1 and 3.' : ''}</div>`
     : `${rProg}${rDone ? `<div class="cd-info cd-rdone">All ORs of ${esc(repName(cur.rec, K))} are encoded (${esc(rangesShow(rRec))}). To encode ORs of another report, choose it in tab 1, or "Not yet in an ${K}" in Show below.</div>` : ''}${enc ? `<div class="cd-set" ${rDone ? 'hidden' : ''}>
         <div class="field"><label for="cd-form">Form Type</label><select class="input" id="cd-form">${forms.map((k) => `<option value="${esc(k)}" ${k === form ? 'selected' : ''}>${esc(FORMS.find(([x]) => x === k)?.[1] || k)}</option>`).join('')}</select></div>
@@ -1343,8 +1344,10 @@ function wireAll(c) {
     const form = $('#cd-form').value, fromIn = $('#mv-from'), toIn = $('#mv-to'), cxIn = $('#mv-cx');
     const bkAt = (n) => f.booklets.find((b) => b.officerId === o.id && b.form === form && !b.noSerial && b.from <= n && n <= b.to) || null;
     const faceAt = (n) => faceOfBk(bkAt(n) || { form });
+    const allCx = () => LASTC.mvSt === 'cancelled';
+    $$('[data-mvst]').forEach((x) => { x.onclick = (e) => { e.preventDefault(); LASTC.mvSt = x.dataset.mvst; $$('[data-mvst]').forEach((y) => { y.classList.toggle('on', y === x); y.setAttribute('aria-pressed', y === x); }); cxIn.closest('.sd-f').style.display = allCx() ? 'none' : ''; paint(); }; });
     const read = () => { const a = int(fromIn.value), z = int(toIn.value) || a;
-      const cx = [...new Set(String(cxIn.value).split(/[^\d]+/).filter(Boolean).map(Number))];
+      const cx = allCx() && a && z >= a && z - a < 500 ? Array.from({ length: z - a + 1 }, (_, i) => a + i) : [...new Set(String(cxIn.value).split(/[^\d]+/).filter(Boolean).map(Number))];
       return { a, z, cx, ok: a && z >= a && z - a < 500 }; };
     const paint = () => { const r = read();
       if (!r.ok) { $('#mv-pcs').value = ''; $('#mv-amt').value = ''; return; }
@@ -1383,7 +1386,7 @@ function wireAll(c) {
       } finally { const btn = $('#mv-enter'); if (btn) btn.disabled = false; }
     };
     $('#mv-enter').onclick = saveMv;
-    $('#cd-mvform').onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); const els = ['#mv-date', '#mv-from', '#mv-to', '#mv-cx'].map((k) => $(k)); const i = els.indexOf(e.target); if (i < 0 || i >= els.length - 1) saveMv(); else els[i + 1].focus(); };
+    $('#cd-mvform').onkeydown = (e) => { if (e.key !== 'Enter') return; e.preventDefault(); const els = ['#mv-date', '#mv-from', '#mv-to', '#mv-cx'].map((k) => $(k)).filter((el) => el.offsetParent !== null); const i = els.indexOf(e.target); if (i < 0 || i >= els.length - 1) saveMv(); else els[i + 1].focus(); };
     paint();
   }
 
