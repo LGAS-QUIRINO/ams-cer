@@ -533,7 +533,10 @@ export async function collectionsView(ctx) {
       <p class="af-note">Each remittance is encoded once: typed when the collector's SCR / RCD is not in the app, ticked when it is. The check compares the collector's ORs in the range with the amount. A remittance dated before the last cash exam is in the beginning balance.</p></div>` : '';
   // SCD tab: the entry line on top (a new report, or the selected one to edit), a notice of records not yet in a report,
   // then the table of the officer's submitted reports (click a row to select it).
-  const realFigs = fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind)).flatMap((k) => fig.chains[k].figs).sort(byRepNo);
+  const realFigs = fig.keys.filter((k) => usedKinds.includes(fig.chains[k].kind)).flatMap((k) => fig.chains[k].figs)
+    // Only the reports of this cash examination: dated after the last cash exam, up to the cash count (the others belong to
+    // the previous or the next cash examination and show there).
+    .filter((g) => !g.rec.date || ((!exam.lastExamDate || g.rec.date > exam.lastExamDate) && (!audit.countDate || g.rec.date <= audit.countDate))).sort(byRepNo);
   const pends = fig.keys.map((k) => fig.chains[k]).filter((ch) => usedKinds.includes(ch.kind) && (ch.pend.nOrs || ch.pend.dep || ch.pend.remTotal));
   const notice = pends.map((ch) => { const p = ch.pend, last = ch.figs[ch.figs.length - 1];
     const what = [p.nOrs ? `${p.nOrs} OR${p.nOrs > 1 ? 's' : ''} (₱ ${money(p.orsTotal)})` : '', p.dep ? `₱ ${money(p.dep)} ${ch.kind === 'SCR' ? 'remitted' : 'deposits'}` : '', p.remTotal ? `₱ ${money(p.remTotal)} remittances received` : ''].filter(Boolean).join(' and ');
