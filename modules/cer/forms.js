@@ -1874,7 +1874,9 @@ export function beginningFormsOf(f, officerId, asOf) {
   if (!asOf) return [];
   return f.booklets.filter((b) => b.officerId === officerId && b.status !== 'stock' && b.issuedDate && b.issuedDate <= asOf
       && !(b.status === 'lost' && (b.history || []).some((h) => h.action === 'lost' && h.date <= asOf)))
-    .map((b) => ({ b, unused: rawUnused(b, asOf), src: srcOf(b) })).filter((r) => r.unused.length)
+    // Its unused numbers as of the last cash exam: a booklet entered with its unused numbers as of that day keeps them (ORs dated
+    // that day were issued after the cut-off, as in the SAAF); otherwise the ORs up to that day are taken out.
+    .map((b) => ({ b, unused: rawUnused(b, asOf, b.beginDate === asOf && (Array.isArray(b.unusedAtStart) || !!b.usedBefore)), src: srcOf(b) })).filter((r) => r.unused.length)
     .sort((x, y) => bkOrder(x.b, y.b));
 }
 // Booklets the officer received after the last cash exam, up to the count date (shown for information).
