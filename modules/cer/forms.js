@@ -185,7 +185,11 @@ export async function loadForms() {
       return; }
     o.range = true;
     if (!b) { o.serial = 0; o.serialTo = 0; return; }
-    const left = bnTake[b.id] = bnTake[b.id] || (Array.isArray(b.unusedAtStart) ? b.unusedAtStart.map((r) => [r[0], r[1]]) : [[b.from, b.to]]);
+    // A booklet partly used at the start (beginning): lines dated on or before its start date take the pieces already used
+    // then (as ORs of the beginning take numbers outside the unused ones); later lines take the unused pieces.
+    const pools = bnTake[b.id] = bnTake[b.id] || (() => { const un = Array.isArray(b.unusedAtStart) ? b.unusedAtStart.map((r) => [r[0], r[1]]) : [[b.from, b.to]];
+      return { un, used: Array.isArray(b.unusedAtStart) ? subtractRanges([[b.from, b.to]], b.unusedAtStart).map((r) => [r[0], r[1]]) : [], d0: b.beginDate || (b.issuedAsOf ? b.issuedDate : '') }; })();
+    const left = pools.d0 && o.date && o.date <= pools.d0 && pools.used.length ? pools.used : pools.un;
     let need = +o.pcs || 0;
     while (need > 0 && left.length) { const r = left[0], k = Math.min(need, r[1] - r[0] + 1); for (let i = 0; i < k; i++) o.bnNos.push(r[0] + i); r[0] += k; need -= k; if (r[0] > r[1]) left.shift(); }
     o.bnShort = need;   // pieces beyond what the booklet has left
