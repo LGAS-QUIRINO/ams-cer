@@ -1061,3 +1061,10 @@ table.af-reg.tr-month{min-width:0}
 .rm-srow.rm-bn .rm-st{display:none} .rm-srow.rm-bn .rm-sf{grid-column:span 2}
 .cer-begh{margin:12px 0 6px; font-size:14px; font-weight:700}
 .sd-w-pcs{width:70px} .cd-mventry{margin:10px 0 4px}
+
+/* Collections & Deposits: at most about 10 rows shown, the rest by scrolling; headings and totals stay in view */
+.cd-scroll10{max-height:460px !important; overflow:auto}
+.cd-scroll10 thead th{position:sticky; top:0; z-index:2; background:#f6f8fc}
+.cd-scroll10 tfoot td{position:sticky; bottom:0; z-index:2}
+.cd-sortrow{display:flex; align-items:center; gap:8px; margin:0 0 8px; font-size:13px}
+.cd-sortrow .input{width:auto; height:32px; padding:4px 28px 4px 10px; font-size:13px}
