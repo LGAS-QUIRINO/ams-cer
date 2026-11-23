@@ -91,6 +91,10 @@ const sum = (list, k) => r2(list.reduce((n, x) => n + (+x[k] || 0), 0));
 const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, sameDay, formTyped, ...rest } = x; return rest; };   // sameDay is worked out on loading, never saved
 const bad = (m) => { toast(m, 'bad'); return false; };
+// A date more than a year before the last cash exam or after the cash count (e.g. the year typed 0205): stopped as a typing mistake.
+const farDate = (d, exam, audit) => { if (!d) return ''; const y = +String(d).slice(0, 4), yr = 365 * 864e5, t = Date.parse(d);
+  const lo = exam && exam.lastExamDate ? Date.parse(exam.lastExamDate) - yr : null, hi = audit && audit.countDate ? Date.parse(audit.countDate) + yr : null;
+  return y < 2000 || (lo !== null && t < lo) || (hi !== null && t > hi) ? `The date ${fmtDate(d)} (year ${String(d).slice(0, 4)}) looks wrong: it is more than a year away from this cash examination. Check the date.` : ''; };
 const DEPSHOW = { v: 'all' };
 const REM = { key: '', i: -1, date: '', mode: 'type', find: '' };   // the typed remittance being edited (by report) and the last date typed
 const KSEL = {};   // the report type shown per officer (SCD / RCD or SCR), remembered while the app is open
@@ -1118,6 +1122,7 @@ function wireAll(c) {
       const date = $('#rm-date').value; let col = resolveCol($('#rm-col').value);
       const sers = rows().filter((r) => !blank(r));
       if (!date) { $('#rm-date').focus(); return bad('Enter the date received.'); }
+      if (farDate(date, c.exam, c.audit)) { $('#rm-date').focus(); return bad(farDate(date, c.exam, c.audit)); }
       if (!sers.length) { $('.rm-sa', rows()[0]).focus(); return bad('Enter the amount.'); }
       if (!col && !$('#rm-col').value.trim()) { $('#rm-col').focus(); return bad('Type the collector\'s name.'); }
       const lines = [];
@@ -1318,12 +1323,13 @@ function wireAll(c) {
     const inp = $('input', td); inp.focus(); let done = false;
     const finish = async (save) => { if (done) return; done = true; const v = inp.value;
       if (!save || !v || v === x.date) { td.innerHTML = was; return; }
+      if (farDate(v, c.exam, c.audit)) { toast(farDate(v, c.exam, c.audit), 'bad'); td.innerHTML = was; return; }
       if (c.audit.countDate && v > c.audit.countDate) { const ok = await modal({ title: 'Date after the cash count?', body: `<p style="margin:0">The date ${esc(fmtDate(v))} is after the cash count on ${esc(fmtDate(c.audit.countDate))}. Save it anyway?</p>`, buttons: [{ label: 'Go back', value: false }, { label: 'Save', cls: 'primary', value: true }] }); if (!ok) { td.innerHTML = was; return; } }
       const { beg, ...rest } = strip(x), nb = begOr(f, { ...x, date: v }, c.exam.lastExamDate, begRangesOf(c.exam));
       LASTC.scroll = box ? box.scrollTop : null;
       await store.save('cer_ors', x.id, { ...rest, date: v, ...(nb ? { beg: true } : {}) }, by(refs));
       toast(`${x.bnLine ? bnLineText(f, x) : `OR ${x.serial}`}: date ${fmtDate(v)} saved.`, 'ok'); };
-    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); };
+    inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); };
     inp.onblur = () => finish(true); };
     td.onclick = open; td.onkeydown = (e) => { if (e.key === 'Enter') open(); }; });
   $$('td[data-ip]').forEach((td) => { td.onclick = () => cellEdit(td, 'p'); td.onkeydown = (e) => { if (e.key === 'Enter') cellEdit(td, 'p'); }; });
@@ -1342,7 +1348,7 @@ function wireAll(c) {
     const amt = $('#rg-amt'); amt.onblur = () => { const v = num(amt.value); if (v !== null) amt.value = money(v); };
     const saveRg = async () => {
       const form = $('#cd-form').value, date = $('#rg-date').value, a = +String($('#rg-from').value).replace(/\D/g, ''), z = +String($('#rg-to').value).replace(/\D/g, ''), tot = num(amt.value);
-      if (!date) return bad('Enter the date.'); if (!a || !z || z < a) return bad('Enter the OR range (From must not be after To).');
+      if (!date) return bad('Enter the date.'); if (farDate(date, c.exam, c.audit)) return bad(farDate(date, c.exam, c.audit)); if (!a || !z || z < a) return bad('Enter the OR range (From must not be after To).');
       if (z - a > 4999) return bad('That range is too long. Check the numbers.');
       if (tot === null || tot < 0) return bad('Enter the total.');
       const hit = f.ors.find((x) => x.form === form && +x.serial <= z && a <= maxSer(x));
@@ -1385,6 +1391,7 @@ function wireAll(c) {
     const saveMv = async () => {
       const date = $('#mv-date').value, r = read();
       if (!date) return bad('Enter the date.');
+      if (farDate(date, c.exam, c.audit)) return bad(farDate(date, c.exam, c.audit));
       if (!r.a) return bad('Enter the OR From.');
       if (r.z < r.a) return bad('OR To must not be before OR From.');
       if (r.z - r.a >= 500) return bad('That range is too long (500 at most). Check the numbers.');
@@ -1429,6 +1436,7 @@ function wireAll(c) {
     const saveBn = async () => {
       const b = f.booklets.find((x) => x.id === bkSel.value), date = $('#bn-date').value, q = int(pcsIn.value), p = $('#bn-part').value.trim().replace(/\s+/g, ' ') || FIXED_PART.cashbn;
       if (!date) return bad('Enter the date.');
+      if (farDate(date, c.exam, c.audit)) return bad(farDate(date, c.exam, c.audit));
       if (!b) return bad('Choose the Booklet No.');
       const a = num(amtIn.value);
       if (!q) return bad(a ? `₱${money(a)} is not a whole number of ₱${money(face())} tickets. Check the amount.` : 'Enter the pieces (Pcs) or the amount.');
@@ -1510,6 +1518,7 @@ function wireAll(c) {
     const b = bkOf(), n = int(orIn.value), date = dateIn.value, st = LASTC.status === 'cancelled' ? 'cancelled' : 'issued';
     if (!n) return bad('Enter the OR No.');
     if (!date) return bad('Enter the date of collection.');
+    if (farDate(date, c.exam, c.audit)) return bad(farDate(date, c.exam, c.audit));
     if (b && (n < b.from || n > b.to)) return bad(`OR No. ${n} is outside the booklet ${b.from} – ${b.to}. Choose the right booklet.`);
     const form = $('#cd-form').value;
     if (c.rMode && !inRec(c.rRec, n, form)) return bad(`${FORM_SHORT[form] || form} ${n} is not in the OR Range of ${repName(c.cur.rec, K)} (${rangesShow(c.rRec)}). Check the number, or choose "Not yet in an ${K}" to encode ORs of another report.`);
@@ -2095,6 +2104,7 @@ async function editOrModal(c, x) {
     buttons: [{ label: 'Delete OR', value: 'del' }, { label: 'Cancel', value: null }, { label: 'Save', cls: 'primary', value: 'save', check: (bg) => {
       const date = $('#eo-date', bg).value, st = $('#eo-st', bg).value, rep = $('#eo-rep', bg).value;
       if (!date) return bad('Enter the date of collection.');
+      if (farDate(date, c.exam, c.audit)) return bad(farDate(date, c.exam, c.audit));
       const its = [];
       if (st === 'issued') {
         for (const r of $$('.cd-prow', bg)) { const p = $('.cd-p', r).value.trim().replace(/\s+/g, ' '), a = num($('.cd-a', r).value); if (!p && !a) continue; if (!p) return bad('Type the particular for each amount.'); if (!a || a <= 0) return bad(`Enter the amount of "${p}".`); its.push({ p, amt: a }); }
