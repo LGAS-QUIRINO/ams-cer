@@ -113,7 +113,9 @@ export async function advancesView(ctx) {
       : `<div class="empty"><b>No cash advance encoded for this officer yet.</b>${enc ? 'Enter each check issued to the officer as a cash advance.' : ''}</div>`}
     ${noFn ? '<p class="af-note">This officer has no Disbursing, Special Disbursing or Petty Cash Custodian function ticked in Audit Setup.</p>' : ''}`;
 
-  const lqRows = liqs.slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  // Chronological: by date, then by LR No. / OR No. within the same date.
+  const lqOrder = (a, b) => String(a.date).localeCompare(String(b.date)) || String(a.ref || '').localeCompare(String(b.ref || ''), undefined, { numeric: true });
+  const lqRows = liqs.slice().sort(lqOrder);
   const lqBody = `${enc ? (list.length ? `<div class="cd-entry lq-entry">
         <div class="field"><label for="lq-type">Type</label><select class="input" id="lq-type"><option value="liq" ${LAST.lqType !== 'refund' ? 'selected' : ''}>Liquidation</option><option value="refund" ${LAST.lqType === 'refund' ? 'selected' : ''}>Refund</option></select></div>
         <div class="field"><label for="lq-date">Date</label><input class="input" type="date" id="lq-date" value="${esc(LAST.lqDate)}"></div>
@@ -144,7 +146,7 @@ export async function advancesView(ctx) {
     }; });
     $('#ca-xls').onclick = () => exportXlsx(`Cash Advances ${o.name} ${audit.countDate}.xlsx`, 'Cash Advances', [
       ...list.map((a) => ({ Entry: a.rest ? 'Beginning Balance (not itemized)' : a.beg ? 'Beginning Check' : 'Cash Advance', Date: fmtDate(a.date), 'Check No.': a.checkNo, 'LR No. / Reference': '', Particulars: a.particulars || '', 'Cash Advance': a.amount, Liquidation: '', 'Balance of the Check': a.bal, Status: a.st[1] })),
-      ...liqs.slice().sort((x, y) => String(x.date).localeCompare(String(y.date))).map((l) => ({ Entry: 'Liquidation', Date: fmtDate(l.date), 'Check No.': (() => { const a = list.find((x) => x.id === l.advanceId); return a ? (a.rest ? 'Beginning balance' : a.checkNo) : ''; })(), 'LR No. / Reference': l.ref || '', Particulars: liqText(l, list.find((x) => x.id === l.advanceId)), 'Cash Advance': '', Liquidation: l.amount, 'Balance of the Check': '', Status: '' })),
+      ...liqs.slice().sort(lqOrder).map((l) => ({ Entry: 'Liquidation', Date: fmtDate(l.date), 'Check No.': (() => { const a = list.find((x) => x.id === l.advanceId); return a ? (a.rest ? 'Beginning balance' : a.checkNo) : ''; })(), 'LR No. / Reference': l.ref || '', Particulars: liqText(l, list.find((x) => x.id === l.advanceId)), 'Cash Advance': '', Liquidation: l.amount, 'Balance of the Check': '', Status: '' })),
       { Entry: 'Unliquidated', Date: fmtDate(audit.countDate), 'Check No.': '', 'LR No. / Reference': '', Particulars: `Beginning ${money(beg)} + cash advances ${money(totCa)} − liquidations ${money(totLq)}`, 'Cash Advance': '', Liquidation: '', 'Balance of the Check': unliq, Status: '' }]);
     if (!enc) return;
     const base = { lguId: audit.lguId, officerId: o.id };
