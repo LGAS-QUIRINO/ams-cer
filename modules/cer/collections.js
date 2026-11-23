@@ -1642,8 +1642,12 @@ function remCheck(f, m) {
     const rid = m.colReportId || m.reportId, inRep = rid ? f.ors.filter((x) => mine(x) && x.reportId === rid) : [];
     const xs = inRep.length ? inRep : f.ors.filter((x) => mine(x) && x.date && x.date <= m.date && (!rid || !x.reportId));
     if (!xs.length) return '<span class="pill p-flag">Collections not yet encoded</span>';
-    const t = r2(xs.reduce((n, x) => n + rawAmt(x), 0)), d = r2((+m.amount || 0) - t);
-    return Math.abs(d) < 0.005 ? '<span class="pill p-done">Collections agree</span>' : `<span class="pill p-flag" title="BN. ${esc(m.bn)} encoded: ₱${money(t)}">₱${money(Math.abs(d))} ${d > 0 ? 'not found in the collections' : 'more in the collections'}</span>`;
+    // Matched per booklet: all the LO's lines of this booklet for the same report, against the collector's lines of it.
+    const same = f.reports.flatMap((r) => (r.remittances || []).filter((x) => !x.fromCol && x.collectorId === m.collectorId && +x.bn === +m.bn && formOfSer(x) === 'cashbn'
+      && (rid ? (x.colReportId || x.reportId) === rid : String(x.reportNo || '') === String(m.reportNo || ''))));
+    const lo = r2((same.length ? same : [m]).reduce((n, x) => n + (+x.amount || 0), 0));
+    const t = r2(xs.reduce((n, x) => n + rawAmt(x), 0)), d = r2(lo - t), sev = same.length > 1 ? ` (${same.length} lines of BN. ${esc(m.bn)}: ₱${money(lo)})` : '';
+    return Math.abs(d) < 0.005 ? `<span class="pill p-done" title="BN. ${esc(m.bn)}: ₱${money(t)} encoded${sev}">Collections agree</span>` : `<span class="pill p-flag" title="BN. ${esc(m.bn)} encoded: ₱${money(t)}${sev}">₱${money(Math.abs(d))} ${d > 0 ? 'not found in the collections' : 'more in the collections'}</span>`;
   }
   if (!m.from) return '<span class="dim">no range</span>';
   const off = m.serList && m.serList.length > 1 ? '' : rangeOff(m.from, m.to); if (off) return `<span class="pill p-bad" title="${esc(off)}">Check the OR range · ${esc(off)}</span>`;
