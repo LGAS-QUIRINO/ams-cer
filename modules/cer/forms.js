@@ -155,7 +155,7 @@ const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin
 /* ---------- data ---------- */
 export async function loadForms() {
   const cer = await loadCer();
-  const [booklets, checks, raaf, settings, ors, cutoffs, ckdj, reps] = await Promise.all([store.list('cer_booklets'), store.list('cer_formcheck'), store.list('cer_raaf'), store.list('cer_settings'), store.list('cer_ors'), store.list('cer_cutoff'), store.list('src_ckdj'), store.list('cer_reports')]);
+  const [booklets, checks, raaf, settings, ors, cutoffs, ckdj] = await Promise.all([store.list('cer_booklets'), store.list('cer_formcheck'), store.list('cer_raaf'), store.list('cer_settings'), store.list('cer_ors'), store.list('cer_cutoff'), store.list('src_ckdj')]);
   const flat = (r) => ({ id: r.id, ...r.data });
   const out = { ...cer, booklets: booklets.map(flat), checks: checks.map(flat), cutoffs: cutoffs.map(flat), raaf: raaf.map(flat), settings: Object.fromEntries(settings.map((s) => [s.id, s.data])), ors: ors.map(flat) };
   // An OR's booklet is the one holding its number (the Forms Register decides, not the Form Type chosen when it was encoded
@@ -174,13 +174,9 @@ export async function loadForms() {
   });
   // Cash Ticket (Booklet No.) lines (Date, Booklet No., Pcs): each takes its pieces from the booklet's pieces still unused, in date
   // order, on the booklet's internal numbers (worked out on loading; only the pieces are saved).
-  // A Liquidating Officer's typed remittance of a collector's Cash Ticket (Booklet No.) takes its pieces from the collector's
-  // booklet of that No. too, unless the collector's own Collections already has lines of that booklet (not counted twice).
-  const bnOwn = new Set(out.ors.filter((o) => o.bnLine).map((o) => o.bookletId));
-  const remBn = reps.map(flat).flatMap((r) => (r.remittances || []).map((m, i) => ({ m, id: `rem|${r.id}|${i}` })))
-    .filter(({ m }) => !m.fromCol && m.bn && +m.pcs > 0 && (m.form === 'cashbn' || (m.form === 'cash' && !m.from)))
-    .map(({ m, id }) => { const b = out.booklets.find((x) => x.form === 'cashbn' && x.bn === +m.bn && x.officerId === m.collectorId); return b && !bnOwn.has(b.id) ? { id, date: m.date, pcs: +m.pcs, bookletId: b.id, rem: true } : null; }).filter(Boolean);
-  const remNos = {};
+  // A Liquidating Officer's typed remittance never takes pieces: like the other forms, the pieces are used only by the
+  // collector's own lines in Collections (the LO's line is checked against them).
+  const remNos = {}, remBn = [];
   const bnTake = {};
   [...out.ors.filter((o) => o.bnLine), ...remBn].sort((x, y) => String(x.date).localeCompare(String(y.date)) || String(x.id).localeCompare(String(y.id))).forEach((o) => {
     const b = bkById.get(o.bookletId); o.bnNos = [];
