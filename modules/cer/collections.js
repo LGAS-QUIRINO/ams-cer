@@ -504,7 +504,7 @@ export async function collectionsView(ctx) {
           <div id="rm-srows">${(edGrp ? edGrp.map((x) => x.m) : [null]).map(serRow).join('')}</div>
           <div class="rm-sfoot"><a href="#" class="cd-link" id="rm-addser">+ Series</a><span class="dim">same report</span><span id="rm-tot"></span></div></div>
         <div class="field rm-addbox"><button class="btn primary" type="button" id="rm-add">${ed ? 'Save' : 'Add'}</button>${ed ? ' <button class="btn sm" type="button" id="rm-cancel">Cancel</button>' : ''}</div>
-      </div><div id="rm-nomsg" class="rm-nomsg"></div>
+      </div><div id="rm-nomsg" class="rm-nomsg"></div><div id="rm-regmsg" class="rm-nomsg bad"></div>
       <div class="cd-actions" style="justify-content:flex-start;margin-top:6px"><button class="btn sm" type="button" id="rm-imp">Import from Excel</button><a href="#" class="cd-link" id="rm-tpl">Template</a></div>`;
   // One list: typed groups and ticked reports, by report number.
   const nat = (m) => String(m.reportNo || '').replace(/^[^0-9]*/, '').replace(/\d+/g, (d) => d.padStart(12, '0')).toUpperCase();   // "SCR No. 2026-0189" as 2026-0189
@@ -1108,6 +1108,12 @@ function wireAll(c) {
       { const sa = $('.rm-sa', r); sa.readOnly = mvF(); sa.tabIndex = mvF() ? -1 : 0; }
     };
     rows().forEach(wireRow); total();
+    // Each series against the collector's booklets in the Forms Register: a note under the line (asked once more on Add / Save).
+    const regMsgs = () => { const cid = resolveCol($('#rm-col').value)?.id; return rows().filter((r) => !blank(r)).map((r) => { const fk = $('.rm-sk', r).value;
+      return fk === 'cashbn' ? notInReg(f, cid, fk, '', '', int($('.rm-sf', r).value)) : notInReg(f, cid, fk, $('.rm-sf', r).value, $('.rm-st', r).value, 0); }).filter(Boolean); };
+    const showReg = () => { const el = $('#rm-regmsg'); if (el) el.textContent = regMsgs().join(' '); };
+    $('#rm-form').addEventListener('change', showReg); $('#rm-form').addEventListener('input', () => { if ($('#rm-regmsg')?.textContent) showReg(); });
+    $('#rm-col').addEventListener('change', showReg);
     // The collector's report No.: already in another RCD of this LO, or already in the app on the collector's side → stopped;
     // already in this RCD → another series of it.
     const noCheck = (col) => { const no = nk($('#rm-no').value); if (!col || !no) return null;
@@ -1150,6 +1156,7 @@ function wireAll(c) {
         col = await newColModal($('#rm-col').value); if (!col) return;
       }
       { const r = noCheck(col); if (r && r.block) { showNo(); $('#rm-no').focus(); return bad(r.text); } }
+      { const ms = regMsgs(); showReg(); if (ms.length && !(await modal({ title: 'Not in the Forms Register', body: `<p style="margin:0">${ms.map(esc).join('<br>')}</p><p class="af-note">Save anyway?</p>`, buttons: [{ label: 'Go back', value: false }, { label: 'Save anyway', cls: 'primary', value: true }] }))) return; }
       const ms = lines.map((x) => lineOf(date, col, $('#rm-no').value, x.fr, x.to, x.amt, x.form, x.pcs, x.bn));
       const gone = new Set(edGrp ? edGrp.map((x) => x.i) : []);
       const list = [...typedNow().filter((_, i) => !gone.has(i)), ...ms];
@@ -1589,6 +1596,17 @@ const remForm = (k) => (k === 'af51b' ? 'af51' : k || 'af51');
 const remFormName = (k) => (REM_FORMS.find(([x]) => x === remForm(k)) || [, 'AF 51'])[1];
 // The form of a remittance's series: the booklet holding its OR From decides (the collector's first), else the form chosen.
 let BKS = [];
+// A typed remittance series of a collector not in the Forms Register: '' when in the collector's booklets, else the text to show.
+// Serial forms: every number of OR From – OR To in a booklet of the collector; Cash Ticket (Booklet No.): her booklet of that No.
+function notInReg(f, colId, fk, from, to, bn) {
+  if (!colId) return '';
+  const who = f.officers.find((x) => x.id === colId)?.name || 'the collector';
+  if (fk === 'cashbn') { if (!bn) return ''; return f.booklets.some((b) => b.form === 'cashbn' && +b.bn === +bn && b.officerId === colId) ? '' : `BN. ${bn} is not a booklet of ${who} in the Forms Register.`; }
+  const a = +String(from || '').replace(/\D/g, ''), z = +String(to || '').replace(/\D/g, '') || a; if (!a || z < a || z - a > 5000) return '';
+  const bks = f.booklets.filter((b) => b.officerId === colId && !b.noSerial && b.form !== 'chk' && b.from <= z && a <= b.to);
+  for (let n = a; n <= z; n++) if (!bks.some((b) => b.from <= n && n <= b.to)) return `${a === z ? a : `${a}–${z}`} is not in any booklet of ${who} in the Forms Register. Check the numbers.`;
+  return '';
+}
 export const formOfSer = (m) => { if (!m) return remForm(''); const fk = remForm(m.form); const n = +String(m.from || '').replace(/\D/g, '');
   if (fk === 'cashbn' || (fk === 'cash' && !n)) return 'cashbn';   // cash tickets once typed without numbers: Booklet No. kind
   if (!n || fk === 'cash') return fk;
@@ -1638,6 +1656,7 @@ function remCheck(f, m) {
   // Cash Ticket (Booklet No.): the collector's lines of that booklet in the collector's report (else in any report of hers).
   if (!m.from && formOfSer(m) === 'cashbn') {
     if (!m.bn) return '<span class="pill p-flag">Booklet No. not typed</span>';
+    { const nir = !m.fromCol && notInReg(f, m.collectorId, 'cashbn', '', '', m.bn); if (nir) return `<span class="pill p-flag" title="${esc(nir)}">Not in the Forms Register</span>`; }
     const mine = (x) => x.officerId === m.collectorId && x.bnLine && x.status !== 'cancelled' && +BKS.find((b) => b.id === x.bookletId)?.bn === +m.bn;
     const rid = m.colReportId || m.reportId, inRep = rid ? f.ors.filter((x) => mine(x) && x.reportId === rid) : [];
     const xs = inRep.length ? inRep : f.ors.filter((x) => mine(x) && x.date && x.date <= m.date && (!rid || !x.reportId));
@@ -1650,6 +1669,8 @@ function remCheck(f, m) {
     return Math.abs(d) < 0.005 ? `<span class="pill p-done" title="BN. ${esc(m.bn)}: ₱${money(t)} encoded${sev}">Collections agree</span>` : `<span class="pill p-flag" title="BN. ${esc(m.bn)} encoded: ₱${money(t)}${sev}">₱${money(Math.abs(d))} ${d > 0 ? 'not found in the collections' : 'more in the collections'}</span>`;
   }
   if (!m.from) return '<span class="dim">no range</span>';
+  const nir = !m.fromCol && notInReg(f, m.collectorId, formOfSer(m), m.from, m.to, 0);
+  if (nir) return `<span class="pill p-flag" title="${esc(nir)}">Not in the Forms Register</span>`;
   const off = m.serList && m.serList.length > 1 ? '' : rangeOff(m.from, m.to); if (off) return `<span class="pill p-bad" title="${esc(off)}">Check the OR range · ${esc(off)}</span>`;
   const a = +m.from, z = +(m.to || m.from);
   // From the collector's own report: its ORs; else the ORs of the collector in the range.
