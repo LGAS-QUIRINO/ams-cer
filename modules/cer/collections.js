@@ -566,7 +566,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   /* ----- 2 · Collections ----- */
   const myBooklets = (form) => f.booklets.filter((b) => b.form === form && b.officerId === o.id && b.status !== 'lost' && !b.noSerial).sort((a, b) => a.from - b.from);
   const ckey = o.id + '|' + selId;
-  const cbook = exam.records === 'cashbook', cbMode = cbook || f.ors.some((x) => x.officerId === o.id && x.range);
+  const cbook = exam.records === 'cashbook', cbMode = cbook || f.ors.some((x) => x.officerId === o.id && x.range && !x.bnLine);
   if (LASTC.key !== ckey) Object.assign(LASTC, { key: ckey, form: '', bookletId: '', serial: '', focus: '', mode: cbook ? 'range' : 'one' });
   if (!cbMode) LASTC.mode = 'one';
   // An RCD with its OR Range: the entry line follows it. Per range: its form and the numbers not yet encoded; the OR No.
