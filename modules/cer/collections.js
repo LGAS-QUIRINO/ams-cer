@@ -587,7 +587,11 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const rToGo = rMiss.reduce((t, r) => t + r.miss.length, 0), rDone = rMode && !rToGo;
   const rProg = rMode ? `<div class="cd-rprog"><span>${rMiss.map((r) => `${esc(remFormName(r.fk))} · ${r.a}–${r.z}: <b>${r.n - r.miss.length} of ${r.n}</b>`).join(' &nbsp;·&nbsp; ')}</span>
       ${rToGo ? `<a href="#" class="cd-link" id="cd-gomiss" title="${esc(rMiss.filter((r) => r.miss.length).map((r) => `${remFormName(r.fk)}: ${rangesText(mergeRanges(r.miss.map((n) => [n, n])))}`).join('\n'))}"><b>${rToGo} to go</b> · next ${firstMiss.miss[0]}</a>` : '<b class="ok-t">All ORs of the range encoded</b>'}</div>` : '';
-  const form = forms.includes(LASTC.form) ? LASTC.form : forms[0] || '';
+  // The form the line opens on: the one chosen last; else, for a report made from the LO's remittance lines, the form of
+  // those lines (e.g. Cash Ticket (Booklet No.)); else the first form.
+  const loForm = (() => { if (cur.pending) return ''; const fk = f.reports.flatMap((r) => (r.remittances || []).filter((m) => !m.fromCol && m.reportId === cur.id)).map((m) => formOfSer(m))
+    .map((k) => forms.find((x) => sameF(x, k) || x === k)).find(Boolean); return fk || ''; })();
+  const form = forms.includes(LASTC.form) ? LASTC.form : loForm || forms[0] || '';
   // Only the booklets still in use (with unused numbers) are offered; a used-up booklet stays out of the list (its ORs remain
   // in the records). The booklet chosen last stays listed so the entry line keeps it.
   const bks = myBooklets(form).filter((b) => countRanges(bookletUnused(b)) > 0 || b.id === LASTC.bookletId);
