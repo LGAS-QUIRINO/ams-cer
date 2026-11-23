@@ -351,7 +351,17 @@ async function save(wb, file) {
 }
 const ARROW_BIG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAC0AAABZCAYAAACqqa1NAAACRElEQVR4Xu2b3SoFURzFFyFFOo9A5EIRj+DCR3kbT+ARvItO+Si8gJQLSSmPwIUSQv9p9jTTzOy95+DstXJWuSH8LL/ZH7NngFH+R+YG+TPHB/mmX8w+gM2uPy81tGVHEXpbEXoDwHwXcAY9LJ3bTpkjAF8AbrtApG76IYddVIJ+ymGnAGzFgqduupxor0fQP8waEOc2U9PRQx8bdNSUzgg9FtKMDXo6ZgHFBh3lNSN00GtG6BUAyz6vGaGDGwNWaO+Uzgq9C2CyTRFW6AnfxsC+eBEazP8wvm2WjSL9tt9tOwfGjztfWYzAjsmGv1pYnXZpHEXYoRtnR1tR2b+CNZ8AZgC8lgHZmza+Wtvs0I2rPgVoyabtRs6qktMulbYV9Kh5zT7klTML4MU+odJ0ZWOgBF1M6Up6PAJYUNPD1t7ratCF10pOF0OfktMuPbWmzwE8q0GfKl6IJwat5LTkOJ21rKZH5rOaHnKrvDO3LFXSo1BDCbq4CFWcticVlspbGIUZsdKyih4VnxX0kLyXZy1Xbj4q6FHzWQG65rML6/FF65mLnW5dlsfAIcd22G0nXK0tp86B52Rtrw2OdXL5ANqbZoU+BvCu1rTXZ9amG8dnF0Zoe1j23jdCMEJ7W2adEYPjM1vTtjiSa9qAg8febE0HW2Z0OugzG/QNUDxu7w2THlEtszUtA93LPXgDsltfUUmth3tVxL06EpXU0Fc55WEUbZ7U0C7RPrNciNdAdjQRHYamO7XM0nTU1M2Ugd6xHWVY+Qalp8MX2SRjdQAAAABJRU5ErkJggg==';   // GF 74-A arrow (NOTED AND COMPLIED WITH)
 const ARROW_SMALL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACMAAAAwCAYAAACbm8NsAAAB3UlEQVR4Xu2YyytFURSHP89MKc+R8g7JK3nEQFL+O8b+A3MTjETkNZA8MpCSUBhJ3v1O59y24xwT7bvXwFd3dAfna62191prl+CXGmAA6AdugBXg2u8n8xkFloFP4AOY+02k1LPlM/AYf6MEqA0p8w68OAJKWWuekO/ICEUkYRjoDinjMgL0WpFRJtohOmU/KEaa0rQBk1ZkWoAJKzI63kNAeVrId5p00b1mRKERGAcq3P9kN59X3X/kDWiIW0GaamAW2E3L6qou9k/R2oZIqoDvNOWhjOi+abYgI8qAGaA+EQoVmURmGqj7l8lAqVInjwo5ZJoS1Dw7rchoGuyyItNkSUZ0AIMWakZoxhnTSKhWYIElK5GJsCJzCqxbkTkDNq3IKDJ7FmSugGMrNbNlSUYT34mFyGgX3wceQstIZBW4tTBcSWYtfkQqUOzNIPneU3qNCXW0tVMdAhduU9TKsOCpS7pLXDQ8OahgVS/uQ5J3eoDFjCVRN+5U1nrrE5XBt306Ri+eGxBFr0CImrmLd+xvIqHumXONC1npCBEZMzJ6r9Hscm8hMmqKul8yKUaa3IF/BzgKJaNdutL5+AFENRMkMlXO65SO9GWeiHCf0n2gx+dBoC9Oj2oms3jFF9szi1dcRyjmAAAAAElFTkSuQmCC'; // GF 74-A arrow (TO)
-export const fileBase = (c) => `${String(c.A.lgu.data.name || c.agency).replace(/^\s*[BMP]LGU\s*[-–]\s*/i, '').toUpperCase()} - ${c.audit.countDate}`;
+// The surname of an officer: the last word of the name (Jr., Sr., II … skipped), with DE / DELA / DEL / SAN / STA … before it kept.
+export const lastNameOf = (name) => {
+  const w = String(name || '').replace(/[.,]/g, ' ').trim().split(/\s+/).filter(Boolean);
+  while (w.length > 1 && /^(JR|SR|II|III|IV|V)$/i.test(w[w.length - 1])) w.pop();
+  let i = w.length - 1; while (i > 0 && /^(DE|DEL|DELA|DELOS|DELAS|LA|LAS|LOS|SAN|STA|STO|SANTA|SANTO|DI|VAN|VON)$/i.test(w[i - 1])) i--;
+  return w.slice(i).join(' ').toUpperCase();
+};
+// File names: "<LGU> - <officer's surname> - <count date>" (a barangay: its name only, one treasurer each).
+export const fileBase = (c) => { const lgu = String(c.A.lgu.data.name || c.agency).replace(/^\s*[BMP]LGU\s*[-–]\s*/i, '').toUpperCase();
+  const brgy = c.A.lgu.data.kind === 'barangay', ln = brgy ? '' : lastNameOf(c.o && c.o.name);
+  return `${lgu}${ln ? ' - ' + ln : ''} - ${c.audit.countDate}`; };
 
 export async function downloadReport(c, ver) {
   const wb = await template('cer-report.xlsx');
