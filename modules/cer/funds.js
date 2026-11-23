@@ -1,3 +1,4 @@
+import { fifoSplit } from '../src/journal.js';
 // CER · the fund of a cash advance: the fund of the checkbook of its check (or of the journal's bank account).
 // Bank accounts: cer_settings banks|<lguId> { list[{ id, bank, accountNo, fund }] }. A checkbook names its fund in fund and/or
 // bankAccount (free text, e.g. "LBP - 5% BDRRM"); it belongs to the account whose No. or fund it names.
@@ -46,6 +47,7 @@ export const afterLast = (exam, d) => { const from = exam?.lastExamDate; if (!fr
 // The previous exam's cash advance checks still unliquidated at its count: this exam's beginning checks (unless itemized).
 export function carriedOpen(exam, advs, liqs) {
   if (!prevSys(exam) || !exam.lastExamDate) return [];
+  liqs = fifoSplit((liqs || []).filter((l) => !l.officerId || l.officerId === exam.officerId), advs.filter((a) => a.officerId === exam.officerId));   // check not identified: first in, first out
   const typed = new Set(advs.filter((a) => a.officerId === exam.officerId && a.beg).map((a) => chkNo(a.checkNo)).filter(Boolean));
   return advs.filter((a) => a.officerId === exam.officerId && !a.beg && a.date && !afterLast(exam, a.date) && !typed.has(chkNo(a.checkNo))).map((a) => {
     const before = (liqs || []).filter((l) => l.advanceId === a.id && l.date && !afterLast(exam, l.date)).reduce((n, l) => n + (+l.amount || 0), 0);

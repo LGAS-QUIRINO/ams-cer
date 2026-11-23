@@ -21,7 +21,7 @@ const COLS = [{ h: 'Date', w: 0.8 }, { h: 'Check No.', w: 0.8 }, { h: 'Particula
 export async function unliqView({ refs, lgu, accounts, m, q, jr, books, enc }) {
   const asOf = /^\d{4}-\d{2}-\d{2}$/.test(q.get('asof') || '') ? q.get('asof') : endOf(m);
   const who = q.get('who') === 'ao' ? 'ao' : 'all';
-  const [{ advs, liqs }, audits0] = await Promise.all([cashAdvancesOf({ lgu, accounts, jr, books }), store.list('cer_audits')]);
+  const [{ advs, split: liqs }, audits0] = await Promise.all([cashAdvancesOf({ lgu, accounts, jr, books }), store.list('cer_audits')]);
   const countDate = audits0.map((r) => r.data).filter((a) => a.lguId === lgu.id && a.countDate).map((a) => a.countDate).sort().pop() || '';
   // Each open check as of the date.
   const open = advs.filter((a) => a.date && a.date <= asOf && (who === 'all' || a.isAo)).map((a) => {

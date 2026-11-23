@@ -11,7 +11,7 @@
 //   cer_verify  id = examId  { examId, recon{ <column>: { cashbook, unrecBeg, unrecDebit, unrecCredit } },
 //                              decisions{ <finding key>: { decision, remarks } }, complete, completeBy, completeAt, ready, readyBy, readyAt }
 import { cnpData, fnpData } from './cnp.js';
-import { listT, liqOwners } from '../src/journal.js';
+import { listT, liqOwners, fifoSplit } from '../src/journal.js';
 import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
@@ -222,11 +222,15 @@ export async function verifyView(ctx) {
     });
   });
   const mineAdv = advs.filter((a) => a.officerId === o.id && (!a.beg || a.begExamId === exam.id));
+  // Liquidations with no check identified: first in, first out (the beginning not itemized first, then by check date).
+  const begRest = r2(BEG_CA.reduce((n, k) => n + (+(exam.balances?.[k]?.amount) || 0), 0) - mineAdv.filter((a) => a.beg).reduce((n, a) => n + (+a.amount || 0), 0));
+  const SL = fifoSplit(liqs.filter((x) => x.officerId === o.id && (x.date <= to || x.countAnyway)), [...(begRest > 0.004 ? [{ id: '__beg', rest: true, date: exam.lastExamDate || '', amount: begRest }] : []), ...mineAdv]);
   mineAdv.forEach((a) => {
-    const l = r2(liqs.filter((x) => x.advanceId === a.id && (x.date <= to || x.countAnyway)).reduce((n, x) => n + (+x.amount || 0), 0)); const left = r2((+a.amount || 0) - l);
-    if (a.date <= to && left > 0.004) add(`ca|${a.id}`, 'Cash Advances', `Check No. ${a.checkNo} (₱${money(a.amount)}${a.particulars ? ', ' + a.particulars : ''}) has ₱${money(left)} unliquidated at the count.`, '#/cer/advances',
+    const mine = SL.filter((x) => x.advanceId === a.id), ff = mine.some((x) => x.fifo) ? ' (first in, first out, not yet matched)' : '';
+    const l = r2(mine.reduce((n, x) => n + (+x.amount || 0), 0)); const left = r2((+a.amount || 0) - l);
+    if (a.date <= to && left > 0.004) add(`ca|${a.id}`, 'Cash Advances', `Check No. ${a.checkNo} (₱${money(a.amount)}${a.particulars ? ', ' + a.particulars : ''}) has ₱${money(left)} unliquidated at the count${ff}.`, '#/cer/advances',
       'ca', [esc(a.checkNo || '—'), esc(fmtDate(a.date)), esc(a.particulars || ''), money(a.amount), money(left), `<span class="pill p-flag">${Math.max(0, days(a.date, to))}</span>`], left);
-    if (left < -0.004) add(`caover|${a.id}`, 'Cash Advances', `Check No. ${a.checkNo} is over-liquidated by ₱${money(-left)}.`, '#/cer/advances', 'caover', [esc(a.checkNo || '—'), esc(fmtDate(a.date)), money(a.amount), money(-left)], -left);
+    if (left < -0.004) add(`caover|${a.id}`, 'Cash Advances', `Check No. ${a.checkNo} is over-liquidated by ₱${money(-left)}${ff}.`, '#/cer/advances', 'caover', [esc(a.checkNo || '—'), esc(fmtDate(a.date)), money(a.amount), money(-left)], -left);
   });
   const myReports = new Set(f.reports.filter((r) => r.officerId === o.id).map((r) => r.id));
   bank0.map(flat).filter((r) => r.auditId === audit.id).forEach((rec) => Object.entries(rec.found || {}).forEach(([k, bd]) => {

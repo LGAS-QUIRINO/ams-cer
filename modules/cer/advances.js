@@ -9,7 +9,7 @@
 //   cer_cashadv   one cash advance  { lguId, officerId, date, checkNo, particulars, amount }
 //   cer_liquid    one liquidation   { lguId, officerId, date, ref, particulars, amount, advanceId, type: 'liq' | 'refund' (refund: ref = OR No.),
 //                                    countAnyway (ticked: counted in the cash exam although dated outside the scope) }
-import { listT, liqOwners } from '../src/journal.js';
+import { listT, liqOwners, FIFO, fifoSplit } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num } from './cer.js';
@@ -35,14 +35,15 @@ function figures(advs, liqs) {
       const mine = liqs.filter((l) => l.advanceId === a.id);
       const liq = r2(mine.reduce((n, l) => n + (+l.amount || 0), 0));
       const bal = r2((+a.amount || 0) - liq);
-      const st = bal < -0.004 ? ['p-stock', 'Over-liquidated'] : bal <= 0.004 ? ['p-done', 'Fully liquidated'] : liq > 0 ? ['p-part', 'Partly liquidated'] : ['p-stock', 'Not yet liquidated'];
+      const ff = mine.some((l) => l.fifo) ? ' (FIFO)' : '';   // part of it by first in, first out (check not identified)
+      const st = bal < -0.004 ? ['p-stock', 'Over-liquidated' + ff] : bal <= 0.004 ? ['p-done', (ff ? 'Liquidated' : 'Fully liquidated') + ff] : liq > 0 ? ['p-part', 'Partly liquidated' + ff] : ['p-stock', 'Not yet liquidated'];
       return { ...a, liq, bal, st, n: mine.length };
     });
   return list;
 }
 
 // A liquidation's particulars: as typed (older entries), else "Liquidation of cash advance under Check No. …".
-export const liqText = (l, a) => l.particulars || `${l.type === 'refund' ? (l.deposited ? 'Refund (deposited in the bank, no OR)' : 'Refund') : 'Liquidation'} of ${a && !a.rest && a.checkNo ? `cash advance under Check No. ${a.checkNo}` : 'the beginning cash advance'}`;
+export const liqText = (l, a) => l.particulars || (l.advanceId === FIFO ? `${l.type === 'refund' ? 'Refund' : 'Liquidation'} of cash advances (check not identified)` : '') || `${l.type === 'refund' ? (l.deposited ? 'Refund (deposited in the bank, no OR)' : 'Refund') : 'Liquidation'} of ${a && !a.rest && a.checkNo ? `cash advance under Check No. ${a.checkNo}` : 'the beginning cash advance'}`;
 export async function advancesView(ctx) {
   const { refs, q } = ctx;
   const [audits0, exams0, officers0, advs0, liqs0] = await Promise.all(['cer_audits', 'cer_exams', 'cer_officers', 'cer_cashadv', 'cer_liquid'].map(listT));
@@ -83,7 +84,9 @@ export async function advancesView(ctx) {
   const rest = r2(beg - begSum);
   // What is not itemized is listed as one row, like a cash advance, so liquidations of older advances can be put against it.
   const begRow = rest > 0.004 || liqs.some((l) => l.advanceId === '__beg') ? [{ id: '__beg', beg: true, rest: true, date: exam.lastExamDate || '', checkNo: 'Beginning', particulars: 'Beginning balance (not itemized)', amount: Math.max(rest, 0) }] : [];
-  const list = figures([...begRow, ...begChecks, ...old, ...advs], liqs);
+  const rowsCa = [...begRow, ...begChecks, ...old, ...advs];
+  const split = fifoSplit(liqs, rowsCa);   // liquidations with no check identified: first in, first out
+  const list = figures(rowsCa, split);
   const totCa = r2(advs.reduce((n, a) => n + (+a.amount || 0), 0));
   const totLq = r2(liqs.reduce((n, l) => n + (+l.amount || 0), 0));
   const unliq = r2(beg + totCa - totLq);
@@ -116,17 +119,25 @@ export async function advancesView(ctx) {
   // Chronological: by date, then by LR No. / OR No. within the same date.
   const lqOrder = (a, b) => String(a.date).localeCompare(String(b.date)) || String(a.ref || '').localeCompare(String(b.ref || ''), undefined, { numeric: true });
   const lqRows = liqs.slice().sort(lqOrder);
+  // A liquidation with no check identified: where first in, first out put it (pointing at it shows the amounts).
+  const fifoCell = (l) => {
+    const ps = split.filter((x) => x.srcId === l.id);
+    const to = ps.map((x) => { const b = list.find((y) => y.id === x.advanceId); return b ? (b.rest ? 'Beginning' : b.checkNo) : 'not matched'; });
+    const tip = ps.map((x, i) => to[i] + ': ₱' + money(x.amount)).join('\n');
+    return '<span class="pill p-part" title="' + esc(tip) + '">Not identified · FIFO</span>' + (to.length ? '<br><small class="dim">→ ' + esc([...new Set(to)].join(', ')) + '</small>' : '');
+  };
   const lqBody = `${enc ? (list.length ? `<div class="cd-entry lq-entry">
         <div class="field"><label for="lq-type">Type</label><select class="input" id="lq-type"><option value="liq" ${LAST.lqType !== 'refund' ? 'selected' : ''}>Liquidation</option><option value="refund" ${LAST.lqType === 'refund' ? 'selected' : ''}>Refund</option></select></div>
         <div class="field"><label for="lq-date">Date</label><input class="input" type="date" id="lq-date" value="${esc(LAST.lqDate)}"></div>
         <div class="field"><label for="lq-ref" id="lq-refl">${LAST.lqType === 'refund' ? 'OR No.' : 'LR No. / Reference'}</label><input class="input mono" id="lq-ref" placeholder="${LAST.lqType === 'refund' ? 'OR No. of the refund' : 'LR, JEV or other'}" autocomplete="off"></div>
         <div class="field"><label for="lq-amt">Amount (₱)</label><input class="input r" id="lq-amt" inputmode="decimal" autocomplete="off"></div>
-        <div class="field"><label for="lq-for">For Check No.</label><select class="input" id="lq-for">${(open.length ? open : list).map((a) => `<option value="${esc(a.id)}">${esc(advLabel(a))}</option>`).join('')}${open.length && open.length < list.length ? `<optgroup label="Fully liquidated">${list.filter((a) => a.bal <= 0.004).map((a) => `<option value="${esc(a.id)}">${esc(advLabel(a))}</option>`).join('')}</optgroup>` : ''}</select></div>
+        <div class="field"><label for="lq-for">For Check No.</label><select class="input" id="lq-for">${(open.length ? open : list).map((a) => `<option value="${esc(a.id)}">${esc(advLabel(a))}</option>`).join('')}${open.length && open.length < list.length ? `<optgroup label="Fully liquidated">${list.filter((a) => a.bal <= 0.004).map((a) => `<option value="${esc(a.id)}">${esc(advLabel(a))}</option>`).join('')}</optgroup>` : ''}<option value="${FIFO}">Not identified (first in, first out)</option></select></div>
         <button class="btn primary" type="button" id="lq-enter">Enter</button></div>
       <div class="ca-tools"><a href="#" class="cd-link" data-tpl="lq">Template</a><button class="btn sm" type="button" data-imp="lq">Import from Excel</button></div>` : '<div class="cd-info">Encode the cash advance first, then its liquidations.</div>') : ''}
     ${lqRows.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Date</th><th scope="col">Type</th><th scope="col">LR No. / OR No.</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">For Check No.</th><th scope="col" class="r"></th></tr></thead>
       <tbody>${lqRows.map((l) => { const a = list.find((x) => x.id === l.advanceId); return `<tr><td>${esc(fmtDate(l.date))}${outOf(l.date) ? (l.countAnyway ? '<br><span class="pill p-done">Outside the scope · counted</span>' : '<br><span class="pill p-flag">Outside the scope</span>') : ''}</td><td>${l.type === 'refund' ? '<span class="pill p-done">Refund</span>' : 'Liquidation'}</td><td class="mono">${esc(l.ref || '')}</td><td>${esc(liqText(l, a))}</td><td class="r">${money(l.amount)}</td>
-        <td class="mono">${a ? (a.rest ? 'Beginning balance' : esc(a.checkNo) + (a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : '')) : '<span class="dim">—</span>'}</td><td class="r">${enc ? `<button class="btn sm" type="button" data-elq="${esc(l.id)}" aria-label="Edit liquidation ${esc(l.ref || '')}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
+        <td class="mono">${l.advanceId === FIFO ? fifoCell(l)
+          : a ? (a.rest ? 'Beginning balance' : esc(a.checkNo) + (a.beg ? ' <span class="pill blue ca-begtag">Beginning</span>' : '')) : '<span class="dim">—</span>'}</td><td class="r">${enc ? `<button class="btn sm" type="button" data-elq="${esc(l.id)}" aria-label="Edit liquidation ${esc(l.ref || '')}">Edit</button>` : ''}</td></tr>`; }).join('')}</tbody>
       <tfoot><tr class="cd-foot"><td colspan="4">Total${liqs.some((l) => l.type === 'refund') ? ` <span class="dim">(refunds ₱${money(r2(liqs.filter((l) => l.type === 'refund').reduce((n, l) => n + (+l.amount || 0), 0)))})</span>` : ''}</td><td class="r">${money(totLq)}</td><td></td><td></td></tr></tfoot></table></div>`
       : '<div class="empty"><b>No liquidation encoded yet.</b></div>'}
     ${begChecks.length ? '<p class="af-note">Checks tagged Beginning were unliquidated as of the last cash exam; their amount is what was still unliquidated then. They are entered in Audit Setup, Beginning Balances.</p>' : ''}<p class="af-note">For Check No. starts on the oldest open cash advance; pick another when the LR names it. A liquidation larger than what is left on its check is flagged. A refund of an excess cash advance: choose Refund and type its OR No.</p>`;
@@ -146,7 +157,7 @@ export async function advancesView(ctx) {
     }; });
     $('#ca-xls').onclick = () => exportXlsx(`Cash Advances ${o.name} ${audit.countDate}.xlsx`, 'Cash Advances', [
       ...list.map((a) => ({ Entry: a.rest ? 'Beginning Balance (not itemized)' : a.beg ? 'Beginning Check' : 'Cash Advance', Date: fmtDate(a.date), 'Check No.': a.checkNo, 'LR No. / Reference': '', Particulars: a.particulars || '', 'Cash Advance': a.amount, Liquidation: '', 'Balance of the Check': a.bal, Status: a.st[1] })),
-      ...liqs.slice().sort(lqOrder).map((l) => ({ Entry: 'Liquidation', Date: fmtDate(l.date), 'Check No.': (() => { const a = list.find((x) => x.id === l.advanceId); return a ? (a.rest ? 'Beginning balance' : a.checkNo) : ''; })(), 'LR No. / Reference': l.ref || '', Particulars: liqText(l, list.find((x) => x.id === l.advanceId)), 'Cash Advance': '', Liquidation: l.amount, 'Balance of the Check': '', Status: '' })),
+      ...liqs.slice().sort(lqOrder).map((l) => ({ Entry: 'Liquidation', Date: fmtDate(l.date), 'Check No.': (() => { const a = list.find((x) => x.id === l.advanceId); return l.advanceId === FIFO ? 'Not identified (FIFO)' : a ? (a.rest ? 'Beginning balance' : a.checkNo) : ''; })(), 'LR No. / Reference': l.ref || '', Particulars: liqText(l, list.find((x) => x.id === l.advanceId)), 'Cash Advance': '', Liquidation: l.amount, 'Balance of the Check': '', Status: '' })),
       { Entry: 'Unliquidated', Date: fmtDate(audit.countDate), 'Check No.': '', 'LR No. / Reference': '', Particulars: `Beginning ${money(beg)} + cash advances ${money(totCa)} − liquidations ${money(totLq)}`, 'Cash Advance': '', Liquidation: '', 'Balance of the Check': unliq, Status: '' }]);
     if (!enc) return;
     const base = { lguId: audit.lguId, officerId: o.id };
@@ -245,7 +256,7 @@ async function editLiq(refs, l, list, outOf) {
       <div class="field"><label for="el-date">Date</label><input class="input" type="date" id="el-date" value="${esc(l.date)}"></div>
       <div class="field"><label for="el-ref">LR No. / Reference</label><input class="input mono" id="el-ref" value="${esc(l.ref || '')}"></div>
       <div class="field"><label for="el-amt">Amount (₱)</label><input class="input r" id="el-amt" inputmode="decimal" value="${esc(money(l.amount))}"></div>
-      <div class="field"><label for="el-for">For Check No.</label><select class="input" id="el-for">${list.map((a) => `<option value="${esc(a.id)}" ${a.id === l.advanceId ? 'selected' : ''}>${esc(a.rest ? `Beginning balance (not itemized) · ₱${money(a.bal)} left` : `${a.checkNo}${a.beg ? ' (Beginning)' : ''} · ${a.particulars || fmtDate(a.date)} · ₱${money(a.bal)} left`)}</option>`).join('')}</select></div></div>
+      <div class="field"><label for="el-for">For Check No.</label><select class="input" id="el-for">${list.map((a) => `<option value="${esc(a.id)}" ${a.id === l.advanceId ? 'selected' : ''}>${esc(a.rest ? `Beginning balance (not itemized) · ₱${money(a.bal)} left` : `${a.checkNo}${a.beg ? ' (Beginning)' : ''} · ${a.particulars || fmtDate(a.date)} · ₱${money(a.bal)} left`)}</option>`).join('') + `<option value="${FIFO}" ${l.advanceId === FIFO ? 'selected' : ''}>Not identified (first in, first out)</option>`}</select></div></div>
       <label class="cer-tick" id="el-cntbox" ${outOf(l.date) ? '' : 'hidden'}><input type="checkbox" id="el-cnt" ${l.countAnyway ? 'checked' : ''}> Count even if outside the scope</label>`,
     onOpen: (bg) => { $('#el-date', bg).oninput = () => { $('#el-cntbox', bg).hidden = !outOf($('#el-date', bg).value); }; },
     buttons: [{ label: 'Delete', value: 'del' }, { label: 'Cancel', value: null }, { label: 'Save', cls: 'primary', value: 'save', check: (bg) => {
@@ -309,10 +320,11 @@ async function importRows(kind, c) {
         if (!ref) { problems.push({ line, why: 'LR No. / Reference is missing.' }); return; }
         const forTxt = String(get(row, 'for') ?? '').trim();
         const adv = forTxt ? list.find((a) => !a.rest && key(a.checkNo) && key(a.checkNo) === key(forTxt)) : null;
-        const advanceId = adv ? adv.id : (!forTxt || /begin/i.test(forTxt)) && list.some((a) => a.rest) ? '__beg' : '';
-        if (!advanceId) { problems.push({ line, why: forTxt ? `Check No. ${forTxt} is not encoded for this officer.` : 'For Check No. is missing.' }); return; }
+        // Blank (or "not identified" / "FIFO"): first in, first out.
+        const advanceId = adv ? adv.id : /begin/i.test(forTxt) && list.some((a) => a.rest) ? '__beg' : !forTxt || /fifo|not\s*identified|unidentified/i.test(forTxt) ? FIFO : '';
+        if (!advanceId) { problems.push({ line, why: `Check No. ${forTxt} is not encoded for this officer.` }); return; }
         const type = /refund/i.test(String(get(row, 'type') ?? '')) ? 'refund' : 'liq';
-        add.push({ type, date, ref, particulars, amount, advanceId, show: `${type === 'refund' ? 'Refund OR ' : ''}${ref} → ${adv ? adv.checkNo : 'Beginning balance'}` });
+        add.push({ type, date, ref, particulars, amount, advanceId, show: `${type === 'refund' ? 'Refund OR ' : ''}${ref} → ${adv ? adv.checkNo : advanceId === FIFO ? 'Not identified (FIFO)' : 'Beginning balance'}` });
       }
     });
     return { add, problems };

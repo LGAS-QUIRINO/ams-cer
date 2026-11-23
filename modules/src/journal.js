@@ -95,6 +95,30 @@ export async function listAdvances(all = false) {
 // A liquidation (or refund) belongs to the officer of its cash advance: saved before the check was tied to the officer
 // (e.g. the payee matched two officers of the same name), it may carry no officer, or another one.
 export const liqOwners = (liqs, advs) => { const by = new Map(advs.map((a) => [a.id, a.officerId])); return liqs.map((l) => { const w = l.advanceId && by.get(l.advanceId); return w && w !== l.officerId ? { ...l, officerId: w } : l; }); };
+// A liquidation whose check is not identified (For Check No.: "Not identified"): first in, first out. Each one, in date order,
+// goes to the officer's oldest cash advance still unliquidated (the beginning first, then by check date), after the liquidations
+// with an identified check; what is left over stays unidentified. Returns the liquidations with those split into pieces
+// { …, id: '<id>#k', srcId, amount, advanceId, fifo: true }. advs: the officer's cash advances (beginning rows included).
+export const FIFO = '__fifo';
+export function fifoSplit(liqs, advs) {
+  if (!liqs.some((l) => l.advanceId === FIFO)) return liqs;
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const left = new Map(advs.map((a) => [a.id, +a.amount || 0]));
+  liqs.forEach((l) => { if (l.advanceId !== FIFO && left.has(l.advanceId)) left.set(l.advanceId, left.get(l.advanceId) - (+l.amount || 0)); });
+  const order = advs.slice().sort((a, b) => (b.rest ? 1 : 0) - (a.rest ? 1 : 0) || (b.beg ? 1 : 0) - (a.beg ? 1 : 0) || String(a.date || '').localeCompare(String(b.date || '')) || String(a.checkNo || '').localeCompare(String(b.checkNo || ''), undefined, { numeric: true }));
+  const out = liqs.filter((l) => l.advanceId !== FIFO);
+  liqs.filter((l) => l.advanceId === FIFO).sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.ref || '').localeCompare(String(b.ref || ''), undefined, { numeric: true })).forEach((l) => {
+    let need = r2(+l.amount || 0), k = 0;
+    const mine = order.filter((a) => !a.officerId || !l.officerId || a.officerId === l.officerId);
+    for (const a of [...mine.filter((x) => !x.date || !l.date || x.date <= l.date), ...mine.filter((x) => x.date && l.date && x.date > l.date)]) {
+      if (need <= 0.004) break; const room = r2(left.get(a.id) || 0); if (room <= 0.004) continue;
+      const take = Math.min(need, room); left.set(a.id, r2(room - take)); need = r2(need - take);
+      out.push({ ...l, id: `${l.id}#${k++}`, srcId: l.id, amount: r2(take), advanceId: a.id, fifo: true });
+    }
+    if (need > 0.004) out.push({ ...l, id: `${l.id}#${k}`, srcId: l.id, amount: need, fifo: true });
+  });
+  return out;
+}
 export const listT = (t) => (t === 'cer_cashadv' ? listAdvances() : t === 'src_ckdj' ? listJournal() : store.list(t));
 
 // For Bank Statements: the journal's checks of a bank account that are not AO cash advances (those come with Cash Advances).

@@ -51,11 +51,11 @@ export async function liqView(c) {
   const mine = advs.filter((a) => a.acctId === acct.id).sort((a, b) => String(a.date).localeCompare(String(b.date)) || chkNo(a.checkNo) - chkNo(b.checkNo));
   const creditOf = (l) => l.credit || advOf(l.advanceId)?.credit || '';
   const acctTxt = (code) => (code ? `${code} ${names[code] || ''}`.trim() : '');
-  const forTxt = (l) => { const a = advOf(l.advanceId); return l.advanceId === '__beg' ? 'Beginning balance' : a ? a.checkNo : ''; };
+  const forTxt = (l) => { const a = advOf(l.advanceId); return l.advanceId === '__beg' ? 'Beginning balance' : l.advanceId === '__fifo' ? 'Not identified (FIFO)' : a ? a.checkNo : ''; };
   const flagsOf = (l) => {
     const a = advOf(l.advanceId), deb = debitsOf(l);
     return [l.type !== 'refund' && !deb.length ? 'No entry yet' : '', l.type !== 'refund' && deb.length && Math.abs(sumOf(deb) - r2(l.amount)) > 0.004 ? `Debits ₱${money(sumOf(deb))} ≠ amount` : '',
-      a && a.bal < -0.004 ? `More than the cash advance (₱${money(-a.bal)} over)` : '', l.advanceId !== '__beg' && !a ? 'Check not found' : '',
+      a && a.bal < -0.004 ? `More than the cash advance (₱${money(-a.bal)} over)` : '', l.advanceId !== '__beg' && l.advanceId !== '__fifo' && !a ? 'Check not found' : '',
       a && !a.inCkdj && !a.beg ? 'Check not in the CkDJ' : '', !creditOf(l) ? 'Credit account: choose' : ''].filter(Boolean);
   };
   const total = sumOf(list);

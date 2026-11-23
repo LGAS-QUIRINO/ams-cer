@@ -11,7 +11,7 @@
 //   cer_cashcount  id = examId  { examId, bills{ '1000': pcs, … }, coins, items[{ particulars, appliesTo: 'col'|'ca', presented, allowed, advanceId }], split{ col, ca } (typed; blank = automatic) }
 // Cash items of the cash advance: one line per check of the AO still unliquidated as of the cut-off (both funds; liquidations
 // and refunds dated after the cut-off not counted), already listed; only what is typed as presented counts (advanceId).
-import { listT, liqOwners } from '../src/journal.js';
+import { listT, liqOwners, fifoSplit } from '../src/journal.js';
 import { store, newId } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, cycleOk, cycles, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, formsForLgu } from './cer.js';
@@ -219,13 +219,16 @@ function openAdvances(f, o, exam, audit, advs, liqs) {
   const cut = audit.countDate;
   const liqIn = liqCounts(exam, audit);
   const L = liqs.filter((l) => l.officerId === o.id && liqIn(l));
-  const liqOf = (id) => r2(L.filter((l) => l.advanceId === id).reduce((n, l) => n + (+l.amount || 0), 0));
+  let S = L;   // liquidations, those with no check identified split first in, first out (set below, once the rows are known)
+  const liqOf = (id) => r2(S.filter((l) => l.advanceId === id).reduce((n, l) => n + (+l.amount || 0), 0));
   const begChecks = advs.filter((a) => a.officerId === o.id && a.beg && a.begExamId === exam.id);
   const beg = r2(BEG_CA.reduce((n, k) => n + (+(exam.balances?.[k]?.amount) || 0), 0));
   // Carried from the previous cash exam: its open checks are the beginning (not listed again as checks of this period).
   const old = carriedOpen(exam, advs, liqs);
   const rest = r2(beg - [...begChecks, ...old].reduce((n, a) => n + (+a.amount || 0), 0));
-  const list = [...begChecks, ...old, ...advs.filter((a) => a.officerId === o.id && !a.beg && a.date && a.date <= cut && (prevSys(exam) ? afterLast(exam, a.date) : !(old.length && exam.lastExamDate && a.date < exam.lastExamDate)))].map((a) => ({ ...a, fund: caFund(a, ctx), unliq: r2((+a.amount || 0) - liqOf(a.id)) }));
+  const base = [...begChecks, ...old, ...advs.filter((a) => a.officerId === o.id && !a.beg && a.date && a.date <= cut && (prevSys(exam) ? afterLast(exam, a.date) : !(old.length && exam.lastExamDate && a.date < exam.lastExamDate)))];
+  S = fifoSplit(L, [...(rest > 0.004 ? [{ id: '__beg', rest: true, date: exam.lastExamDate || '', amount: rest }] : []), ...base]);
+  const list = base.map((a) => ({ ...a, fund: caFund(a, ctx), unliq: r2((+a.amount || 0) - liqOf(a.id)) }));
   if (rest > 0.004 || L.some((l) => l.advanceId === '__beg')) list.unshift({ id: '__beg', rest: true, checkNo: '', date: exam.lastExamDate || '', particulars: 'Beginning balance (not itemized)', amount: Math.max(rest, 0), fund: restFund(exam, ctx), unliq: r2(Math.max(rest, 0) - liqOf('__beg')) });
   const ord = fundOrder(ctx);
   return list.filter((a) => a.unliq > 0.004).sort((a, b) => ord(a.fund, b.fund) || (b.rest ? 1 : 0) - (a.rest ? 1 : 0) || String(a.date).localeCompare(String(b.date)));
