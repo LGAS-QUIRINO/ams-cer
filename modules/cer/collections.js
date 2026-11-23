@@ -91,10 +91,10 @@ const sum = (list, k) => r2(list.reduce((n, x) => n + (+x[k] || 0), 0));
 const flat = (r) => ({ id: r.id, ...r.data });
 const strip = (x) => { const { id, sameDay, formTyped, ...rest } = x; return rest; };   // sameDay is worked out on loading, never saved
 const bad = (m) => { toast(m, 'bad'); return false; };
-// A date more than a year before the last cash exam or after the cash count (e.g. the year typed 0205): stopped as a typing mistake.
-const farDate = (d, exam, audit) => { if (!d) return ''; const y = +String(d).slice(0, 4), yr = 365 * 864e5, t = Date.parse(d);
-  const lo = exam && exam.lastExamDate ? Date.parse(exam.lastExamDate) - yr : null, hi = audit && audit.countDate ? Date.parse(audit.countDate) + yr : null;
-  return y < 2000 || (lo !== null && t < lo) || (hi !== null && t > hi) ? `The date ${fmtDate(d)} (year ${String(d).slice(0, 4)}) looks wrong: it is more than a year away from this cash examination. Check the date.` : ''; };
+// A date that cannot be right (a typing mistake): a year below 2000 (e.g. 0205) or a date after today. Old dates (collections
+// of earlier years presented only now) pass, tagged Before the period; a date after the cash count asks as before.
+const farDate = (d) => { if (!d) return ''; const y = +String(d).slice(0, 4), today = new Date().toISOString().slice(0, 10);
+  return y < 2000 ? `The date ${fmtDate(d)} (year ${String(d).slice(0, 4)}) looks wrong. Check the year.` : d > today ? `The date ${fmtDate(d)} is after today. Check the date.` : ''; };
 const DEPSHOW = { v: 'all' };
 const REM = { key: '', i: -1, date: '', mode: 'type', find: '' };   // the typed remittance being edited (by report) and the last date typed
 const KSEL = {};   // the report type shown per officer (SCD / RCD or SCR), remembered while the app is open
