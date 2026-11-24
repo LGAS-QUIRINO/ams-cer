@@ -153,6 +153,36 @@ export function begOr(f, x, lx, br) {
 export const orInScope = (f, x, from, to, exam) => !!x.date && x.date <= to && (!from || x.date > from || (x.date === from && !begOr(f, x, from, begRangesOf(exam))));
 const orAmount = (o) => (o.status === 'cancelled' || o.beg ? 0 : r2((o.items || []).reduce((n, i) => n + (+i.amt || 0), 0)));
 const maxSer = (x) => (x.range ? +x.serialTo : +x.serial);
+// ORs already encoded: the message says where. Those under another officer or auditee (e.g. from a wrong Audit Setup)
+// an admin can move to this officer: dates, amounts and particulars stay; they come as not yet in a report.
+async function clashOR(refs, f, c, o, form, hits) {
+  const h = hits[0], lab = `${FORM_SHORT[form] || form} ${h.range ? `${h.serial}–${h.serialTo}` : h.serial}`;
+  const tgt = o.lguId || c.audit.lguId;
+  const away = hits.filter((x) => x.officerId !== o.id || (x.lguId && x.lguId !== tgt));
+  if (!away.length) return bad(`${lab} is already encoded for this officer (${fmtDate(h.date)}).`);
+  const w = away[0], placeOf = (lg) => (refs.lgu[lg] ? agencyName(refs, refs.lgu[lg]) : 'another auditee');
+  const where = `${placeOf(w.lguId)} · ${f.officers.find((x) => x.id === w.officerId)?.name || 'another officer'}`;
+  const wl = away.find((x) => x.form === form && x.officerId === w.officerId && x.lguId === w.lguId) || w;
+  const wlab = `${FORM_SHORT[form] || form} ${wl.range ? `${wl.serial}–${wl.serialTo}` : wl.serial}`;
+  if (!refs.isAdmin) return bad(`${wlab} is already encoded (${fmtDate(wl.date)}) under ${where}. Ask an admin to move it here.`);
+  const these = away.filter((x) => x.officerId === w.officerId && x.lguId === w.lguId);
+  const all = f.ors.filter((x) => x.officerId === w.officerId && x.lguId === w.lguId);
+  const ans = await modal({ title: 'Already encoded under another officer', body: `<p style="margin:0">${esc(wlab)} is already encoded (${esc(fmtDate(wl.date))}) under <b>${esc(where)}</b>.</p>
+      <p style="margin:10px 0 0">Move ${these.length === 1 ? 'it' : 'them'} to <b>${esc(o.name)}</b> (${esc(placeOf(tgt))})? Dates, amounts and particulars stay as encoded. They come here as not yet in a report.</p>
+      ${all.length > these.length ? `<p class="hint" style="margin:8px 0 0">${all.length} ORs in all are encoded under ${esc(where)}.</p>` : ''}`,
+    buttons: [{ label: 'Cancel', value: false }, { label: `Move ${these.length === 1 ? 'this OR' : `these ${these.length} ORs`}`, cls: all.length > these.length ? '' : 'primary', value: 'these' }, ...(all.length > these.length ? [{ label: `Move all ${all.length} ORs from there`, cls: 'primary', value: 'all' }] : [])] });
+  if (!ans) return false;
+  const list = ans === 'all' ? all : these, who = by(refs);
+  for (const x of list) {
+    const raw = await store.get('cer_ors', x.id); if (!raw || raw.deleted) continue;
+    const d = raw.data, ob = d.bookletId ? f.booklets.find((b) => b.id === d.bookletId) : null, n = +d.serial;
+    const nb = d.bnLine ? f.booklets.find((b) => b.officerId === o.id && b.noSerial && ob && String(b.bn) === String(ob.bn))
+      : f.booklets.find((b) => b.officerId === o.id && b.form === (ob ? ob.form : d.form) && !b.noSerial && b.from <= n && n <= b.to);
+    await store.save('cer_ors', x.id, { ...d, officerId: o.id, lguId: tgt, reportId: '', bookletId: nb ? nb.id : '' }, who, { quiet: true });
+  }
+  emitChange('local'); toast(`${list.length} OR${list.length === 1 ? '' : 's'} moved to ${o.name}.`, 'ok');
+  return false;
+}
 export const serialsOf = (x) => { const out = []; for (let n = +x.serial, z = maxSer(x); n <= z && out.length < 5001; n++) out.push(n); return out; };
 // Cash Ticket (Booklet No.) in a report: "Cash Ticket (Booklet No.) · BN. 98 · 520 pcs; BN. 121 · 380 pcs" (pieces per booklet).
 const bnPcsText = (k, pairs) => `${FORM_SHORT[k] || k} · ${pairs.sort((a, b) => a[0] - b[0]).map(([n, q]) => `BN. ${n || '—'} · ${q.toLocaleString('en-US')} pcs`).join('; ')}`;
@@ -1371,7 +1401,7 @@ function wireAll(c) {
       if (z - a > 4999) return bad('That range is too long. Check the numbers.');
       if (tot === null || tot < 0) return bad('Enter the total.');
       const hit = f.ors.find((x) => x.form === form && +x.serial <= z && a <= maxSer(x));
-      if (hit) return bad(`${FORM_SHORT[form] || form} ${hit.range ? `${hit.serial}–${hit.serialTo}` : hit.serial} is already encoded (${fmtDate(hit.date)}).`);
+      if (hit) return clashOR(refs, f, c, o, form, f.ors.filter((x) => x.form === form && +x.serial <= z && a <= maxSer(x)));
       const cx = [...new Set(String($('#rg-cx').value).split(/[^\d]+/).filter(Boolean).map(Number))].filter((n) => n >= a && n <= z);
       const bk = c.bks.find((b) => b.from <= a && a <= b.to) || f.booklets.find((b) => b.form === form && b.officerId === o.id && b.from <= a && a <= b.to) || null;
       const beg = begOr(f, { date, serial: a, bookletId: bk ? bk.id : '', officerId: o.id, form, range: true, serialTo: z }, c.exam.lastExamDate, begRangesOf(c.exam));
@@ -1416,7 +1446,7 @@ function wireAll(c) {
       if (r.z - r.a >= 500) return bad('That range is too long (500 at most). Check the numbers.');
       const out = r.cx.filter((n) => n < r.a || n > r.z); if (out.length) return bad(`Cancelled ${out.join(', ')} is outside ${r.a}–${r.z}.`);
       const done = f.ors.filter((x) => x.form === form && !x.bnLine && +x.serial <= r.z && r.a <= maxSer(x));
-      if (done.length) return bad(`${FORM_SHORT[form] || form} ${done[0].range ? `${done[0].serial}–${done[0].serialTo}` : done[0].serial} is already encoded (${fmtDate(done[0].date)}).`);
+      if (done.length) return clashOR(refs, f, c, o, form, done);
       if (c.rMode) { for (let n = r.a; n <= r.z; n++) if (!inRec(c.rRec, n, form)) return bad(`${FORM_SHORT[form] || form} ${n} is not in the OR Range of ${repName(c.cur.rec, K)} (${rangesShow(c.rRec)}). Check the numbers, or choose "Not yet in an ${K}" to encode ORs of another report.`); }
       if (c.audit.countDate && date > c.audit.countDate) { const ok = await modal({ title: 'Date after the cash count?', body: `<p style="margin:0">The date ${esc(fmtDate(date))} is after the cash count on ${esc(fmtDate(c.audit.countDate))}. Save it anyway?</p>`, buttons: [{ label: 'Go back', value: false }, { label: 'Save', cls: 'primary', value: true }] }); if (!ok) return; }
       const p = FIXED_PART[form] || NO_PART, lx = c.exam.lastExamDate, br = begRangesOf(c.exam);
@@ -1541,7 +1571,7 @@ function wireAll(c) {
     if (b && (n < b.from || n > b.to)) return bad(`OR No. ${n} is outside the booklet ${b.from} – ${b.to}. Choose the right booklet.`);
     const form = $('#cd-form').value;
     if (c.rMode && !inRec(c.rRec, n, form)) return bad(`${FORM_SHORT[form] || form} ${n} is not in the OR Range of ${repName(c.cur.rec, K)} (${rangesShow(c.rRec)}). Check the number, or choose "Not yet in an ${K}" to encode ORs of another report.`);
-    if (f.ors.some((x) => x.form === form && x.serial === n)) return bad(`${FORM_SHORT[form] || form} ${n} is already encoded.`);
+    if (f.ors.some((x) => x.form === form && x.serial === n)) return clashOR(refs, f, c, o, form, f.ors.filter((x) => x.form === form && x.serial === n));
     const items = [];
     if (st === 'issued') {
       for (const r of $$('.cd-prow', rows)) {
