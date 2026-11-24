@@ -1068,3 +1068,7 @@ table.af-reg.tr-month{min-width:0}
 .cd-scroll10 tfoot td{position:sticky; bottom:0; z-index:2}
 .cd-sortrow{display:flex; align-items:center; gap:8px; margin:0 0 8px; font-size:13px}
 .cd-sortrow .input{width:auto; height:32px; padding:4px 28px 4px 10px; font-size:13px}
+
+/* SAAF with Money Value: wide table scrolls sideways on screen; prints in full */
+.rp-scrollx{overflow-x:auto}
+body.rp-printing #cer-print .rp-scrollx{overflow:visible}

@@ -212,9 +212,11 @@ export function saafMvRows(c) {
   const rows = saafRows(f, o.id, exam, A.from, A.to, c.advs).filter(isMvRow);
   const groups = [];
   rows.forEach((r) => { const g = groups.find((x) => x.form === r.form && x.face === r.face) || (groups.push({ form: r.form, face: r.face, name: MV_NAME[r.form] || r.name, rows: [] }), groups[groups.length - 1]); g.rows.push(r); });
-  return groups.map((g) => ({ ...g, lines: g.rows.flatMap((r) => { const cols = [r.beg, r.rec, r.issued, r.end]; const n = r.ns ? 1 : Math.max(1, ...cols.map((rs) => rs.length));
-    return Array.from({ length: n }, (_, k) => cols.map((rs) => { if (r.ns) { const q = k ? 0 : countRanges(rs), t = `BN. ${r.bn || '—'}`; return q ? { from: t, to: t, bn: true, qty: q, face: r.face, amount: r2(q * r.face) } : null; }
-      const x = rs[k]; return x ? { from: x[0], to: x[1], qty: x[1] - x[0] + 1, face: r.face, amount: r2((x[1] - x[0] + 1) * r.face) } : null; })); }) }));
+  // Balance per Count is the 5th column (blank when no count was entered); Difference (Qty. and Amount) and Remarks on the first line of each booklet.
+  return groups.map((g) => ({ ...g, lines: g.rows.flatMap((r) => { const cols = [r.beg, r.rec, r.issued, r.end, r.count || []]; const n = r.ns ? 1 : Math.max(1, ...cols.map((rs) => rs.length));
+    return Array.from({ length: n }, (_, k) => Object.assign(cols.map((rs) => { if (r.ns) { const q = k ? 0 : countRanges(rs), t = `BN. ${r.bn || '—'}`; return q ? { from: t, to: t, bn: true, qty: q, face: r.face, amount: r2(q * r.face) } : null; }
+      const x = rs[k]; return x ? { from: x[0], to: x[1], qty: x[1] - x[0] + 1, face: r.face, amount: r2((x[1] - x[0] + 1) * r.face) } : null; }),
+      k || r.diff === null || r.diff === undefined ? { diff: null, rem: k ? '' : r.remarks || '' } : { diff: r.diff, diffAmt: r2(r.diff * r.face), rem: r.remarks || '' })); }) }));
 }
 function saafMv(c) {
   const { audit, o, agency, station, prep, sign } = c;
@@ -222,17 +224,20 @@ function saafMv(c) {
   const sum = (lines, i, k) => lines.reduce((n, l) => n + (l[i] ? l[i][k] : 0), 0);
   // Cash Ticket (Booklet No.): "BN. 125" in one cell across From and To.
   const cell = (x) => (x ? `${x.bn ? `<td colspan="2" class="c">${esc(x.from)}</td>` : `<td>${x.from}</td><td>${x.to}</td>`}<td class="r">${x.qty}</td><td class="r">${money(x.face)}</td><td class="r">${money(x.amount)}</td>` : '<td></td><td></td><td></td><td></td><td></td>');
-  const totRow = (label, lines) => `<tr class="tot"><td>${label}</td>${[0, 1, 2, 3].map((i) => `<td></td><td></td><td class="r">${sum(lines, i, 'qty') || ''}</td><td></td><td class="r">${sum(lines, i, 'qty') ? money(r2(sum(lines, i, 'amount'))) : ''}</td>`).join('')}</tr>`;
+  const hasD = (lines) => lines.some((l) => l.diff !== null);
+  const dSum = (lines, k) => lines.reduce((n, l) => n + (l[k] || 0), 0);
+  const diffTds = (l) => `<td class="r">${l.diff === null ? '' : l.diff}</td><td class="r">${l.diff === null ? '' : money(l.diffAmt)}</td><td>${esc(l.rem || '')}</td>`;
+  const totRow = (label, lines) => `<tr class="tot"><td>${label}</td>${[0, 1, 2, 3, 4].map((i) => `<td></td><td></td><td class="r">${sum(lines, i, 'qty') || ''}</td><td></td><td class="r">${sum(lines, i, 'qty') ? money(r2(sum(lines, i, 'amount'))) : ''}</td>`).join('')}<td class="r">${hasD(lines) ? dSum(lines, 'diff') : ''}</td><td class="r">${hasD(lines) ? money(r2(dSum(lines, 'diffAmt'))) : ''}</td><td></td></tr>`;
   const all = groups.flatMap((g) => g.lines);
   const html = `<div class="rp-page rp-wide"><div class="rp-top"><span></span><span class="r"><b>${esc(c.annexMv || 'ANNEX B')}</b></span></div>
     <h2 class="rp-title">STATEMENT OF ACCOUNTABILITY FOR ACCOUNTABLE FORMS WITH MONEY VALUE</h2><p class="c">As of ${esc(fmtDate(audit.countDate))}</p>
     <table class="rp-kv"><tr><td>Name of Accountable Officer</td><td><b>${esc(o.name)}</b></td></tr><tr><td>Designation</td><td>${esc(o.designation || '')}</td></tr><tr><td>Office / Station</td><td>${esc(agency)}, ${esc(station)}</td></tr></table>
-    <table class="rp-t rp-saaf rp-saafm"><thead><tr><th rowspan="2">Name of Form</th><th colspan="5">Balance Beg.</th><th colspan="5">Received</th><th colspan="5">Issued</th><th colspan="5">Balance End</th></tr>
-      <tr>${'<th>From</th><th>To</th><th class="r">Qty.</th><th class="r">Denomin.</th><th class="r">Amount</th>'.repeat(4)}</tr></thead>
-      <tbody>${groups.length ? groups.map((g) => g.lines.map((l, k) => `<tr class="${k ? 'rp-cont' : 'rp-form'}"><td>${k ? '' : `<b>${esc(g.name)}</b>`}</td>${l.map(cell).join('')}</tr>`).join('')
+    <div class="rp-scrollx"><table class="rp-t rp-saaf rp-saafm"><thead><tr><th rowspan="2">Name of Form</th><th colspan="5">Balance Beg.</th><th colspan="5">Received</th><th colspan="5">Issued</th><th colspan="5">Balance End</th><th colspan="5">Balance per Count</th><th colspan="2">Difference</th><th rowspan="2">Remarks</th></tr>
+      <tr>${'<th>From</th><th>To</th><th class="r">Qty.</th><th class="r">Denomin.</th><th class="r">Amount</th>'.repeat(5)}<th class="r">Qty.</th><th class="r">Amount</th></tr></thead>
+      <tbody>${groups.length ? groups.map((g) => g.lines.map((l, k) => `<tr class="${k ? 'rp-cont' : 'rp-form'}"><td>${k ? '' : `<b>${esc(g.name)}</b>`}</td>${l.map(cell).join('')}${diffTds(l)}</tr>`).join('')
           + (groups.length > 1 ? totRow(`Total ${esc(g.name)}`, g.lines) : '')).join('')
-        : '<tr><td colspan="21" class="c">No accountable forms with money value for this officer within the scope of audit.</td></tr>'}
-      ${totRow('Total', all)}</tbody></table>
+        : '<tr><td colspan="29" class="c">No accountable forms with money value for this officer within the scope of audit.</td></tr>'}
+      ${totRow('Total', all)}</tbody></table></div>
     <p class="rp-just">I HEREBY CERTIFY that the above Statement of Accountability for Accountable Forms with Money Value is true and correct.</p>
     <div class="rp-signs">${sign('Prepared by', prep)}${sign('Accountable Officer', { name: o.name, pos: o.designation || '' })}</div></div>`;
   return { html };
