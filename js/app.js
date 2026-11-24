@@ -66,7 +66,12 @@ async function enter() {
   render();
 }
 
-async function render() {
+// After each draw, the value of every field as drawn (set by the screen, not typed): what differs later is unsaved work.
+let BASE = new WeakMap();
+const valOf = (el) => (el.type === 'checkbox' || el.type === 'radio' ? el.checked : el.value);
+function markBase() { BASE = new WeakMap(); app.querySelectorAll('input, select, textarea').forEach((el) => BASE.set(el, valOf(el))); }
+async function render() { await draw(); markBase(); }
+async function draw() {
   if (!signedIn) return;
   const refs = await loadRefs(auth.session.email); setScopeRefs(refs);
   const [path, qs] = (location.hash.replace(/^#/, '') || '/').split('?');
@@ -153,12 +158,23 @@ document.addEventListener('keydown', () => { lastKey = Date.now(); }, true);
 document.addEventListener('input', () => { lastKey = Date.now(); }, true);
 const isTextField = (el) => !!el && app.contains(el) && (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'file'].includes(el.type)));
 const busyTyping = () => isTextField(document.activeElement) && Date.now() - lastKey < IDLE_MS;
+// Unsaved work on the screen: a field changed since it was drawn, or a row added and filled in (e.g. + Series).
+// Search boxes and filters do not count.
+function unsavedWork() {
+  return [...app.querySelectorAll('input, select, textarea')].some((el) => {
+    if (el.disabled || el.type === 'file' || el.type === 'hidden' || el.type === 'search' || /search|filter/i.test(el.id || '')) return false;
+    if (BASE.has(el)) return BASE.get(el) !== valOf(el);
+    if (el.type === 'checkbox' || el.type === 'radio') return el.checked !== el.defaultChecked;
+    if (el.tagName === 'SELECT') return false;   // a row added by + Series counts once something is typed in it
+    return el.value !== el.defaultValue;
+  });
+}
 function waitNote(on) {
   let n = document.getElementById('sync-wait');
   if (!on) { if (n) n.remove(); return; }
   if (n) return;
   n = document.createElement('div'); n.id = 'sync-wait'; n.setAttribute('role', 'status');
-  n.textContent = 'Updated by another user · refreshes when you stop typing';
+  n.textContent = 'Updated by another user · refreshes after you save or cancel';
   n.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:60;background:#fff7e0;color:#7a5200;border:1px solid #f0d48a;border-radius:999px;padding:7px 14px;font-size:12.5px;box-shadow:0 4px 14px rgba(0,0,0,.12)';
   document.body.appendChild(n);
 }
@@ -184,10 +200,12 @@ function putScrolls(s) {
   (document.scrollingElement || document.documentElement).scrollTop = s.page;
 }
 async function syncRedraw() {
-  if (document.querySelector('.modal-bg') || busyTyping()) {
+  // Another user's update waits while a message is open, while typing, or while typed work is not yet saved (it would be lost).
+  const hold = () => !!document.querySelector('.modal-bg') || busyTyping() || unsavedWork();
+  if (hold()) {
     if (syncWaiting) return; syncWaiting = true;
+    const wait = setInterval(() => { if (!hold()) { clearInterval(wait); syncWaiting = false; syncRedraw(); } else waitNote(!document.querySelector('.modal-bg')); }, 400);
     if (!document.querySelector('.modal-bg')) waitNote(true);
-    const wait = setInterval(() => { if (!document.querySelector('.modal-bg') && !busyTyping()) { clearInterval(wait); syncWaiting = false; syncRedraw(); } }, 400);
     return;
   }
   waitNote(false);
