@@ -24,7 +24,7 @@ export function syncBox(st = syncState) {
   const n = st.pending || 0;
   const busy = st.status === 'syncing' || st.status === 'retry';
   // While sending: how many changes are still waiting (goes down batch by batch); with none waiting, it is only receiving.
-  const head = st.status === 'offline' ? (n ? `Offline · ${n.toLocaleString('en-US')} waiting` : 'Offline') : busy ? (n ? `Saving… · ${n.toLocaleString('en-US')} change${n > 1 ? 's' : ''} waiting` : 'Checking for updates…') : st.status === 'signin' ? 'Sign in again' : n ? `${n} change${n > 1 ? 's' : ''} waiting` : 'All changes saved';
+  const head = st.status === 'offline' ? (n ? `Offline · ${n.toLocaleString('en-US')} waiting` : 'Offline') : busy ? (n ? `Saving… · ${n.toLocaleString('en-US')} change${n > 1 ? 's' : ''} waiting` : 'Checking for updates…') : st.status === 'signin' ? 'Sign in again' : st.status === 'error' && (st.problems || []).length ? 'Some changes were not saved' : n ? `${n} change${n > 1 ? 's' : ''} waiting` : 'All changes saved';
   const dot = st.status === 'offline' || st.status === 'signin' || st.status === 'error' ? 'warn' : '';
   const last = st.lastSync ? 'Last sync ' + new Date(st.lastSync).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '. ' : '';
   return `<div class="syncbox" id="syncbox"><b><i class="${dot}"></i>${head}</b><br>${last}Work saves on this device even without internet.</div>`;

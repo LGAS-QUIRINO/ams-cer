@@ -135,7 +135,11 @@ document.addEventListener('click', async (e) => {
 });
 window.addEventListener('sync-status', (e) => {
   const el = document.getElementById('sync'); if (el) el.outerHTML = syncPill(e.detail);
-  if (e.detail.status === 'error' && e.detail.message) toast(e.detail.message, 'bad');
+  // Changes the database refused: a message that stays until closed (a toast is easy to miss), listing each one.
+  if (e.detail.status === 'error' && (e.detail.problems || []).length) {
+    const esc2 = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    import('./ui.js').then(({ modal }) => modal({ title: 'Some changes were not saved', body: `${e.detail.problems.slice(0, 20).map((p) => `<div class="msg bad" style="margin:0 0 8px">${esc2(p)}</div>`).join('')}${e.detail.problems.length > 20 ? `<p>… and ${e.detail.problems.length - 20} more.</p>` : ''}<p class="hint" style="margin:0">Ask an auditor (Team Member, ATL or SA) to make these changes, or ask the Admin for access.</p>`, buttons: [{ label: 'OK', cls: 'primary', value: null }] }));
+  } else if (e.detail.status === 'error' && e.detail.message) toast(e.detail.message, 'bad');
 });
 window.addEventListener('access-revoked', async (e) => { await auth.signOut(); await store.wipe(); showLogin(e.detail); });
 // A sync that brings in changes (another user's save) redraws the screen. What the person is typing must not be lost:

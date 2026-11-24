@@ -6,7 +6,10 @@ import { call } from './api.js';
 import { emitChange } from './store.js';
 import { auth } from './auth.js';
 
-export const syncState = { status: 'idle', pending: 0, message: '', lastSync: null };
+export const syncState = { status: 'idle', pending: 0, message: '', problems: [], lastSync: null };
+// What a refused record is, in words, for the message.
+const WHAT = { cer_officers: 'Accountable officer', cer_audits: 'Cash examination (Audit Setup)', cer_exams: 'Officer in a cash examination (Audit Setup)', cer_formcheck: 'Forms check', cer_verify: 'Verification', cer_cutoff: 'Cash count (cut-off)', users: 'User', teams: 'Team', lgus: 'Auditee' };
+function whatOf(table, data) { const n = data && (data.name || data.no); return `${WHAT[table] || table.replace(/^cer_|^src_/, '').replace(/_/g, ' ')}${n ? ` (${n})` : ''}`; }
 let running = null, timer = null, fails = 0;
 const PUSH_BATCH = 50;
 
@@ -19,7 +22,7 @@ async function refreshPending() { publish({ pending: (await db.all('outbox')).le
 async function doSync() {
   await refreshPending();
   if (!navigator.onLine) { publish({ status: 'offline', message: '' }); return []; }
-  publish({ status: 'syncing', message: '' });
+  publish({ status: 'syncing', message: '', problems: [] });
   let changed = false;
   const problems = [];
 
@@ -43,11 +46,13 @@ async function doSync() {
         } else if (still) { still.baseVersion = r.record.version; await db.put('outbox', still); }
         continue;
       }
-      // Not saved: show the database copy again and say why.
-      if (untouched || r.status === 'conflict') await db.del('outbox', [r.table, r.id]);
+      // Not saved: show the database copy again (the one sent back, else the copy kept before the change) and say why.
+      const local = await db.get('records', [r.table, r.id]), what = whatOf(r.table, (local && local.data) || (sent && sent.data));
+      await db.del('outbox', [r.table, r.id]);
       if (r.record) await db.put('records', { table: r.table, ...r.record, pending: false });
-      else { const local = await db.get('records', [r.table, r.id]); if (local && local.version === 0) await db.del('records', [r.table, r.id]); }
-      problems.push(r.status === 'conflict' ? `${r.record && r.record.updatedBy ? r.record.updatedBy : 'Someone else'} saved this first, so your change was not saved. The latest copy is now shown.` : r.error);
+      else if (sent && sent.base) await db.put('records', { table: r.table, id: r.id, ...sent.base, pending: false });
+      else if (local && local.version === 0) await db.del('records', [r.table, r.id]);
+      problems.push(`${what}: ${r.status === 'conflict' ? `${r.record && r.record.updatedBy ? r.record.updatedBy : 'Someone else'} saved this first, so your change was not saved.` : `not saved. ${r.error}`} The copy in the database is shown again.`);
       changed = true;
     }
     await refreshPending();
@@ -77,7 +82,7 @@ async function doSync() {
     window.dispatchEvent(new CustomEvent('access-revoked', { detail: `This Gmail (${me}) is no longer registered in AMS.` }));
     return problems;
   }
-  publish({ status: problems.length ? 'error' : 'synced', lastSync: new Date().toISOString(), message: problems[0] || '' });
+  publish({ status: problems.length ? 'error' : 'synced', lastSync: new Date().toISOString(), message: problems[0] || '', problems });
   return problems;
 }
 
@@ -88,7 +93,7 @@ export function syncNow() {
       if (/is not registered|not for this app|is not verified/i.test(m)) { publish({ status: 'signin', message: m }); window.dispatchEvent(new CustomEvent('access-revoked', { detail: m })); }
       else if (m === 'SIGNIN_NEEDED') publish({ status: 'signin', message: 'Sign in again to send your changes. Your work is safe on this device.' });
       else if (m === 'OFFLINE' || !navigator.onLine || /Failed to fetch|NetworkError/i.test(m)) publish({ status: 'offline', message: '' });
-      else { fails++; publish(fails < 3 ? { status: 'retry', message: '' } : { status: 'error', message: 'The database did not answer. Your work is saved on this device and will be sent automatically.' }); }
+      else { fails++; publish(fails < 3 ? { status: 'retry', message: '', problems: [] } : { status: 'error', problems: [], message: 'The database did not answer. Your work is saved on this device and will be sent automatically.' }); }
       return [m];
     }).finally(() => { running = null; });
   }

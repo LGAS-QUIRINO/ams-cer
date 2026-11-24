@@ -36,7 +36,9 @@ export const store = {
     }
     const queued = await db.get('outbox', [table, id]);
     const baseVersion = queued ? queued.baseVersion : cur ? cur.version : 0;
-    await db.put('outbox', { table, id, baseVersion, data, deleted, queuedAt: now });
+    // The database copy before this device's first unsent change: shown again if the database refuses the change.
+    const base = queued ? queued.base || null : cur && !cur.pending ? { version: cur.version, updatedAt: cur.updatedAt, updatedBy: cur.updatedBy, deleted: !!cur.deleted, data: cur.data } : null;
+    await db.put('outbox', { table, id, baseVersion, data, deleted, queuedAt: now, base });
     const rec = { table, id, version: cur ? cur.version : 0, updatedAt: now, updatedBy: cur ? cur.updatedBy : '', deleted, data, pending: true };
     await db.put('records', rec);
     if (!quiet) emitChange('local');
