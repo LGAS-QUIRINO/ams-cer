@@ -744,9 +744,16 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const serRec = lgSer ? { ...cur.rec, officerId: o.id } : null;
 
   const serSrc = loSer.length ? [...new Map(loSer.map((x) => [`${x[0]}|${x[1]}`, x])).values()].sort((x, y) => x[0] - y[0]) : (lgSer && hasRange(cur) ? cur.rec.ranges.map(([a, z], i) => [a, z, rangeFormAt(serRec, i)]) : []);
+  // Each series: its whole total, and the part of ORs already presented in another report (by report, with their numbers).
+  const curIds = new Set((cur.ors || []).map((x) => x.id));
   const sers = lgSer ? serSrc.map(([a, z, fk0], i) => { const fk = fk0;
-    const tot = r2(f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && sameF(fk, x.form) && +x.serial >= a && maxSer(x) <= z).reduce((n, x) => n + rawAmt(x), 0));
-    return { i, a, z, fk, tot, label: `${fk ? remFormName(fk) + ' · ' : ''}${a === z ? a : `${a}–${z}`}` }; }) : [];
+    const ins = f.ors.filter((x) => x.officerId === o.id && x.status !== 'cancelled' && sameF(fk, x.form) && +x.serial >= a && maxSer(x) <= z);
+    const tot = r2(ins.reduce((n, x) => n + rawAmt(x), 0));
+    const prevBy = new Map(); ins.filter((x) => !curIds.has(x.id)).forEach((x) => { const k = x.reportId || ''; const g = prevBy.get(k) || { k, amt: 0, rs: [] }; g.amt = r2(g.amt + rawAmt(x)); g.rs.push([+x.serial, maxSer(x)]); prevBy.set(k, g); });
+    const prev = [...prevBy.values()].map((g) => { const rr = g.k && f.reports.find((r) => r.id === g.k); return { amt: g.amt, nums: rangesText(mergeRanges(g.rs)).replace(/ – /g, '–'), rep: rr ? repName(rr, rr.kind || K) : `not in this ${K}` }; });
+    const prevAmt = r2(prev.reduce((n, g) => n + g.amt, 0));
+    return { i, a, z, fk, tot, prev, prevAmt, label: `${fk ? remFormName(fk) + ' · ' : ''}${a === z ? a : `${a}–${z}`}` }; }) : [];
+  const prevTot = r2(sers.reduce((t, x) => t + x.prevAmt, 0)), hasPrev = prevTot > 0.004;
   const serOfDep = (d) => sers.find((x) => d.from && +d.from === x.a && sameF(d.form || x.fk, x.fk)) || sers.find((x) => d.from && +d.from >= x.a && +d.from <= x.z) || null;
   const serCell = (d) => { if (!lgSer || !d.from) return ''; const sx = serOfDep(d);
     return `<td><select class="input mono" data-k="ser" aria-label="OR Series" ${enc ? '' : 'disabled'}><option value="">— Series —</option>${sers.map((x) => `<option value="${x.i}" data-tot="${x.tot}" ${sx === x ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select></td>`; };
@@ -774,9 +781,14 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   // Remittances saved per series (before): combined into one remittance of the RCD.
   const perSer = lgSer ? (cur.rec?.deposits || []).filter((d) => !d.fromLO && d.toLO && d.from) : [];
   const serTot = r2(sers.reduce((t, x) => t + x.tot, 0));
-  const serBreak = lgSer ? `<div class="cd-serbd" id="cd-serbd" data-tot="${serTot}" data-lo="${r2((cur.rec?.deposits || []).filter((d) => d.fromLO).reduce((t, d) => t + (+d.amount || 0), 0))}"><div class="cd-serbdh"><b>Series of the RCD</b> <span class="dim">(collections encoded; the remittance is one amount for the RCD)</span></div>
-      <table class="af-reg"><tbody>${sers.map((x) => `<tr><td class="mono">${esc(x.label)}</td><td class="r">${money(x.tot)}</td></tr>`).join('')}</tbody>
-      <tfoot><tr class="cd-foot"><td>${sers.length} series · total collections</td><td class="r">${money(serTot)}</td></tr></tfoot></table>
+  const thisTot = r2(serTot - prevTot);
+  const serBreak = lgSer ? `<div class="cd-serbd" id="cd-serbd" data-tot="${hasPrev ? thisTot : serTot}" data-this="${hasPrev ? 1 : ''}" data-lo="${r2((cur.rec?.deposits || []).filter((d) => d.fromLO).reduce((t, d) => t + (+d.amount || 0), 0))}"><div class="cd-serbdh"><b>Series of the RCD</b> <span class="dim">(collections encoded; the remittance is one amount for the RCD)</span></div>
+      ${hasPrev ? `<table class="af-reg cd-sertbl"><thead><tr><th scope="col">Series</th><th scope="col" class="r">Total</th><th scope="col" class="r">Already presented</th><th scope="col" class="r">This ${K}</th></tr></thead>
+        <tbody>${sers.map((x) => `<tr><td class="mono">${esc(x.label)}</td><td class="r">${money(x.tot)}</td>
+          <td class="r">${x.prevAmt > 0.004 ? `<b>${money(x.prevAmt)}</b>${x.prev.map((g) => `<small class="cd-prevn">${esc(g.nums)} · ${esc(g.rep)}</small>`).join('')}` : '<span class="dim">—</span>'}</td><td class="r">${money(r2(x.tot - x.prevAmt))}</td></tr>`).join('')}</tbody>
+        <tfoot><tr class="cd-foot"><td>${sers.length} series</td><td class="r">${money(serTot)}</td><td class="r">${money(prevTot)}</td><td class="r">${money(thisTot)}</td></tr></tfoot></table>`
+      : `<table class="af-reg"><tbody>${sers.map((x) => `<tr><td class="mono">${esc(x.label)}</td><td class="r">${money(x.tot)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr class="cd-foot"><td>${sers.length} series · total collections</td><td class="r">${money(serTot)}</td></tr></tfoot></table>`}
       <div class="cd-serbdc" id="cd-serbdc"></div>${perSer.length > 1 && enc ? `<div class="cd-actions" style="justify-content:flex-start"><button class="btn sm" type="button" id="cd-combine">Combine the ${perSer.length} series remittances into one</button></div>` : ''}</div>` : '';
   const agree = !cur.pending && cur.rec.hardTotal !== null && cur.rec.hardTotal !== undefined && cur.rec.hardTotal !== '' ? (Math.abs(+cur.rec.hardTotal - r2(cur.coll + cur.begRaw)) < 0.005 ? '<span class="pill p-done">Agrees with hard copy</span>' : `<span class="pill p-stock">Hard copy ₱${money(cur.rec.hardTotal)}</span>`) : '';
   const lo = isLO ? loDays(f, o, fig.chains, audit.countDate) : [];
@@ -813,7 +825,23 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
       <div><span>Add: Collections</span><span>${money(cur.coll)}</span></div>
       <div><span>Less: ${DEPS}</span><span>${money(cur.dep)}</span></div>
       <div class="cd-sumt"><span>${remish ? 'Unremitted' : 'Undeposited'}, end</span><span>${money(cur.end)}</span></div>
-      ${agree}${cur.issues.filter((t) => t.startsWith('Series ') || t.startsWith(NIB)).map((t) => `<p class="cd-serchk">⚠ ${esc(t)}</p>`).join('')}</div>
+      ${agree}${(() => {
+        const serL = cur.issues.filter((t) => t.startsWith('Series ')), nib = cur.issues.filter((t) => t.startsWith(NIB));
+        const diff = lgSer ? r2(cur.dep - cur.coll) : 0;
+        // Remitted to the LO against the collections of this report: the difference, then each cause (ORs already presented, each series).
+        if (lgSer && Math.abs(diff) > 0.004 && (hasPrev || serL.length)) {
+          const prevAll = sers.flatMap((x) => x.prev.map((g) => ({ ...g, fk: x.fk })));
+          const reps = [...new Set(prevAll.map((g) => g.rep))];
+          const rest = r2(diff - (diff > 0 ? prevTot : 0));
+          const bullets = [
+            ...(diff > 0 && hasPrev ? [`<b>₱${money(prevTot)}</b> of ORs already presented in ${esc(reps.join(', '))} (${esc(prevAll.map((g) => `${g.fk ? remFormName(g.fk) + ' ' : ''}${g.nums}`).join('; '))}), remitted again.`] : []),
+            ...(Math.abs(rest) <= 0.004 ? [] : serL.length === 1 ? [`<b>₱${money(Math.abs(rest))}</b> in ${esc(serL[0])}`]
+              : serL.length ? [`<b>₱${money(Math.abs(rest))}</b> in these series:<ul class="cd-serul">${serL.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`] : [`<b>₱${money(Math.abs(rest))}</b> other difference.`])];
+          return `<div class="cd-serchk">⚠ ${remish ? 'Remitted to LO' : DEPS} ₱${money(cur.dep)}, <b>₱${money(Math.abs(diff))} ${diff > 0 ? 'more' : 'less'}</b> than the collections of this ${K} (₱${money(cur.coll)}):${bullets.length ? `<ul class="cd-serul">${bullets.map((b) => `<li>${b}</li>`).join('')}</ul>` : ''}</div>`
+            + nib.map((t) => `<p class="cd-serchk">⚠ ${esc(t)}</p>`).join('');
+        }
+        return [...serL, ...nib].map((t) => `<p class="cd-serchk">⚠ ${esc(t)}</p>`).join('');
+      })()}</div>
     ${isLO ? `<div class="cd-block"><h3 class="cer-h3">Days with the LO · received → deposited</h3>
       ${lo.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th scope="col">Date Received</th><th scope="col">From</th><th scope="col">Collector's RCD No.</th><th scope="col">Fund</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Date Deposited</th><th scope="col">Status</th><th scope="col" class="r">Days with LO</th><th scope="col">In</th>${enc ? '<th scope="col"></th>' : ''}</tr></thead>
         <tbody>${lo.map((x) => `<tr><td>${esc(fmtDate(x.date))}</td><td>${esc(x.from)}</td><td class="mono">${esc(x.no || '')}</td><td>${esc(x.fund)}</td><td class="r">${money(x.amount)}</td>
@@ -1303,7 +1331,8 @@ function wireAll(c) {
     // One remittance for the RCD: its amount(s) against the total collections of the series.
     const bd = $('#cd-serbd');
     const bdPaint = () => { if (!bd) return; const tot = +bd.dataset.tot || 0, am = r2($$('[data-k="amount"]', depBox).reduce((t, i) => t + (num(i.value) || 0), 0) + (+bd.dataset.lo || 0)), df = r2(am - tot);
-      $('#cd-serbdc').innerHTML = !am ? '' : Math.abs(df) < 0.005 ? `<span class="pill p-done">Remitted ₱${money(am)} · agrees with the collections</span>` : `<span class="pill p-flag">Remitted ₱${money(am)} · ₱${money(Math.abs(df))} ${df > 0 ? 'more than' : 'less than'} the collections</span>`; };
+      const of = bd.dataset.this ? 'the collections of this RCD' : 'the collections';
+      $('#cd-serbdc').innerHTML = !am ? '' : Math.abs(df) < 0.005 ? `<span class="pill p-done">Remitted ₱${money(am)} · agrees with ${of}</span>` : `<span class="pill p-flag">Remitted ₱${money(am)} · ₱${money(Math.abs(df))} ${df > 0 ? 'more than' : 'less than'} ${of}</span>`; };
     if (bd) { depBox.addEventListener('input', bdPaint); bdPaint(); }
     { const cb = $('#cd-combine'); if (cb) cb.onclick = async () => {
       const all = (cur.rec?.deposits || []).filter((d) => !d.fromLO), ps = all.filter((d) => d.toLO && d.from);
