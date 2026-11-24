@@ -405,7 +405,7 @@ function registerView(ctx, f, lguId) {
         <tbody>${rows.map((b) => {
           const o = f.officers.find((x) => x.id === b.officerId); const st = statusOf(b); const d = dAo(b); const sk = skippedOf(b);
           return `<tr data-bk="${esc(b.id)}" tabindex="0">
-            <td class="af-frm">${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td class="r">${b.qty}</td>
+            <td class="af-frm">${chkLabel(b)}</td><td class="mono">${serialText(b)}${irrTag(refs, b)}</td><td class="r">${b.qty}</td>
             <td class="af-rcv">${b.receivedDate ? esc(fmtDate(b.receivedDate)) : '<span class="dim">—</span>'}<small>${b.receivedDirect ? `<b class="af-direct">Received directly</b> · ` : ''}${esc(b.receivedFrom || (b.source === 'logbook' ? 'From the barangay logbook' : b.source === 'import' ? 'Imported from Excel' : ''))}</small>${begTag(b)}</td>
             <td class="af-cust">${b.status === 'issued' && o ? `<b>${esc(o.name)}</b><small title="${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}">${esc([o.designation, agencyName(refs, refs.lgu[o.lguId])].filter(Boolean).join(' · '))}</small>` : b.status === 'lost' ? '<span class="dim">—</span>' : `In stock · ${esc(custLabel(refs, f, lguId))}`}</td>
             <td>${b.status !== 'stock' && b.issuedDate ? issuedText(b, true) : '<span class="dim">—</span>'}</td>
@@ -479,7 +479,7 @@ function encodeHtml(refs, offs, q) {
         <optgroup label="Directly by AO">${offs.filter((o) => o.id !== custId).map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.rby)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
       <div class="field"><label for="e-src">Received From</label><select class="input" id="e-src">${srcOptions(offs.f, offs.lguId, { cur: LAST.src, bank: chkByCustodian(offs.f, offs.lguId) })}</select></div>
       <div class="field"><label for="e-ref">Reference (optional)</label><input class="input" id="e-ref" placeholder="e.g. RIS No."></div>
-      <button class="btn primary" type="button" id="e-enter">Enter</button></div>`;
+      <button class="btn primary" type="button" id="e-enter">Enter</button></div>${irrBox(refs, 'e')}`;
   if (mv === 'issue') fields = `<div class="af-enc g6">${formSel}${range}${offSel('e-off', 'Issued To')}
       <div class="field"><label for="e-date">Date Issued</label><input class="input" type="date" id="e-date" value="${esc(LAST.date)}"></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>`;
@@ -493,7 +493,7 @@ function encodeHtml(refs, offs, q) {
         <optgroup label="Accountable Officer">${offs.filter((o) => o.id !== custId).map((o) => `<option value="${esc(o.id)}" ${sel(o.id, LAST.held)}>${esc(officerLabel(refs, o))}</option>`).join('')}</optgroup></select></div>
       <button class="btn primary" type="button" id="e-enter">Enter</button></div>
     <div class="af-startset"><button class="btn sm" type="button" id="e-setrcv">Set Date Received for a range</button>
-      <button class="btn sm" type="button" id="e-setpcs">Correct Pcs for a range</button></div>
+      <button class="btn sm" type="button" id="e-setpcs">Correct Pcs for a range</button></div>${irrBox(refs, 'e')}
     <div class="af-offrow one" id="e-offrow" ${offHeld ? '' : 'hidden'}>
       ${partBox('e')}
     </div>`;
@@ -561,8 +561,8 @@ function wireRegister(ctx, f, lguId, offs) {
     if (!a || !z || z < a) { help.innerHTML = helpText; return; }
     if (z - a + 1 > MAX_PCS) { help.innerHTML = `<b class="warn-t">That range has ${(z - a + 1).toLocaleString('en-US')} pieces, more than one entry takes (${MAX_PCS.toLocaleString('en-US')}). Check the serial numbers.</b>`; return; }
     if (mv === 'starting') { help.innerHTML = startPreview(startPlan()); return; }
-    const parts = splitRange(a, z, p), n = parts.length;
-    const mid = bookletOf(a, p)[0] !== a ? ` <b class="warn-t">${a} is in the middle of booklet ${rangeText(...bookletOf(a, p))}; check the serial numbers.</b>` : '';
+    const irr = irrOn('e'), parts = irr ? stepRange(a, z, p) : splitRange(a, z, p), n = parts.length;
+    const mid = irr ? ` <b class="warn-t">Irregular numbering: counted from ${a}, ${p} per booklet.</b>` : bookletOf(a, p)[0] !== a ? ` <b class="warn-t">${a} is in the middle of booklet ${rangeText(...bookletOf(a, p))}; check the serial numbers.</b>` : '';
     help.innerHTML = `Splits into <b>${n} booklet${n > 1 ? 's' : ''}</b>${n <= 4 ? ': ' + parts.map(([x, y]) => rangeText(x, y)).join(', ') : ''}.${mid}`;
   };
   ['#e-from', '#e-to', '#e-per', '#e-face'].forEach((s) => { const el = $(s); if (el) el.oninput = preview; });
@@ -584,6 +584,7 @@ function wireRegister(ctx, f, lguId, offs) {
   const heldSel = $('#e-held');
   if (heldSel) heldSel.onchange = () => { $('#e-offrow').hidden = heldSel.value === 'custodian'; preview(); };
   wirePart('e', document, preview);
+  wireIrr('e', document, preview);
   $('#e-from').addEventListener('change', () => { const a = int($('#e-from').value), t = $('#e-to'); if (a && mv !== 'issue' && !isNs()) autoTo(t, a, a + (int(per?.value) || PER_BOOKLET) - 1); preview(); });
   enter.onclick = async () => {
     enter.disabled = true;
@@ -595,6 +596,7 @@ function wireRegister(ctx, f, lguId, offs) {
       if (ok) {
         ['#e-from', '#e-to', '#e-ref', '#e-nums'].forEach((s) => { const el = $(s); if (el) el.value = ''; });
         const tick = $('#e-part'); if (tick && tick.checked) { tick.checked = false; $('#e-partbox').hidden = true; }
+        const it = $('#e-irr'); if (it && it.checked) { it.checked = false; $('#e-irrwhy').value = ''; $('#e-irrwhy').hidden = true; }
         help.innerHTML = helpText;
       }
     } finally { enter.disabled = false; }
@@ -634,6 +636,18 @@ async function findSerial(ctx, f, lguId, offs, text) {
 // so a range that starts mid-booklet is cut at the booklet's real end, not 100 numbers after the first one typed.
 const bookletOf = (n, p) => { const s = n - ((n - 1) % p); return [s, s + p - 1]; };
 function splitRange(a, z, p) { const out = []; for (let x = a; x <= z;) { const y = Math.min(z, bookletOf(x, p)[1]); out.push([x, y]); x = y + 1; } return out; }
+// Irregular numbering (printing / binding error, e.g. AF 52 5947001–5947051, then 5947052–5947101): booklets counted from the
+// Serial From typed, Per Booklet each. Auditors and the Admin only, with a reason; marked Irregular in the register and
+// listed in Verification.
+function stepRange(a, z, p) { const out = []; for (let x = a; x <= z; x += p) out.push([x, Math.min(z, x + p - 1)]); return out; }
+const irrBox = (refs, pre) => (isAuditor(refs) ? `<div class="af-irr"><label class="cer-chip"><input type="checkbox" id="${pre}-irr"> Irregular numbering (printing / binding error): booklets counted from the Serial From typed</label>
+  <input class="input" id="${pre}-irrwhy" placeholder="Reason (required), e.g. Printing error per supplier; booklet has 51 pcs" hidden></div>` : '');
+const irrTitle = (refs, b) => { const x = b.irregular || {}; return `Irregular numbering (printing / binding error)${x.reason ? ': ' + x.reason : ''}${x.by ? ' · entered by ' + (refs.users?.find((u) => u.data.email === x.by)?.data.name || x.by) : ''}${x.at ? ' · ' + fmtDate(x.at) : ''}`; };
+const irrTag = (refs, b) => (b.irregular ? ` <span class="pill p-flag af-irrtag" title="${esc(irrTitle(refs, b))}">Irregular</span>` : '');
+const irrOn = (pre, root = document) => !!$(`#${pre}-irr`, root)?.checked;
+const irrWhy = (pre, root = document) => String($(`#${pre}-irrwhy`, root)?.value || '').trim();
+const irrRec = (refs, why) => ({ irregular: { reason: why, by: by(refs), at: new Date().toISOString().slice(0, 10) } });
+const wireIrr = (pre, root, after) => { const t = $(`#${pre}-irr`, root); if (!t) return; t.addEventListener('change', () => { $(`#${pre}-irrwhy`, root).hidden = !t.checked; if (t.checked) $(`#${pre}-irrwhy`, root).focus(); after(); }); };
 const intersect = (rs, a, z) => rs.filter(([x, y]) => y >= a && x <= z).map(([x, y]) => [Math.max(x, a), Math.min(y, z)]);
 // Unused numbers of one booklet from what was typed: the unused numbers, or the used ones (the rest is unused).
 // null = not mentioned, the whole booklet is unused.
@@ -690,7 +704,10 @@ async function doReceive(refs, f, lguId) {
   if (z - a + 1 > MAX_PCS) return bad(`That range has ${z - a + 1} pieces. Check the serial numbers (one entry takes up to ${MAX_PCS.toLocaleString('en-US')}).`);
   if (!date) return bad('Enter the date received.');
   const fv = faceTyped(form); if (fv.error) return bad(fv.error);
-  const parts = splitRange(a, z, p);
+  const irr = irrOn('e') && isAuditor(refs), why = irrWhy('e');
+  if (irr && !why) return bad('Type the reason for the irregular numbering.');
+  const ir = irr ? irrRec(refs, why) : {};
+  const parts = irr ? stepRange(a, z, p) : splitRange(a, z, p);
   const plan = [];
   for (const [x, y] of parts) {
     const hit = overlaps(f, form, x, y);
@@ -718,10 +735,10 @@ async function doReceive(refs, f, lguId) {
       await store.save('cer_booklets', b.id, { ...strip(b), ...info, history: [...(b.history || []), hist(refs, officer ? 'matcheddirect' : 'matched', date,
         { officerId: officer ? officer.id : '', note: officer ? `Received directly from ${info.receivedFrom}; matched to the logbook entry` : 'Receipt by the custodian matched to the logbook entry' })] }, by(refs), { quiet: true });
     } else if (officer) {
-      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...fv, ...info, source: 'direct', status: 'issued', officerId: officer.id, issuedDate: date, usedBefore: null,
+      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...fv, ...info, ...ir, source: 'direct', status: 'issued', officerId: officer.id, issuedDate: date, usedBefore: null,
         history: [hist(refs, 'direct', date, { officerId: officer.id, note: info.receivedFrom })] }, by(refs), { quiet: true });
     } else {
-      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...fv, ...info, source: 'received', status: 'stock', officerId: '', issuedDate: '', usedBefore: null,
+      await store.save('cer_booklets', newId('cerb'), { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...fv, ...info, ...ir, source: 'received', status: 'stock', officerId: '', issuedDate: '', usedBefore: null,
         history: [hist(refs, 'received', date, { note: info.receivedFrom })] }, by(refs), { quiet: true });
     }
   }
@@ -764,10 +781,11 @@ function startPlan() {
   const a = int($('#e-from').value), z = int($('#e-to').value), p = int($('#e-per').value) || PER_BOOKLET;
   if (!a || !z || z < a) return { error: 'Enter the serial range (From must not be after To).' };
   if (z - a + 1 > MAX_PCS) return { error: `That range has ${z - a + 1} pieces. Check the serial numbers (one entry takes up to ${MAX_PCS.toLocaleString('en-US')}).` };
+  const irr = irrOn('e');
   const [bs, be] = bookletOf(a, p);
-  if (bs !== a) return { error: `${a} is in the middle of booklet ${rangeText(bs, be)}. Enter the complete series from ${bs}; if the booklet is already in use, choose the accountable officer under Held By and tick Partly used.` };
+  if (!irr && bs !== a) return { error: `${a} is in the middle of booklet ${rangeText(bs, be)}. Enter the complete series from ${bs}; if the booklet is already in use, choose the accountable officer under Held By and tick Partly used.` };
   const held = $('#e-held').value;
-  const parts = splitRange(a, z, p).map(([x, y]) => ({ x, y, unused: null }));
+  const parts = (irr ? stepRange(a, z, p) : splitRange(a, z, p)).map(([x, y]) => ({ x, y, unused: null }));
   const pv = partVals('e');
   if (held !== 'custodian' && pv.on) {
     if (!pv.text.trim()) return { error: `Type the ${pv.mode} numbers of the booklets in use, or untick Partly used.` };
@@ -777,7 +795,7 @@ function startPlan() {
     if (parts.every((s) => !s.unused)) return { error: 'None of the numbers typed changed a booklet. Check the numbers.' };
   }
   const last = parts[parts.length - 1];
-  const warn = bookletOf(z, p)[1] !== z ? `${z} is not the end of its booklet (${rangeText(...bookletOf(z, p))}); the last booklet is entered as ${rangeText(last.x, last.y)}.` : '';
+  const warn = irr ? `Irregular numbering: counted from ${a}, ${p} per booklet.` : bookletOf(z, p)[1] !== z ? `${z} is not the end of its booklet (${rangeText(...bookletOf(z, p))}); the last booklet is entered as ${rangeText(last.x, last.y)}.` : '';
   return { parts, held, warn };
 }
 function startPreview(plan) {
@@ -798,6 +816,9 @@ async function doStarting(refs, f, lguId) {
   if (!date) return bad('Enter the as-of date.');
   const rdate = $('#e-rdate')?.value || '', rfrom = ($('#e-rfrom')?.value || '').replace(ADD_SRC, '');
   const fv = plan.ns ? {} : faceTyped(form); if (fv.error) return bad(fv.error);
+  const irr = !plan.ns && irrOn('e') && isAuditor(refs), why = irrWhy('e');
+  if (irr && !why) return bad('Type the reason for the irregular numbering.');
+  const ir = irr ? irrRec(refs, why) : {};
   if (rdate && rdate > date) return bad(`The Date Received (${fmtDate(rdate)}) must be on or before the As of date (${fmtDate(date)}).`);
   const officer = plan.held !== 'custodian' ? f.officers.find((o) => o.id === plan.held) : null;
   if (plan.held !== 'custodian' && !officer) return bad('Choose who holds the booklets.');
@@ -809,7 +830,7 @@ async function doStarting(refs, f, lguId) {
   for (const s0 of plan.parts) {
     const shift = plan.ns ? nsBase() - 1 : 0;   // each Booklet No. on its own block of internal numbers
     const s = { x: s0.x + shift, y: s0.y + shift, unused: s0.unused ? s0.unused.map(([a, z]) => [a + shift, z + shift]) : null };
-    const base = { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...fv, receivedDate: rdate, receivedFrom: rfrom, reference: '', source: 'starting', ...(plan.ns ? { noSerial: true, bn: s0.bn, faceValue: plan.face } : {}) };
+    const base = { lguId, form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...fv, ...ir, receivedDate: rdate, receivedFrom: rfrom, reference: '', source: 'starting', ...(plan.ns ? { noSerial: true, bn: s0.bn, faceValue: plan.face } : {}) };
     await store.save('cer_booklets', newId('cerb'), officer
       ? { ...base, status: 'issued', officerId: officer.id, issuedDate: date, issuedAsOf: true, beginAs: 'ao', beginDate: date, unusedAtStart: s.unused,
           history: [hist(refs, 'starting', date, { officerId: officer.id, note: s.unused ? `In the officer's hands on the start date, partly used: ${countRanges(s.unused)} unused` : 'In the officer\'s hands on the start date' })] }
@@ -924,7 +945,7 @@ async function bookletModal(ctx, f, b, offs) {
   const moves = !enc ? [] : b.status === 'stock' ? [['issue', 'Issue']] : held(b) ? [['transfer', 'Transfer to Another AO'], ['return', 'Return to Custodian'], ['lost', 'Report Lost / Destroyed']] : [];
   const offOpts = (skip) => offs.filter((o) => o.id !== skip).map((o) => `<option value="${esc(o.id)}">${esc(officerLabel(refs, o))}</option>`).join('');
   const v = await modal({ title: `${FORM_SHORT[b.form]} ${serialText(b)}`, wide: true,
-    body: `<div class="af-mhead"><span class="pill ${st.cls}">${st.label}</span><span>${b.qty} pcs · used ${usedOf(b)} · unused ${unusedOf(b)}</span></div>
+    body: `<div class="af-mhead"><span class="pill ${st.cls}">${st.label}</span><span>${b.qty} pcs · used ${usedOf(b)} · unused ${unusedOf(b)}</span></div>${b.irregular ? `<div class="msg warn" style="margin:8px 0">${esc(irrTitle(refs, b))}</div>` : ''}
       <h4 class="cer-h3">Booklet History</h4>${historyHtml(refs, f, b)}
       ${moves.length ? `<h4 class="cer-h3">Move this Booklet</h4>
         <div class="af-move">
@@ -1111,7 +1132,7 @@ function officerView(ctx, f, lguId) {
     const list = tab === 'hand' ? inHand : mine.slice().sort((a, b) => String(b.issuedDate).localeCompare(String(a.issuedDate)));
     tabBody = list.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th scope="col">Form</th><th scope="col">Booklet</th><th scope="col">Issued</th><th scope="col" class="r">Days in Hand</th><th scope="col" class="r">Used</th><th scope="col">Unused</th><th scope="col">Status</th></tr></thead>
       <tbody>${list.map((b) => { const st = statusOf(b); const d = daysWithAo(b, asOf);
-        return `<tr data-bk="${esc(b.id)}" tabindex="0"><td>${chkLabel(b)}</td><td class="mono">${serialText(b)}</td><td>${issuedText(b)}</td><td class="r">${daysText(b, d)}</td><td class="r">${usedOf(b)}</td>
+        return `<tr data-bk="${esc(b.id)}" tabindex="0"><td>${chkLabel(b)}</td><td class="mono">${serialText(b)}${irrTag(refs, b)}</td><td>${issuedText(b)}</td><td class="r">${daysText(b, d)}</td><td class="r">${usedOf(b)}</td>
           <td class="mono">${unusedCell(b)}</td><td><span class="pill ${st.cls}">${st.label}</span></td></tr>`; }).join('')}</tbody></table></div>
       <p class="af-note">Click a booklet to see its history and to Transfer, Return or report it Lost.</p>`
       : `<div class="empty"><b>${tab === 'hand' ? 'No booklets in this officer\'s hands.' : 'No booklets issued to this officer yet.'}</b></div>`;
@@ -1935,9 +1956,11 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
     }
     if (!a || !z || z < a) return { error: 'Enter the serial range (From must not be after To).' };
     if (z - a + 1 > MAX_PCS) return { error: `That range has ${(z - a + 1).toLocaleString('en-US')} pieces. Check the serial numbers.` };
+    const irr = src !== 'bank' && irrOn('g', bg);
     const [bs, be] = bookletOf(a, p);
-    if (bs !== a) return { error: `${a} is in the middle of booklet ${rangeText(bs, be)}. Enter the complete series from ${bs}; tick Partly used for the numbers already used.` };
-    const parts = splitRange(a, z, p).map(([x, y]) => ({ x, y, unused: null }));
+    if (!irr && bs !== a) return { error: `${a} is in the middle of booklet ${rangeText(bs, be)}. Enter the complete series from ${bs}; tick Partly used for the numbers already used.` };
+    if (irr && !irrWhy('g', bg)) return { error: 'Type the reason for the irregular numbering.' };
+    const parts = (irr ? stepRange(a, z, p) : splitRange(a, z, p)).map(([x, y]) => ({ x, y, unused: null }));
     const pv = partVals('g', bg);
     if (pv.on) {
       if (!pv.text.trim()) return { error: `Type the ${pv.mode} numbers, or untick Partly used.` };
@@ -1956,7 +1979,7 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
       }
       return { error: `${FORM_SHORT[form]} ${rangeText(s.x, s.y)} overlaps ${rangeText(h.from, h.to)} already encoded${h.officerId ? ' with ' + (f.officers.find((x) => x.id === h.officerId)?.name || 'another officer') : h.status === 'stock' ? ' in the custodian\'s stock' : ''}.` };
     }
-    return { src, form, parts, per: p, face };
+    return { src, form, parts, per: p, face, irr: irr ? irrWhy('g', bg) : '' };
   };
   let lastSrc = 'custodian', lastFk = '';
   const show = (bg) => {
@@ -2000,6 +2023,7 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
         <div class="field"><label for="g-to">Serial To</label><input class="input r mono" id="g-to" inputmode="numeric" autocomplete="off"></div>
         <div class="field"><label for="g-per">Per Booklet</label><input class="input r" id="g-per" inputmode="numeric" value="${LAST.per}"></div>
         <div class="field" id="g-facef" hidden><label for="g-face">Denomination (₱)</label><input class="input r" id="g-face" inputmode="decimal"></div>
+        <div class="af-span">${irrBox(refs, 'g')}</div>
         <div class="af-span">${partBox('g', { note: `Partly used (numbers used ${cut ? 'before the cut-off' : 'on or before the last cash exam'}, ${fmtDate(asOf)}); Cash Ticket (Booklet No.): one booklet, type the number of pieces` })}</div>
       </div>
       <p class="af-note">Enter complete series. ${cut ? `For a booklet the officer presented at the cash count (${esc(fmtDate(asOf))}) that is not in the register yet. Then type its unused numbers in the cut-off.` : `Everything here is the officer's beginning <b>as of the last cash exam (${esc(fmtDate(asOf))})</b>;`} the real date received and date issued, if known, are added later with Edit in Accountable Forms. Receipts encoded in Collections &amp; Deposits are taken out on top of this.</p>
@@ -2016,7 +2040,7 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
         show(bg);
       });
       $('#g-from', bg).addEventListener('change', () => { const a = int($('#g-from', bg).value), t = $('#g-to', bg); if ($('#g-form', bg).value === 'cashbn' && srcNow(bg) !== 'bank') return show(bg); if (a && autoTo(t, a, bookletOf(a, int($('#g-per', bg).value) || (srcNow(bg) === 'bank' ? CHK_PER : PER_BOOKLET))[1])) show(bg); });
-      wirePart('g', bg, () => show(bg)); show(bg); },
+      wirePart('g', bg, () => show(bg)); wireIrr('g', bg, () => show(bg)); $('#g-irrwhy', bg)?.addEventListener('input', () => show(bg)); show(bg); },
     buttons: [{ label: 'Cancel', value: null }, { label: cut ? 'Add Booklet' : 'Save Beginning Forms', cls: 'primary', value: 'save', check: (bg) => {
       const r = read(bg); if (r.error) { toast(r.error, 'bad'); return false; }
       plan = { ...r, acct: $('#g-acct', bg).value.trim(), fund: $('#g-fund', bg).value, other: $('#g-srcsel', bg).value }; return true; } }] });
@@ -2035,7 +2059,7 @@ export async function addBeginningForms(refs, f, regId, o, asOf, mode = 'beginni
       continue;
     }
     // The officer's beginning as of the last cash exam: dates not yet known (added with Edit when found).
-    const rec = { lguId: regId, form: plan.form, from: s.x, to: s.y, qty: s.y - s.x + 1, reference: '', status: 'issued', officerId: o.id, ...(plan.ns ? { noSerial: true, bn: s.bn } : {}), ...(plan.face ? { faceValue: plan.face } : {}),
+    const rec = { lguId: regId, form: plan.form, from: s.x, to: s.y, qty: s.y - s.x + 1, ...(plan.irr ? irrRec(refs, plan.irr) : {}), reference: '', status: 'issued', officerId: o.id, ...(plan.ns ? { noSerial: true, bn: s.bn } : {}), ...(plan.face ? { faceValue: plan.face } : {}),
       issuedDate: asOf, issuedAsOf: true, ...(cut ? { foundAtCount: true } : { beginAs: 'ao', beginDate: asOf }), usedBefore: null, unusedAtStart: s.unused,
       receivedDate: '', receivedFrom: from, receivedDirect: direct, source: plan.src === 'bank' ? 'officer' : 'starting',
       ...(plan.src === 'bank' ? { bankAccount: plan.acct, fund: plan.fund || '' } : {}),

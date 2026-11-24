@@ -1075,3 +1075,8 @@ body.rp-printing #cer-print .rp-scrollx{overflow:visible}
 
 /* Collections: Import ORs for the whole auditee, on the top bar */
 .cer-selbar .sb-imp{align-self:flex-end; margin-bottom:2px}
+
+/* Forms Register: irregular numbering (printing / binding error) */
+.af-irr{display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:8px 0 0}
+.af-irr .input{flex:1 1 380px; max-width:620px}
+.af-irrtag{font-size:10.5px; margin-left:4px; vertical-align:middle; cursor:help}

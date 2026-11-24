@@ -16,7 +16,7 @@ import { store } from '../../js/store.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, bondChecks, holidaysOf, addBankingDays } from './cer.js';
 import { bankFindings } from './banks.js';
-import { loadForms, orIn, cutoffFindings, checkUsage, exportXlsx } from './forms.js';
+import { loadForms, orIn, cutoffFindings, checkUsage, exportXlsx, FORM_SHORT } from './forms.js';
 import { figuresOf, fundsOf, kindOfForm, repName, tagSameDay, partOk, ctcBegShare, ctcAlloc, depPart, depsBeforeOrs, orInScope } from './collections.js';
 import { booksOf, compute } from './count.js';
 import { afterLast, prevSys } from './funds.js';
@@ -187,6 +187,9 @@ export async function verifyView(ctx) {
   { const fn = fnpData(f, o, exam, from, to); if (fn && fn.qty) add(`fnp|${fn.qty}`, 'Accountable Forms', `${fn.qty} accountable form${fn.qty > 1 ? 's' : ''} issued before the last cash examination (${fmtDate(from)}) were not presented then${fn.groups.length > 1 ? ` (${fn.groups.map((g) => `${g.qty} ${g.short}`).join('; ')})` : ` (${fn.groups[0].short})`}; their collections were remitted only in this period (see the working paper: Accountable forms not presented at the last cash exam).`, `#/cer/reports?a=${audit.id}&e=${exam.id}&rep=fnp`,
     'fnp', fn.groups.flatMap((g) => g.rows.map((x) => [esc(g.short), String(x.a), String(x.z), String(x.qty), esc(fmtDate(x.date)), money(x.amount)])), fn.amount); }
   cutoffFindings(f, o, exam, from, to).forEach((x) => add(`af|${x.key}`, 'Accountable Forms', x.text, x.key === 'nocut' || x.key.startsWith('np|') || x.key.startsWith('nps|') || x.key.startsWith('nir|') ? `#/cer/count?a=${audit.id}&e=${exam.id}` : '#/cer/forms', 'af', [esc(x.text)]));
+  // Booklets entered with irregular numbering (printing / binding error): listed so the booklet is checked physically.
+  f.booklets.filter((b) => b.irregular && b.officerId === o.id && !b.noSerial).forEach((b) => add(`irr|${b.id}`, 'Accountable Forms',
+    `${FORM_SHORT[b.form] || b.form} ${b.from}–${b.to} (${b.qty} pcs): irregular numbering (printing / binding error)${b.irregular.reason ? `. Reason: ${b.irregular.reason}` : ''}. Check the booklet physically.`, '#/cer/forms'));
   // Late deposits: collections deposited in date order (first in, first out) against the deadline of the officer's rule.
   let lateRule = '';
   const hol = await holidaysOf(refs, audit.lguId);
