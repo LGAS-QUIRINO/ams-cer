@@ -1087,4 +1087,6 @@ body.rp-printing #cer-print .rp-scrollx{overflow:visible}
 .cd-sertbl small.cd-prevn{display:block; font-size:11.5px; color:var(--muted,#5b6b84); font-weight:400; white-space:normal}
 .cd-sum > div.cd-serchk{display:block}
 .cd-serul{margin:4px 0 0 18px; padding:0}
-.cd-serul li{margin:2px 0}
+.cd-serul li{margin:4px 0}
+.cd-serul .cd-serd{display:block; color:var(--muted,#5b6b84); font-size:12px; margin-left:2px}
+.cd-serul .cd-serd b{color:var(--warn-ink,#8a5300)}

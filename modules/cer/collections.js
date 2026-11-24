@@ -831,13 +831,18 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         // Remitted to the LO against the collections of this report: the difference, then each cause (ORs already presented, each series).
         if (lgSer && Math.abs(diff) > 0.004 && (hasPrev || serL.length)) {
           const prevAll = sers.flatMap((x) => x.prev.map((g) => ({ ...g, fk: x.fk })));
-          const reps = [...new Set(prevAll.map((g) => g.rep))];
-          const rest = r2(diff - (diff > 0 ? prevTot : 0));
-          const bullets = [
-            ...(diff > 0 && hasPrev ? [`<b>₱${money(prevTot)}</b> of ORs already presented in ${esc(reps.join(', '))} (${esc(prevAll.map((g) => `${g.fk ? remFormName(g.fk) + ' ' : ''}${g.nums}`).join('; '))}), remitted again.`] : []),
-            ...(Math.abs(rest) <= 0.004 ? [] : serL.length === 1 ? [`<b>₱${money(Math.abs(rest))}</b> in ${esc(serL[0])}`]
-              : serL.length ? [`<b>₱${money(Math.abs(rest))}</b> in these series:<ul class="cd-serul">${serL.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`] : [`<b>₱${money(Math.abs(rest))}</b> other difference.`])];
-          return `<div class="cd-serchk">⚠ ${remish ? 'Remitted to LO' : DEPS} ₱${money(cur.dep)}, <b>₱${money(Math.abs(diff))} ${diff > 0 ? 'more' : 'less'}</b> than the collections of this ${K} (₱${money(cur.coll)}):${bullets.length ? `<ul class="cd-serul">${bullets.map((b) => `<li>${b}</li>`).join('')}</ul>` : ''}</div>`
+          // Each cause: a bold first line (amount · what), then lighter lines with the details.
+          const item = (amt, head, lines) => `<li><b>₱${money(Math.abs(amt))} · ${head}</b>${lines.filter(Boolean).map((l) => `<span class="cd-serd">${l}</span>`).join('')}</li>`;
+          const items = [];
+          if (diff > 0 && hasPrev) items.push(item(prevTot, 'ORs already presented', prevAll.map((g) => `${esc(`${g.fk ? remFormName(g.fk) + ' ' : ''}${g.nums}`)} in ${esc(g.rep)}`)));
+          let shown = diff > 0 && hasPrev ? prevTot : 0;
+          if (serL.length) [...(cur.serOf || new Map()).entries()].filter(([, i]) => !i.ok && (i.tot > 0.004 || i.miss.length)).forEach(([d, i]) => {
+            const am = +d.amount || 0, df = r2(am - i.tot); shown = r2(shown + df);
+            items.push(item(df, `Series ${i.a}–${i.z}`, [`${d.toLO ? 'Remitted' : 'Deposited'} ₱${money(am)}, but encoded ${df > 0 ? 'only ' : ''}₱${money(i.tot)}${i.beg ? ` (₱${money(i.beg)} of them dated before the last cash exam)` : ''}`,
+              i.miss.length ? `Not yet encoded: <b>${esc(rangesText(i.miss))} (${countRanges(i.miss)} OR${countRanges(i.miss) === 1 ? '' : 's'})</b>` : '']));
+          });
+          const rest = r2(diff - shown); if (Math.abs(rest) > 0.004) items.push(item(rest, 'Other difference', []));
+          return `<div class="cd-serchk">⚠ ${remish ? 'Remitted to LO' : DEPS} ₱${money(cur.dep)}, <b>₱${money(Math.abs(diff))} ${diff > 0 ? 'more' : 'less'}</b> than the collections of this ${K} (₱${money(cur.coll)}):<ul class="cd-serul">${items.join('')}</ul></div>`
             + nib.map((t) => `<p class="cd-serchk">⚠ ${esc(t)}</p>`).join('');
         }
         return [...serL, ...nib].map((t) => `<p class="cd-serchk">⚠ ${esc(t)}</p>`).join('');
