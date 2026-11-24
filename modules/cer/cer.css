@@ -1072,3 +1072,6 @@ table.af-reg.tr-month{min-width:0}
 /* SAAF with Money Value: wide table scrolls sideways on screen; prints in full */
 .rp-scrollx{overflow-x:auto}
 body.rp-printing #cer-print .rp-scrollx{overflow:visible}
+
+/* Collections: Import ORs for the whole auditee, on the top bar */
+.cer-selbar .sb-imp{align-self:flex-end; margin-bottom:2px}

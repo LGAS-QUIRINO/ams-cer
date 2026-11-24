@@ -842,7 +842,8 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
 `;
 
   const ctxw = { refs, f, audit, lgu, K, KS, o, exam, fig, cur, curFund, curKey, selId, isLO, pureLO, enc, funds, form, bk, bks, listOrs, allFigs, isFirst, toLO, cbook, rMode, rRec };
-  return { crumb, body, wire: () => { wireTop(); wireAll(ctxw); } };
+  const impAll = enc ? '<button class="btn sb-imp" type="button" id="cd-impall">Import ORs</button>' : '';
+  return { crumb, body, subExtra: impAll, wire: () => { wireTop(); wireAll(ctxw); const ib = $('#cd-impall'); if (ib) ib.onclick = () => importAll({ refs, f, audit, lgu, exams, funds }); } };
 }
 
 /* ---------- wiring ---------- */
@@ -1880,6 +1881,88 @@ async function createReport(c, K, out) {
   if (prec) await store.save('cer_reports', p.id, { ...strip(prec), pending: true, begTyped: first ? 0 : prec.begTyped, deposits: deps.filter((d) => !goes(d)), remittances: rems.filter((m) => m.date > out.date) }, by(refs), { quiet: true });
   for (const x of p.ors.filter((x) => inRec(outR, x.serial, x.form))) await store.save('cer_ors', x.id, { ...strip(x), reportId: id, fund: out.fund }, by(refs), { quiet: true });
   return id;
+}
+
+/* ---------- Import ORs for the whole auditee: Date, OR No., Amount ---------- */
+// Each OR goes to the officer of this cash examination holding the booklet with its number (Forms Register); the form
+// comes from the booklet. Fund: General Fund. Particular: the form's fixed one, AF 51 "Various Fee", else "No particular".
+// Not imported (listed to check): not in a booklet of an officer here, in more than one, 0 or blank amount, repeated in
+// the file, or already encoded (with where).
+const GF = 'General Fund';
+async function importAll(c) {
+  const { refs, f, audit, lgu, exams, funds } = c;
+  let plan = null;
+  const placeOf = (lg) => (refs.lgu[lg] ? agencyName(refs, refs.lgu[lg]) : 'another auditee');
+  const offName = (id) => f.officers.find((x) => x.id === id)?.name || 'another officer';
+  const read = async (file) => {
+    const XLSX = await loadXlsx();
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const cols = [['date', /date/i], ['or', /or\s*no|^\s*o\.?\s*r\.?\s*(#|number)?\s*$|receipt/i], ['amt', /amount|amt/i]];
+    let sheet = null;
+    for (const n of wb.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' });
+      for (let r = 0; r < Math.min(rows.length, 15) && !sheet; r++) {
+        const map = {}; rows[r].forEach((cell, i) => { const t = String(cell || ''); cols.forEach(([k, re]) => { if (map[k] === undefined && re.test(t)) map[k] = i; }); });
+        if (map.or !== undefined && map.date !== undefined && map.amt !== undefined) sheet = { rows, header: r, map };
+      }
+      if (sheet) break;
+    }
+    if (!sheet) return { error: 'No sheet with the columns Date, OR No. and Amount was found.' };
+    const M = sheet.map, get = (row, k) => row[M[k]];
+    const offIds = new Set(exams.map((e) => e.officerId));
+    const problems = [], seen = new Map(), rows = [];
+    sheet.rows.slice(sheet.header + 1).forEach((row, i) => {
+      const line = sheet.header + i + 2, noTxt = String(get(row, 'or') ?? '').trim(), dTxt = get(row, 'date'), aTxt = get(row, 'amt');
+      if (!noTxt && !String(dTxt ?? '').trim() && String(aTxt ?? '').trim() === '') return;
+      const n = parseInt(noTxt.replace(/[^\d]/g, ''), 10);
+      if (!n) { problems.push({ line, why: noTxt ? `OR No. "${noTxt}" is not a number.` : 'OR No. is blank.' }); return; }
+      const date = excelDate(XLSX, dTxt);
+      if (!date) { problems.push({ line, no: n, why: date === null ? `Date "${dTxt}" is not a date.` : 'Date is blank.' }); return; }
+      if (farDate(date)) { problems.push({ line, no: n, why: farDate(date) }); return; }
+      const amt = typeof aTxt === 'number' ? aTxt : num(aTxt);
+      if (amt === null || !(amt > 0)) { problems.push({ line, no: n, why: String(aTxt ?? '').trim() && amt === null ? `Amount "${aTxt}" is not a number. Check this OR.` : 'Amount is 0 or blank. Check this OR.' }); return; }
+      if (seen.has(n)) { problems.push({ line, no: n, why: `Repeated in the file (row ${seen.get(n)}). Check this OR.` }); return; }
+      seen.set(n, line); rows.push({ line, n, date, amt: r2(amt) });
+    });
+    const add = [];
+    rows.forEach((x) => {
+      const hold = f.booklets.filter((b) => offIds.has(b.officerId) && !b.noSerial && b.form !== 'chk' && b.from <= x.n && x.n <= b.to);
+      if (!hold.length) { problems.push({ line: x.line, no: x.n, why: 'Not in a booklet of any officer of this cash examination (Forms Register).' }); return; }
+      if (hold.length > 1) { problems.push({ line: x.line, no: x.n, why: `In more than one booklet (${hold.map((b) => `${FORM_SHORT[b.form] || b.form} · ${offName(b.officerId)}`).join('; ')}). Encode it in the officer's Collections.` }); return; }
+      const b = hold[0];
+      const hit = f.ors.find((y) => y.form === b.form && !y.bnLine && +y.serial <= x.n && x.n <= maxSer(y));
+      if (hit) { problems.push({ line: x.line, no: x.n, why: `Already encoded (${fmtDate(hit.date)})${hit.officerId === b.officerId && (!hit.lguId || hit.lguId === audit.lguId) ? '' : ` under ${placeOf(hit.lguId)} · ${offName(hit.officerId)}`}.` }); return; }
+      add.push({ ...x, b, form: b.form, officerId: b.officerId });
+    });
+    return { add, problems };
+  };
+  const show = (bg, p) => {
+    const box = $('#ia-res', bg);
+    if (p.error) { box.innerHTML = `<div class="msg bad">${esc(p.error)}</div>`; return; }
+    const by = new Map(); p.add.forEach((x) => { const g = by.get(x.officerId) || { n: 0, amt: 0, forms: new Set() }; g.n++; g.amt = r2(g.amt + x.amt); g.forms.add(FORM_SHORT[x.form] || x.form); by.set(x.officerId, g); });
+    box.innerHTML = `<div class="oi-sum"><b>${p.add.length} OR${p.add.length === 1 ? '' : 's'} to add</b> · ₱ ${money(r2(p.add.reduce((t, x) => t + x.amt, 0)))} · ${esc(GF)}</div>
+      ${p.add.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th>Collector</th><th>Form</th><th class="r">ORs</th><th class="r">Amount</th></tr></thead><tbody>${[...by.entries()].sort((a, b) => offName(a[0]).localeCompare(offName(b[0]))).map(([id, g]) => `<tr><td>${esc(offName(id))}</td><td>${esc([...g.forms].join(', '))}</td><td class="r">${g.n}</td><td class="r">${money(g.amt)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${p.problems.length ? `<div class="af-probs"><b>Rows not imported (${p.problems.length})</b>${p.problems.sort((a, b) => a.line - b.line).slice(0, 200).map((q) => `<div>Row ${q.line}${q.no ? ` · OR ${q.no}` : ''}: ${esc(q.why)}</div>`).join('')}${p.problems.length > 200 ? `<div>… and ${p.problems.length - 200} more</div>` : ''}</div>` : ''}`;
+  };
+  const v = await modal({ title: `Import ORs · ${agencyName(refs, lgu)} · ${fmtDate(audit.countDate)}`, wide: true,
+    body: `<p class="af-note">Excel columns: <b>Date, OR No., Amount</b>. Each OR goes to the officer holding the booklet with its number in the Forms Register; the form comes from the booklet. Fund: ${esc(GF)}. Particular: AF 51 "Various Fee"; forms with a fixed particular (e.g. AF 56 Real Property Tax) take it. ORs go to the collector's report whose OR Range has their number.</p>
+      <div class="field"><label for="ia-file">Excel file</label><input class="input" type="file" id="ia-file" accept=".xlsx,.xls,.csv"></div>
+      <div id="ia-res"></div>`,
+    onOpen: (bg) => { $('#ia-file', bg).onchange = async (e) => { const fl = e.target.files[0]; if (!fl) return; $('#ia-res', bg).innerHTML = '<p class="af-note">Reading…</p>';
+      try { plan = await read(fl); show(bg, plan); } catch (err) { plan = null; $('#ia-res', bg).innerHTML = `<div class="msg bad">${esc(err.message || String(err))}</div>`; } }; },
+    buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error) { toast('Choose the Excel file first.', 'bad'); return false; } if (!plan.add.length) { toast('Nothing to import.', 'bad'); return false; } return true; } }] });
+  if (v !== 'go') return;
+  const figs = new Map(), who = by(refs);
+  for (const x of plan.add) {
+    const ex = exams.find((e) => e.officerId === x.officerId);
+    if (!figs.has(x.officerId)) figs.set(x.officerId, figuresOf(f, ex.o, funds, audit.countDate, lgu, ex));
+    const ch = figs.get(x.officerId).chains[`${kindOfForm(lgu, x.form)}|${GF}`];
+    const p = FIXED_PART[x.form] || (/^af51/.test(x.form) ? 'Various Fee' : NO_PART);
+    await store.save('cer_ors', newId('ceror'), { lguId: audit.lguId, officerId: x.officerId, form: x.form, bookletId: x.b.id, serial: x.n, date: x.date, status: 'issued',
+      items: [{ p, amt: x.amt }], amount: x.amt, fund: GF, reportId: placeIn(ch, x.date, x.n, x.form),
+      ...(begOr(f, { date: x.date, serial: x.n, bookletId: x.b.id, officerId: x.officerId, form: x.form }, ex.lastExamDate, begRangesOf(ex)) ? { beg: true } : {}) }, who, { quiet: true });
+  }
+  emitChange('local'); toast(`${plan.add.length} OR${plan.add.length === 1 ? '' : 's'} imported to ${new Set(plan.add.map((x) => x.officerId)).size} officer${new Set(plan.add.map((x) => x.officerId)).size === 1 ? '' : 's'}.`, 'ok');
 }
 
 /* ---------- Import ORs from Excel: Date, OR No., Particular, Amount ---------- */

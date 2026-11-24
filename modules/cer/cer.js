@@ -345,10 +345,10 @@ export async function render(ctx) {
     if (parts[0] === 'banks' && LASTPART !== 'banks') (await import('./banks.js')).resetTabs();
     if (parts[0] === 'count' && LASTPART !== 'count') (await import('./count.js')).resetTabs();
     LASTPART = parts[0];
-    const { body, crumb, wire } = parts[0] === 'forms' ? await (await import('./forms.js')).formsView(ctx)
+    const { body, crumb, wire, subExtra } = parts[0] === 'forms' ? await (await import('./forms.js')).formsView(ctx)
       : parts[0] === 'collections' ? await (await import('./collections.js')).collectionsView(ctx) : parts[0] === 'advances' ? await (await import('./advances.js')).advancesView(ctx) : parts[0] === 'banks' ? await (await import('./banks.js')).banksView(ctx) : parts[0] === 'count' ? await (await import('./count.js')).countView(ctx) : parts[0] === 'verify' ? await (await import('./verify.js')).verifyView(ctx) : parts[0] === 'cashbook' ? await (await import('./cashbook.js')).cashbookView(ctx) : await (await import('./reports.js')).reportsView(ctx);
     const cer0 = await loadCer();
-    const sub = selBar(refs, cer0);
+    const sub = selBar(refs, cer0) + (subExtra || '');   // e.g. Collections: Import ORs for the whole auditee
     app.innerHTML = moduleFrame({ title: 'Cash<br>Examination', items: navItems(pickIsLgu(refs, cer0)), active: parts[0], crumb, me, roleText, body, sub });
     tidyTop(); wireSelBar(refs, cer0);
     $$('[data-soon]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); toast(`${a.dataset.soon} comes next. It is not built yet.`); }; });
