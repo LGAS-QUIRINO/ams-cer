@@ -593,6 +593,7 @@ function setupHtml(refs, cer, q) {
         ${newTab && tabs.length ? '<p class="hint" style="margin:0 0 8px">New officer for this cash examination.</p>' : ''}
         <div id="cer-off">${officerHtml(refs, cer, st, edit)}</div>
         ${edit && st.examId && isAuditor(refs) ? `<div class="cer-foot"><button class="btn sm" type="button" id="cer-remove">Remove this officer from the examination</button></div>` : ''}
+        ${audit && refs.isAdmin && !tabs.length ? `<div class="cer-foot"><button class="btn sm" type="button" id="cer-delaudit">Delete this cash examination</button></div>` : ''}
       </div>
     </section>
     ${edit ? '<div class="btn-row cer-savebar"><button class="btn primary" type="button" id="cer-save">Save Setup</button></div>' : ''}`;
@@ -885,6 +886,21 @@ function wireSetup(refs, cer, q, rerender) {
     if (rec) await store.save('cer_exams', st.examId, rec.data, by(refs), { deleted: true });
     DRAFT = null; toast('Officer removed from this cash examination.', 'ok');
     location.hash = `#/cer/setup?a=${st.auditId}`;
+  };
+  // Admin only: a cash examination with no officer in it (encoded by mistake) can be deleted, with its bank statements.
+  const del = $('#cer-delaudit');
+  if (del) del.onclick = async () => {
+    const a = cer.audits.find((x) => x.id === st.auditId);
+    if (!a || !refs.isAdmin || cer.exams.some((e) => e.auditId === a.id)) return;
+    const recs = (await store.list('cer_bankrec')).filter((r) => !r.deleted && r.id.startsWith(a.id + '|'));
+    const ok = await modal({ title: 'Delete this cash examination?', body: `<p style="margin:0">Delete the cash examination of <b>${esc(agencyName(refs, refs.lgu[a.lguId]))}</b> on <b>${esc(fmtDate(a.countDate))}</b>? It has no officer in it.${recs.length ? ' The bank statements entered for it are deleted too.' : ''}</p>`,
+      buttons: [{ label: 'Cancel', value: false }, { label: 'Delete', cls: 'primary', value: true }] });
+    if (!ok) return;
+    const who = by(refs);
+    for (const r of recs) await store.save('cer_bankrec', r.id, r.data, who, { quiet: true, deleted: true });
+    const { id, ...rest } = a; await store.save('cer_audits', a.id, rest, who, { deleted: true });
+    DRAFT = null; toast('Cash examination deleted.', 'ok');
+    location.hash = '#/cer/setup';
   };
 }
 
