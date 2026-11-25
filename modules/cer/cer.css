@@ -1090,3 +1090,6 @@ body.rp-printing #cer-print .rp-scrollx{overflow:visible}
 .cd-serul li{margin:4px 0}
 .cd-serul .cd-serd{display:block; color:var(--muted,#5b6b84); font-size:12px; margin-left:2px}
 .cd-serul .cd-serd b{color:var(--warn-ink,#8a5300)}
+
+/* LO's RCD list: something to check */
+.cd-lowarn{color:#e67700; font-weight:700; margin-left:4px; cursor:help}
