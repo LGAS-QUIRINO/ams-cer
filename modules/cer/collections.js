@@ -1110,7 +1110,10 @@ function wireAll(c) {
       // As encoded: one range per series (not merged), duplicates dropped.
       const asIs = (l) => { const seen = new Set(), out = l.filter(([a, z, fk]) => { const k = `${a}|${z}|${remForm(fk || '')}`; if (seen.has(k)) return false; seen.add(k); return true; }).sort((x, y) => x[0] - y[0]);
         return { ranges: out.map(([a, z]) => [a, z]), rangeForms: out.map((x) => x[2] || '') }; };
-      const want = asIs(f.ors.some((x) => x.reportId === id) ? [...old, ...mine] : mine);
+      // With ORs already encoded, its own ranges stay, but one overlapping a series of the LO's lines (same form) is the old copy of
+      // an edited series: replaced by the series as typed now (two overlapping ranges in one report cannot both be right).
+      const over = ([a, z, fk]) => mine.some(([b, y, fk2]) => b <= z && a <= y && sameF(remForm(fk || ''), remForm(fk2 || '')));
+      const want = asIs(f.ors.some((x) => x.reportId === id) ? [...old.filter((r) => !over(r)), ...mine] : mine);
       const have = asIs(old);
       if (JSON.stringify(want) !== JSON.stringify(have) || JSON.stringify(sh.rangeForms || []) !== JSON.stringify(want.rangeForms)) { Object.assign(sh, want); await store.save('cer_reports', sh.id, { ...strip(sh), ...want }, by(refs), { quiet: true }); }
     }
