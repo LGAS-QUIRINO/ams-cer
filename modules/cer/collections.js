@@ -576,7 +576,17 @@ export async function collectionsView(ctx) {
   // Needs work: a "Check" flag, collections not yet encoded, or ORs of its range not yet encoded.
   // The LO's own RCD (not a collector's): anything to check, or nothing encoded in it at all → an orange ⚠ beside its No.
   const loOnly = isLO && !forms.length;
-  const loChk = (g) => loOnly && (g.issues.length > 0 || (!coveredOf(f, refs, g.rec).n && !g.coll && !g.dep));
+  // ⚠ only when ORs are not yet encoded: a remitted series (or the collector's report's OR Range) with numbers missing, or a
+  // collector's report with no ORs at all. Amounts that differ do not count.
+  const loChk = (g) => loOnly && (g.rec?.remittances || []).some((m) => {
+    const cid = m.collectorId, rr = m.reportId ? f.reports.find((r) => r.id === m.reportId) : null;
+    const allIn = (a, z, fk) => { if (!(a > 0) || z < a || z - a > 5000) return true; const mine = f.ors.filter((x) => x.officerId === cid && (!fk || sameF(fk, x.form)) && +x.serial <= z && maxSer(x) >= a);
+      for (let n = a; n <= z; n++) if (!mine.some((x) => +x.serial <= n && n <= maxSer(x))) return false; return true; };
+    if (m.from) return !allIn(+m.from, +(m.to || m.from), m.form || '');
+    if (!rr) return false;
+    if ((rr.ranges || []).length) return rr.ranges.some(([a, z], i) => !allIn(+a, +z, (rr.rangeForms || [])[i] || ''));
+    return !f.ors.some((x) => x.reportId === rr.id) && !(rr.remittances || []).length;
+  });
   const needsWork = (g) => g.issues.some((x) => x.startsWith('Series ') || x.startsWith(NIB)) || (g.rec.madeFrom && !g.nOrs) || (hasRange(g) && g.rangeIn < g.rangeN) || loChk(g);
   if (RSORT.v === 'need') realFigs.sort((a, b) => (needsWork(a) ? 0 : 1) - (needsWork(b) ? 0 : 1) || byRepNo(a, b));
   const pends = fig.keys.map((k) => fig.chains[k]).filter((ch) => usedKinds.includes(ch.kind) && (ch.pend.nOrs || ch.pend.dep || ch.pend.remTotal));
