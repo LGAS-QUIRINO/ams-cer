@@ -440,6 +440,7 @@ export async function collectionsView(ctx) {
   // Records dated on or before a submitted report go into it (e.g. ORs encoded after the SCD was added).
   if (canEncode(refs) && misplaced(fig)) { await sweepChains(f, fig, refs); return collectionsView(ctx); }
   const isLO = (exam.functions || []).includes('liquidating');
+  LO_REMS = isLO ? Object.values(fig.chains).flatMap((ch) => ch.figs).flatMap((g) => (g.rec?.remittances || []).map((m) => ({ id: g.id, rec: g.rec, kind: g.kind, m }))) : [];
   const allForms = [...new Set([...((exam.forms || []).length ? exam.forms : f.ors.filter((x) => x.officerId === o.id).map((x) => x.form)), ...(f.booklets.some((b) => b.officerId === o.id && b.form === 'cashbn') ? ['cashbn'] : [])].map((k) => fixBrgyForm(lgu, k)))];
   // Report types in use for this officer: from the forms ticked in Audit Setup, plus any already encoded.
   const active = (c) => c.figs.length || c.pend.nOrs || c.pend.dep || c.pend.remTotal || c.pend.beg;
@@ -485,7 +486,7 @@ export async function collectionsView(ctx) {
       <td><input class="input mono" data-k="reportNo" list="cd-crlist" value="${esc(m.reportNo || '')}" aria-label="Collector's RCD No." ${enc ? '' : 'disabled'}></td>
       <td><input class="input mono" data-k="from" inputmode="numeric" value="${esc(m.from || '')}" aria-label="OR From" ${enc ? '' : 'disabled'}></td><td><input class="input mono" data-k="to" inputmode="numeric" value="${esc(m.to || '')}" aria-label="OR To" ${enc ? '' : 'disabled'}></td>
       <td><input class="input r" data-k="amount" inputmode="decimal" value="${m.amount !== undefined && m.amount !== '' ? esc(money(m.amount)) : ''}" aria-label="Amount" ${enc ? '' : 'disabled'}>${m.beg ? '<br><span class="pill p-beg">Before the period</span>' : ''}</td>
-      <td>${m.collectorId ? remCheck(f, m) : ''}</td>
+      <td>${m.collectorId ? remCheck(f, m, selId) : ''}</td>
       <td>${enc ? '<button class="btn sm cd-x" type="button" aria-label="Remove remittance">✕</button>' : ''}</td></tr>`;
   // The collectors' remittances (from their SCR / RCD): those in this report, ticked; those not yet in any of the LO's reports, to tick.
   const colIn = (cur.rec?.remittances || []).filter((m) => m.fromCol);
@@ -525,7 +526,7 @@ export async function collectionsView(ctx) {
   const tickTbl = !colFree.length ? '<p class="dim" style="margin:6px 0">No collector\'s SCR / RCD in the app is waiting to be put in an RCD.</p>'
     : `<div class="rm-findrow"><label class="sr-only" for="rm-find">Search the waiting remittances</label><input class="input" id="rm-find" type="search" placeholder="Search: collector, report No., OR No., amount or date" value="${esc(REM.find)}" autocomplete="off"><span class="dim" id="rm-findn"></span></div>
       <div class="af-tbl cd-tblbox"><table class="af-reg"><thead><tr><th style="width:30px"></th><th>Date received</th><th>Collector</th><th>Their report</th><th>OR range</th><th class="r">Amount (₱)</th><th>Check of the collections</th></tr></thead>
-      <tbody>${freeSorted.map((m) => `<tr data-rmq="${esc([fmtDate(m.date), colName(f, refs, m.collectorId), m.reportNo || '', m.series || '', money(m.amount), String(m.amount ?? '')].join(' ').toLowerCase())}" data-rmrg="${esc(serOf(m).map(([a, z]) => a + '-' + z).join(';'))}"><td><input type="checkbox" data-colk="${esc(m.key)}" ${enc ? '' : 'disabled'} aria-label="Put in this RCD"></td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${noCell(m)}</td><td class="mono">${tickSerHtml(m)}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td></tr>`).join('')}</tbody></table></div>
+      <tbody>${freeSorted.map((m) => `<tr data-rmq="${esc([fmtDate(m.date), colName(f, refs, m.collectorId), m.reportNo || '', m.series || '', money(m.amount), String(m.amount ?? '')].join(' ').toLowerCase())}" data-rmrg="${esc(serOf(m).map(([a, z]) => a + '-' + z).join(';'))}"><td><input type="checkbox" data-colk="${esc(m.key)}" ${enc ? '' : 'disabled'} aria-label="Put in this RCD"></td><td>${esc(fmtDate(m.date))}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${esc(colName(f, refs, m.collectorId))}</td><td>${noCell(m)}</td><td class="mono">${tickSerHtml(m)}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m, selId)}</td></tr>`).join('')}</tbody></table></div>
       <p class="dim" style="margin:4px 0 0;font-size:12.5px">Tick those listed on the hard copy of this RCD: they move to the list below.</p>`;
   const typeLine = !enc ? '' : `<div class="rm-line" id="rm-form">
         <div class="field"><label for="rm-date">Date received</label><input class="input" type="date" id="rm-date" value="${esc(ed ? ed.date : REM.date || '')}"></div>
@@ -553,10 +554,10 @@ export async function collectionsView(ctx) {
         ser: tickSer({ ...m, from: String(a), to: String(z), series: a === z ? `${a}` : `${a}–${z}`, form: fk || m.form, serList: null }),
         amt: r2(f.ors.filter((x) => x.officerId === m.collectorId && x.status !== 'cancelled' && +x.serial >= a && maxSer(x) <= z).reduce((t, x) => t + rawAmt(x), 0)) }))
         : [{ m, j: 0, n: 1, ser: tickSer(m), amt: +m.amount || 0, own: true }]));
-      return lines.map((l, k) => `<tr class="${k ? 'rm-ser' : 'rm-first'}"><td>${k ? '' : gi + 1}</td><td>${!k || l.m.date !== m0.date && !l.j ? esc(fmtDate(l.m.date)) : ''}${l.m.beg && !l.j ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${k ? '' : esc(colName(f, refs, l.m.collectorId))}</td><td>${k ? '' : `${noCell(l.m)} <span class="pill p-part">In the app</span>`}</td><td class="mono">${esc(l.ser)}</td><td class="r">${l.own || l.amt ? money(l.amt) : '<span class="dim">—</span>'}</td><td>${l.j ? '' : remCheck(f, l.m)}</td>${enc ? `<td class="rm-act">${l.j ? '' : `<button class="btn sm" type="button" data-colrm="${esc(l.m.key)}" title="Take it out of this RCD (the collector's report stays)">Remove</button>`}</td>` : ''}</tr>`).join('')
+      return lines.map((l, k) => `<tr class="${k ? 'rm-ser' : 'rm-first'}"><td>${k ? '' : gi + 1}</td><td>${!k || l.m.date !== m0.date && !l.j ? esc(fmtDate(l.m.date)) : ''}${l.m.beg && !l.j ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${k ? '' : esc(colName(f, refs, l.m.collectorId))}</td><td>${k ? '' : `${noCell(l.m)} <span class="pill p-part">In the app</span>`}</td><td class="mono">${esc(l.ser)}</td><td class="r">${l.own || l.amt ? money(l.amt) : '<span class="dim">—</span>'}</td><td>${l.j ? '' : remCheck(f, l.m, selId)}</td>${enc ? `<td class="rm-act">${l.j ? '' : `<button class="btn sm" type="button" data-colrm="${esc(l.m.key)}" title="Take it out of this RCD (the collector's report stays)">Remove</button>`}</td>` : ''}</tr>`).join('')
         + (lines.length > 1 ? `<tr class="rm-sub"><td></td><td></td><td></td><td></td><td><b>${lines.length} series</b></td><td class="r"><b>${money(r2(tl.reduce((n, x) => n + (+x.amount || 0), 0)))}</b></td><td></td>${enc ? '<td></td>' : ''}</tr>` : ''); }
     const grp = it.grp;
-    return grp.map(({ m, i }, k) => `<tr class="${edGrp && edGrp.some((x) => x.i === i) ? 'cd-on' : ''} ${k ? 'rm-ser' : 'rm-first'}"><td>${k ? '' : gi + 1}</td><td>${!k || m.date !== grp[0].m.date ? esc(fmtDate(m.date)) : ''}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${k ? '' : esc(colName(f, refs, m.collectorId))}</td><td>${k ? '' : esc(m.reportNo || '')}</td><td class="mono">${esc(serText(m))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m)}</td>${enc ? `<td class="rm-act">${k ? '' : `<button class="btn sm" type="button" data-rmedit="${i}">Edit</button> `}<button class="btn sm" type="button" data-rmdel="${i}" aria-label="Remove${grp.length > 1 ? ' this series' : ''}" title="${grp.length > 1 ? 'Remove this series' : 'Remove'}">✕</button></td>` : ''}</tr>`).join('')
+    return grp.map(({ m, i }, k) => `<tr class="${edGrp && edGrp.some((x) => x.i === i) ? 'cd-on' : ''} ${k ? 'rm-ser' : 'rm-first'}"><td>${k ? '' : gi + 1}</td><td>${!k || m.date !== grp[0].m.date ? esc(fmtDate(m.date)) : ''}${m.beg ? ' <span class="pill p-beg">Before the period</span>' : ''}</td><td>${k ? '' : esc(colName(f, refs, m.collectorId))}</td><td>${k ? '' : esc(m.reportNo || '')}</td><td class="mono">${esc(serText(m))}</td><td class="r">${money(m.amount)}</td><td>${remCheck(f, m, selId)}</td>${enc ? `<td class="rm-act">${k ? '' : `<button class="btn sm" type="button" data-rmedit="${i}">Edit</button> `}<button class="btn sm" type="button" data-rmdel="${i}" aria-label="Remove${grp.length > 1 ? ' this series' : ''}" title="${grp.length > 1 ? 'Remove this series' : 'Remove'}">✕</button></td>` : ''}</tr>`).join('')
       + (grp.length > 1 ? `<tr class="rm-sub"><td></td><td></td><td></td><td></td><td><b>${grp.length} series</b></td><td class="r"><b>${money(r2(grp.reduce((n, x) => n + (+x.m.amount || 0), 0)))}</b></td><td></td>${enc ? '<td></td>' : ''}</tr>` : '');
   }).join('');
   const remBlock = isLO ? `<div class="cd-block"><div class="cd-orhead"><h3 class="cer-h3">Remittances from the collectors <small class="dim">(the collections of ${cur.pending ? 'this Liquidating Officer' : `this ${K}`})</small></h3>${progress}</div>
@@ -581,7 +582,7 @@ export async function collectionsView(ctx) {
   const loChk = (g) => {
     if (!loOnly) return false;
     const rems = (g.rec?.remittances || []).filter((m) => m.collectorId);
-    if (rems.some((m) => /p-flag|p-bad/.test(remCheck(f, m)))) return true;
+    if (rems.some((m) => /p-flag|p-bad/.test(remCheck(f, m, g.id)))) return true;
     const byRep = new Map(); rems.filter((m) => !m.from && m.reportId && formOfSer(m) !== 'cashbn').forEach((m) => byRep.set(m.reportId, r2((byRep.get(m.reportId) || 0) + (+m.amount || 0))));
     return [...byRep.entries()].some(([id, amt]) => { const rr = f.reports.find((r) => r.id === id); return rr && Math.abs(quickColl(f, rr) - amt) > 0.004; });
   };
@@ -964,8 +965,10 @@ function wireAll(c) {
   const tbodyOf = (tr) => ({ querySelectorAll: () => [tr] });
   const wireRows = (box) => $$('.cd-x', box).forEach((b) => { b.onclick = () => b.closest('tr').remove(); });
   // Ticking a collector's remittance in (or out of) this RCD of the LO: kept on the LO's reports (colIn / colOut).
-  const putCol = async (k, on) => {
+  const putCol = async (k, on, cb) => {
     const ch = c.fig.chains[c.curKey]; if (!ch) return;
+    if (on) { const m = (ch.pend.rec?.remittances || []).find((x) => x.fromCol && x.key === k), hits = m ? presentedIn(m, selId) : [];
+      if (hits.length && !(await modal({ title: 'Already presented', body: `<p style="margin:0">${esc(colName(f, refs, m.collectorId))}: ${esc(presentedText(hits))}.</p><p class="af-note">These ORs are already in another RCD. Put it in this RCD anyway?</p>`, buttons: [{ label: 'Go back', value: false }, { label: 'Save anyway', cls: 'primary', value: true }] }))) { if (cb) cb.checked = false; return; } }
     for (const g of ch.figs) {
       const r = f.reports.find((y) => y.id === g.id); if (!r) continue;
       let inn = (r.colIn || []).filter((x) => x !== k);
@@ -975,7 +978,7 @@ function wireAll(c) {
     }
     emitChange('local'); toast(on ? 'Put in this RCD.' : 'Taken out of this RCD (the collector\'s report stays).', 'ok');
   };
-  $$('[data-colk]').forEach((cb) => { cb.onchange = () => putCol(cb.dataset.colk, cb.checked); });
+  $$('[data-colk]').forEach((cb) => { cb.onchange = () => putCol(cb.dataset.colk, cb.checked, cb); });
   // Remittances received register: open the RCD a line is in, or take the line out (ticked) / delete it (typed).
   $$('[data-lorep]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); go({ r: a.dataset.lorep }); }; });
   $$('[data-lodel]').forEach((b) => { b.onclick = async () => {
@@ -1241,6 +1244,8 @@ function wireAll(c) {
         col = await newColModal($('#rm-col').value); if (!col) return;
       }
       { const r = noCheck(col); if (r && r.block) { showNo(); $('#rm-no').focus(); return bad(r.text); } }
+      { const hits = lines.filter((x) => x.fr).flatMap((x) => presentedIn({ collectorId: col.id, from: x.fr, to: x.to, form: x.form }, selId));
+        if (hits.length && !(await modal({ title: 'Already presented', body: `<p style="margin:0">${esc(col.name)}: ${esc(presentedText(hits))}.</p><p class="af-note">These ORs are already in another RCD. Save anyway?</p>`, buttons: [{ label: 'Go back', value: false }, { label: 'Save anyway', cls: 'primary', value: true }] }))) return; }
       { const ms = regMsgs(); showReg(); if (ms.length && !(await modal({ title: 'Not in the Forms Register', body: `<p style="margin:0">${ms.map(esc).join('<br>')}</p><p class="af-note">Save anyway?</p>`, buttons: [{ label: 'Go back', value: false }, { label: 'Save anyway', cls: 'primary', value: true }] }))) return; }
       const ms = lines.map((x) => lineOf(date, col, $('#rm-no').value, x.fr, x.to, x.amt, x.form, x.pcs, x.bn));
       const gone = new Set(edGrp ? edGrp.map((x) => x.i) : []);
@@ -1318,6 +1323,8 @@ function wireAll(c) {
       buttons: [{ label: 'Cancel', value: null }, { label: 'Import', cls: 'primary', value: 'go', check: () => { if (!plan || plan.error || !plan.add.length) { toast('Nothing to import.', 'bad'); return false; }
         const miss = (plan.fresh || []).filter((x) => !x.lguId); if (miss.length) { toast(`Choose the office of ${miss.map((x) => x.name).join(', ')}.`, 'bad'); return false; } return true; } }] });
     if (v !== 'go') return;
+    { const hits = plan.add.filter((m) => m.collectorId).flatMap((m) => presentedIn(m, selId).map((h) => `${colName(f, refs, m.collectorId)}: ${presentedText([h])}`));
+      if (hits.length && !(await modal({ title: 'Already presented', body: `<p style="margin:0">${hits.slice(0, 30).map(esc).join('<br>')}${hits.length > 30 ? `<br>… and ${hits.length - 30} more` : ''}</p><p class="af-note">These ORs are already in another RCD. Import anyway?</p>`, buttons: [{ label: 'Go back', value: false }, { label: 'Save anyway', cls: 'primary', value: true }] }))) return; }
     if ((plan.fresh || []).length) await saveNewCols(plan.fresh.map(({ id, name, lguId, designation }) => ({ id, name, lguId, designation })));
     if (await saveRems([...typedNow(), ...plan.add], true)) toast(`${plan.add.length} remittance${plan.add.length === 1 ? '' : 's'} imported.`, 'ok');
   };
@@ -1738,7 +1745,26 @@ const REM_MAXPCS = 1000;
 const rangeOff = (fr, to) => { const a = +fr, z = +(to || fr); if (!a) return ''; const n = z - a + 1;
   return n > REM_MAXPCS ? `${n.toLocaleString('en-US')} ORs in ${a}–${z}` : String(Math.trunc(a)).length !== String(Math.trunc(z)).length ? `OR From and OR To have a different number of digits` : ''; };
 // A remittance against the collector's ORs in its range: agree, not found, more, or not yet encoded.
-function remCheck(f, m) {
+// The LO's remittances in all her RCDs (set on each draw): to see a series already presented in another RCD.
+let LO_REMS = [];
+// A remittance's series as [[from, to, form]]: several (one report in one amount), one (OR From – To), or typed in the text.
+function remSers(m) {
+  if (m.serList && m.serList.length > 1) return m.serList.map(([a, z, fk]) => [+a, +z, fk || m.form || '']);
+  if (m.from) return [[+m.from, +(m.to || m.from), m.form || '']];
+  const out = []; String(m.series || '').replace(/(\d+)\s*[–-]\s*(\d+)|(\d+)/g, (_, a, z, one) => { out.push(one ? [+one, +one, m.form || ''] : [+a, +z, m.form || '']); return ''; }); return out;
+}
+// The numbers of a remittance already presented in another RCD of this LO (same collector, same form): [{ a, z, rec, kind }].
+function presentedIn(m, ownId) {
+  if (!m.collectorId) return [];
+  const mine = remSers(m), out = [];
+  LO_REMS.forEach(({ id, rec, kind, m: x }) => { if (id === ownId || x === m || x.collectorId !== m.collectorId) return;
+    remSers(x).forEach(([a, z, fk]) => mine.forEach(([b, y, fk2]) => { if (b <= z && a <= y && (!fk || !fk2 || sameF(fk, fk2))) out.push({ a: Math.max(a, b), z: Math.min(z, y), rec, kind }); })); });
+  return out;
+}
+const presentedText = (hits) => hits.map((h) => `${h.a === h.z ? h.a : `${h.a}–${h.z}`} in ${repName(h.rec, h.kind || 'RCD')}`).join('; ');
+function remCheck(f, m, ownId) {
+  // Numbers already presented in another RCD of this LO: shown first (delete the line, or correct its series).
+  if (ownId !== undefined) { const hits = presentedIn(m, ownId); if (hits.length) return `<span class="pill p-bad" title="${esc(`Already presented: ${presentedText(hits)}`)}">Already presented · ${esc(presentedText(hits))}</span>`; }
   // Cash Ticket (Booklet No.): the collector's lines of that booklet in the collector's report (else in any report of hers).
   if (!m.from && formOfSer(m) === 'cashbn') {
     if (!m.bn) return '<span class="pill p-flag">Booklet No. not typed</span>';
