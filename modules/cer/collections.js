@@ -1200,9 +1200,9 @@ function wireAll(c) {
     };
     rows().forEach(wireRow); total();
     // Each series against the collector's booklets in the Forms Register: a note under the line (asked once more on Add / Save).
-    const regMsgs = () => { const cid = resolveCol($('#rm-col').value)?.id; return rows().filter((r) => !blank(r)).map((r) => { const fk = $('.rm-sk', r).value;
-      return fk === 'cashbn' ? notInReg(f, cid, fk, '', '', int($('.rm-sf', r).value)) : notInReg(f, cid, fk, $('.rm-sf', r).value, $('.rm-st', r).value, 0); }).filter(Boolean); };
-    const showReg = () => { const el = $('#rm-regmsg'); if (el) el.textContent = regMsgs().join(' '); };
+    const regMsgs = () => { const cid = resolveCol($('#rm-col').value)?.id; return notInRegText(f, rows().filter((r) => !blank(r)).map((r) => { const fk = $('.rm-sk', r).value;
+      return fk === 'cashbn' ? notInRegHit(f, cid, fk, '', '', int($('.rm-sf', r).value)) : notInRegHit(f, cid, fk, $('.rm-sf', r).value, $('.rm-st', r).value, 0); })); };
+    const showReg = () => { const el = $('#rm-regmsg'); if (el) el.innerHTML = regMsgs().map(esc).join('<br>'); };
     $('#rm-form').addEventListener('change', showReg); $('#rm-form').addEventListener('input', () => { if ($('#rm-regmsg')?.textContent) showReg(); });
     $('#rm-col').addEventListener('change', showReg);
     // The collector's report No.: already in another RCD of this LO, or already in the app on the collector's side → stopped;
@@ -1702,6 +1702,22 @@ function notInReg(f, colId, fk, from, to, bn) {
   const bks = f.booklets.filter((b) => b.officerId === colId && !b.noSerial && b.form !== 'chk' && b.from <= z && a <= b.to);
   for (let n = a; n <= z; n++) if (!bks.some((b) => b.from <= n && n <= b.to)) return `${a === z ? a : `${a}–${z}`} is not in any booklet of ${who} in the Forms Register. Check the numbers.`;
   return '';
+}
+// The same check for the entry line, grouped: one line per collector and form, numbers sorted and runs joined
+// ("Not in SHEILA's booklets in the Forms Register: BN. 26005, 26010, 26014–26017").
+function notInRegHit(f, colId, fk, from, to, bn) {
+  if (!colId) return null;
+  if (fk === 'cashbn') return !bn || f.booklets.some((b) => b.form === 'cashbn' && +b.bn === +bn && b.officerId === colId) ? null : { colId, fk, rs: [[+bn, +bn]] };
+  const a = +String(from || '').replace(/\D/g, ''), z = +String(to || '').replace(/\D/g, '') || a; if (!a || z < a || z - a > 5000) return null;
+  const bks = f.booklets.filter((b) => b.officerId === colId && !b.noSerial && b.form !== 'chk' && b.from <= z && a <= b.to);
+  const miss = []; for (let n = a; n <= z; n++) if (!bks.some((b) => b.from <= n && n <= b.to)) miss.push([n, n]);
+  return miss.length ? { colId, fk, rs: mergeRanges(miss) } : null;
+}
+function notInRegText(f, hits) {
+  const by = new Map(); hits.filter(Boolean).forEach((h) => { const k = `${h.colId}|${remForm(h.fk)}`; const g = by.get(k) || { ...h, rs: [] }; g.rs.push(...h.rs); by.set(k, g); });
+  return [...by.values()].map((g) => { const who = f.officers.find((x) => x.id === g.colId)?.name || 'the collector';
+    const list = mergeRanges(g.rs).map(([a, z]) => (a === z ? `${a}` : `${a}–${z}`)).join(', ');
+    return `Not in ${who}'s booklets in the Forms Register: ${g.fk === 'cashbn' ? 'BN.' : remFormName(g.fk)} ${list}`; });
 }
 export const formOfSer = (m) => { if (!m) return remForm(''); const fk = remForm(m.form); const n = +String(m.from || '').replace(/\D/g, '');
   if (fk === 'cashbn' || (fk === 'cash' && !n)) return 'cashbn';   // cash tickets once typed without numbers: Booklet No. kind
