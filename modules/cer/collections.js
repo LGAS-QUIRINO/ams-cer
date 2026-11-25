@@ -576,22 +576,13 @@ export async function collectionsView(ctx) {
   // Needs work: a "Check" flag, collections not yet encoded, or ORs of its range not yet encoded.
   // The LO's own RCD (not a collector's): anything to check, or nothing encoded in it at all → an orange ⚠ beside its No.
   const loOnly = isLO && !forms.length;
-  // ⚠ when ORs are not yet encoded (a remitted series, or the collector's report's OR Range, with numbers missing; a report with no
-  // ORs at all), or when the amount differs (each line as in its Check column; a report remitted without a series: its lines added up
-  // against its collections). An RCD with nothing in it has nothing to check.
+  // ⚠ exactly when a line of "In this RCD" has a Check that is not green (ORs not encoded, amount differs, not in the Forms
+  // Register, range to check). A line with no OR range: its report's collections not yet encoded, or its lines added up differ.
   const loChk = (g) => {
     if (!loOnly) return false;
     const rems = (g.rec?.remittances || []).filter((m) => m.collectorId);
-    const allIn = (cid, a, z, fk) => { if (!(a > 0) || z < a || z - a > 5000) return true; const mine = f.ors.filter((x) => x.officerId === cid && (!fk || sameF(fk, x.form)) && +x.serial <= z && maxSer(x) >= a);
-      for (let n = a; n <= z; n++) if (!mine.some((x) => +x.serial <= n && n <= maxSer(x))) return false; return true; };
-    const notEnc = (m) => { const rr = m.reportId ? f.reports.find((r) => r.id === m.reportId) : null;
-      if (m.from) return !allIn(m.collectorId, +m.from, +(m.to || m.from), m.form || '');
-      if (!rr) return false;
-      if ((rr.ranges || []).length) return rr.ranges.some(([a, z], i) => !allIn(m.collectorId, +a, +z, (rr.rangeForms || [])[i] || ''));
-      return !f.ors.some((x) => x.reportId === rr.id) && !(rr.remittances || []).length; };
-    if (rems.some(notEnc)) return true;
-    if (rems.some((m) => m.from && /p-flag|p-bad/.test(remCheck(f, m)))) return true;
-    const byRep = new Map(); rems.filter((m) => !m.from && m.reportId).forEach((m) => byRep.set(m.reportId, r2((byRep.get(m.reportId) || 0) + (+m.amount || 0))));
+    if (rems.some((m) => /p-flag|p-bad/.test(remCheck(f, m)))) return true;
+    const byRep = new Map(); rems.filter((m) => !m.from && m.reportId && formOfSer(m) !== 'cashbn').forEach((m) => byRep.set(m.reportId, r2((byRep.get(m.reportId) || 0) + (+m.amount || 0))));
     return [...byRep.entries()].some(([id, amt]) => { const rr = f.reports.find((r) => r.id === id); return rr && Math.abs(quickColl(f, rr) - amt) > 0.004; });
   };
   const needsWork = (g) => g.issues.some((x) => x.startsWith('Series ') || x.startsWith(NIB)) || (g.rec.madeFrom && !g.nOrs) || (hasRange(g) && g.rangeIn < g.rangeN) || loChk(g);
