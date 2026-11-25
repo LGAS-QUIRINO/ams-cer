@@ -314,7 +314,9 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
     const outside = list.filter((x) => outOfBooklets(f, o, x) && !inBegRanges(begR, x));
     const byF = {}; outside.forEach((x) => { (byF[x.form] = byF[x.form] || []).push([+x.serial, maxSer(x)]); });
     Object.entries(byF).forEach(([k, rs]) => fig.issues.push(`${NIB}: ${FORM_SHORT[k] || k} ${rangesText(mergeRanges(rs))}. Add the booklet in Accountable Forms (Receive / Starting Inventory) or check the number.`));
-    rem.forEach((m) => {
+    // A collector's report remitted in several lines (one per series): its lines added up, then checked once against its collections.
+    const remBy = new Map(); rem.forEach((m) => { const k = m.reportId || `__${remBy.size}`; const g = remBy.get(k); if (g) g.amount = r2((+g.amount || 0) + (+m.amount || 0)); else remBy.set(k, { ...m, amount: +m.amount || 0 }); });
+    [...remBy.values()].forEach((m) => {
       const cr = m.reportId ? f.reports.find((r) => r.id === m.reportId) : null;
       if (cr && !quickColl(f, cr)) { fig.issues.push(`Remittance of ${esc(f.officers.find((x) => x.id === m.collectorId)?.name || 'a collector')} (${esc(repName(cr))}, ₱${money(m.amount)}): its collections are not yet encoded.`); return; }
       if (cr) { const cf = quickColl(f, cr); if (Math.abs(cf - (+m.amount || 0)) > 0.004) fig.issues.push(`Remittance of ${esc(f.officers.find((x) => x.id === m.collectorId)?.name || 'a collector')} (${esc(repName(cr))}) is ₱${money(m.amount)}; that report's collections are ₱${money(cf)}.`); }
