@@ -2169,6 +2169,20 @@ async function importOrs(c) {
 }
 
 /* ---------- + SCD / SCR / RCD and Edit: one window ---------- */
+// A report No. already encoded for this officer: a window says where it is (date, fund, ORs) and why it may not be in the
+// list (dated outside this cash examination's period), with Open it. The window being typed in is closed first.
+function dupReport(c, K, hit, bg) {
+  const { f, audit, exam } = c, ors = f.ors.filter((x) => x.reportId === hit.id), amt = r2(ors.filter((x) => x.status !== 'cancelled').reduce((t, x) => t + orAmount(x), 0));
+  const why = !hit.date ? '' : exam && exam.lastExamDate && hit.date <= exam.lastExamDate ? `its date is on or before the last cash exam (${fmtDate(exam.lastExamDate)})` : audit.countDate && hit.date > audit.countDate ? `its date is after the cash count (${fmtDate(audit.countDate)})` : '';
+  if (bg) $('.x', bg)?.click();
+  setTimeout(async () => {
+    const v = await modal({ title: `${repName(hit, hit.kind || K)} is already encoded for this officer`, body: `<p style="margin:0">Dated <b>${esc(fmtDate(hit.date) || '—')}</b> · ${esc(hit.fund || '—')} · ${ors.length} OR${ors.length === 1 ? '' : 's'} · ₱${money(amt)}</p>
+        ${why ? `<p style="margin:8px 0 0">Not in the list: <b>${esc(why)}</b>. Open it and correct its date (Edit), or delete it.</p>` : '<p style="margin:8px 0 0">Open it to see or correct it.</p>'}`,
+      buttons: [{ label: 'Cancel', value: null }, { label: 'Open it', cls: 'primary', value: 'open' }] });
+    if (v === 'open') { Object.assign(OPEN, { rep: true, col: false, dep: false }); go({ r: hit.id, k: hit.kind || K }); }
+  }, 50);
+  return false;
+}
 async function reportModal(c, K, g) {
   const { refs, f, audit, o, fig, curFund, isLO, exam } = c;
   const isNew = !g, rec = g ? g.rec : {};
@@ -2240,7 +2254,7 @@ async function reportModal(c, K, g) {
   const read = (bg) => {
     const no = $('#rp-no', bg).value.trim(), date = $('#rp-date', bg).value, fund = $('#rp-fund', bg).value, hard = $('#rp-hard', bg).value.trim();
     if (!date) return bad(`Enter the ${K} date.`) || null;
-    { const hit = f.reports.find((r) => !r.pending && !orphanShell(f, r) && r.id !== (g ? g.id : '') && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return bad(hit.madeFrom ? `${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.` : `${K} No. ${no} is already encoded for this officer.`); }
+    { const hit = f.reports.find((r) => !r.pending && !orphanShell(f, r) && r.id !== (g ? g.id : '') && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return hit.madeFrom ? bad(`${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.`) : dupReport(c, K, hit, bg); }
     const rr = pureLO ? { ranges: [], rangeForms: [] } : readRows(bg);
     if (rr.error) return bad(rr.error) || null;
     if (!pureLO && !rr.ranges.length) return bad(`Type the OR Range of the ${K}: the form, OR From and OR To of each series.`) || null;
@@ -2322,7 +2336,7 @@ async function newReportModal(c, K) {
     buttons: [{ label: 'Cancel', value: null }, { label: `Save ${K}`, cls: 'primary', value: 'ok', check: (bg) => {
       const no = $('#nr-no', bg).value.trim(), date = $('#nr-date', bg).value, fund = $('#nr-fund', bg).value, hard = $('#nr-hard', bg).value.trim();
       if (!date) return bad(`Enter the ${K} date.`);
-      { const hit = f.reports.find((r) => !r.pending && !orphanShell(f, r) && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return bad(hit.madeFrom ? `${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.` : `${K} No. ${no} is already encoded for this officer.`); }
+      { const hit = f.reports.find((r) => !r.pending && !orphanShell(f, r) && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return hit.madeFrom ? bad(`${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.`) : dupReport(c, K, hit, bg); }
       out = { no, date, fund, hardTotal: hard ? num(hard) : null, received: $('#nr-recv', bg).value, dupe: no ? 0 : dupeOf(f, o.id, K, date, fund) }; return true;
     } }] });
   if (!out) return;
