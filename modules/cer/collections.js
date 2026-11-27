@@ -727,7 +727,7 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
         <label class="sr-only" for="cd-search">Search ORs</label><input class="input af-sm" id="cd-search" placeholder="Search OR No. or particular…">
         <label class="sr-only" for="cd-show">Show</label><select class="input af-sm" id="cd-show"><option value="sel" ${show === 'sel' ? 'selected' : ''}>${esc(cur.pending ? `Not yet in an ${K} · ` + cur.fund : repName(cur.rec, K))}</option>${cur.pending ? '' : `<option value="nyr" ${show === 'nyr' ? 'selected' : ''}>Not yet in an ${K}</option>`}<option value="all" ${show === 'all' ? 'selected' : ''}>All of this officer</option></select>
         <span class="cd-total">Total <b>₱ ${money(listOrs.reduce((n, x) => n + orAmount(x), 0))}</b></span>
-        ${enc && forms.length ? '<a href="#" class="cd-link cd-tpl" id="cd-ortpl">Template</a><button class="btn" type="button" id="cd-orimp">Import from Excel</button>' : ''}<button class="btn" type="button" id="cd-xls">Export to Excel</button>${enc ? '<button class="btn danger" type="button" id="cd-delsel" hidden>Delete selected</button>' : ''}</div>
+        ${enc && forms.length ? '<a href="#" class="cd-link cd-tpl" id="cd-ortpl">Template</a><button class="btn" type="button" id="cd-orimp">Import from Excel</button>' : ''}<button class="btn" type="button" id="cd-xls">Export to Excel</button>${enc ? '<button class="btn" type="button" id="cd-fundsel" hidden>Change fund</button><button class="btn danger" type="button" id="cd-delsel" hidden>Delete selected</button>' : ''}</div>
       ${listOrs.length ? `<div class="af-tbl cd-orscroll cd-scroll10"><table class="af-reg cd-ors"><thead><tr>${enc ? '<th scope="col" style="width:30px"><input type="checkbox" id="cd-selall" aria-label="Select all ORs shown"></th>' : ''}<th scope="col">No.</th><th scope="col">OR No.</th><th scope="col">Date</th><th scope="col">Particulars</th><th scope="col" class="r">Amount (₱)</th><th scope="col">Status</th><th scope="col">${K}</th><th scope="col" class="r"></th></tr></thead>
         <tbody>${listOrs.map((x, i) => `<tr data-or="${esc(x.id)}" data-s="${esc(((x.bnLine ? bnLineText(f, x) : x.serial) + ' ' + (x.items || []).map((p) => partOf(x.form, p.p)).join(' ')).toLowerCase())}">${enc ? `<td><input type="checkbox" class="cd-sel" data-sel="${esc(x.id)}" aria-label="Select OR ${x.serial}"></td>` : ''}<td>${i + 1}</td><td class="mono" title="${esc(FORM_SHORT[x.form] || x.form)}">${x.bnLine ? `${esc(bnLineText(f, x))}${x.bnShort ? ` <span class="pill p-flag" title="More pieces than the booklet has left">${x.bnShort} pcs over</span>` : ''}` : x.range ? `${x.serial}–${x.serialTo} <small class="dim">${maxSer(x) - x.serial + 1} ORs</small>` : x.serial}${x.beg ? ' <span class="pill p-beg" title="Dated before the last cash exam: in the beginning balance">Before the period</span>' : ''}${outOfBooklets(f, o, x) && !inBegRanges(begRangesOf(exam), x) ? ' <span class="pill p-flag" title="Its number is in no booklet received or issued to this officer in the Forms Register">Not in a received booklet</span>' : ''}</td><td ${enc ? `class="cd-ed" data-id8="${esc(x.id)}" tabindex="0" title="Click to change the date"` : ''}>${esc(fmtDate(x.date))}</td>
           ${(() => { const one = enc && !x.bnLine && x.status !== 'cancelled' && (x.items || []).length <= 1, p = (x.items || [])[0]?.p || '';
@@ -927,10 +927,30 @@ function wireAll(c) {
   const sr = $('#cd-search');
   // Select ORs (the header box: all those shown by the search) and delete them at once: encoding mistakes only.
   const selBtn = $('#cd-delsel'), selAll = $('#cd-selall');
-  const selPaint = () => { if (!selBtn) return; const n = $$('.cd-sel').filter((b) => b.checked).length; selBtn.hidden = !n; selBtn.textContent = `Delete ${n} selected`;
+  const fundBtn = $('#cd-fundsel');
+  const selPaint = () => { if (!selBtn) return; const n = $$('.cd-sel').filter((b) => b.checked).length; selBtn.hidden = !n; selBtn.textContent = `Delete ${n} selected`; if (fundBtn) fundBtn.hidden = !n;
     const shown = $$('tr[data-or]').filter((tr) => !tr.hidden).map((tr) => $('.cd-sel', tr)).filter(Boolean); if (selAll) { selAll.checked = !!shown.length && shown.every((b) => b.checked); selAll.indeterminate = !selAll.checked && shown.some((b) => b.checked); } };
   $$('.cd-sel').forEach((b) => { b.onchange = selPaint; });
   if (selAll) selAll.onchange = () => { $$('tr[data-or]').forEach((tr) => { const b = $('.cd-sel', tr); if (b) b.checked = !tr.hidden && selAll.checked; }); selPaint(); };
+  // Change fund: the ORs selected go to the fund chosen, into its report whose OR Range has their numbers (else by date, else
+  // not yet in a report); dates, amounts and particulars stay.
+  if (fundBtn) fundBtn.onclick = async () => {
+    const picked = $$('.cd-sel').filter((b) => b.checked).map((b) => f.ors.find((x) => x.id === b.dataset.sel)).filter(Boolean);
+    if (!picked.length) return;
+    const funds = (c.fig.funds || []).slice(), now = [...new Set(picked.map((x) => x.fund || ''))];
+    const nos = mergeRanges(picked.flatMap((x) => (x.range ? [[+x.serial, maxSer(x)]] : [[+x.serial, +x.serial]])));
+    const v = await modal({ title: `Change fund of ${picked.length} OR${picked.length > 1 ? 's' : ''}`, body: `<p style="margin:0 0 8px">${esc(rangesText(nos))} · now ${esc(now.join(', ') || '—')}</p>
+        <div class="field"><label for="cf-fund">Move to fund</label><select class="input" id="cf-fund">${funds.map((fu) => `<option value="${esc(fu)}" ${now.length === 1 && now[0] === fu ? 'disabled' : ''}>${esc(fu)}</option>`).join('')}</select></div>
+        <p class="af-note" style="margin:8px 0 0">They go into that fund's ${K} whose OR Range has their numbers; dates, amounts and particulars stay. Add a fund with the Funds button first if it is not listed.</p>`,
+      buttons: [{ label: 'Cancel', value: null }, { label: 'Change fund', cls: 'primary', value: 'go', check: (bg) => { const fu = $('#cf-fund', bg).value; if (!fu || (now.length === 1 && now[0] === fu)) { toast('Choose another fund.', 'bad'); return false; } fundBtn.dataset.to = fu; return true; } }] });
+    if (v !== 'go') return;
+    const to = fundBtn.dataset.to, ch = c.fig.chains[`${K}|${to}`];
+    fundBtn.disabled = true;
+    try { for (const x of picked) { const raw = await store.get('cer_ors', x.id); if (!raw || raw.deleted) continue;
+      await store.save('cer_ors', x.id, { ...raw.data, fund: to, reportId: placeIn(ch, x.date, x.bnLine ? 0 : +x.serial, x.form) }, by(refs), { quiet: true }); } }
+    finally { fundBtn.disabled = false; }
+    emitChange('local'); toast(`${picked.length} OR${picked.length > 1 ? 's' : ''} moved to ${to}.`, 'ok');
+  };
   if (selBtn) selBtn.onclick = async () => {
     const picked = $$('.cd-sel').filter((b) => b.checked).map((b) => f.ors.find((x) => x.id === b.dataset.sel)).filter(Boolean);
     const inRep = picked.filter((x) => x.reportId && f.reports.some((r) => r.id === x.reportId && !r.pending)), del = picked.filter((x) => !inRep.includes(x));
