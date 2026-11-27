@@ -187,6 +187,17 @@ export async function verifyView(ctx) {
   { const fn = fnpData(f, o, exam, from, to); if (fn && fn.qty) add(`fnp|${fn.qty}`, 'Accountable Forms', `${fn.qty} accountable form${fn.qty > 1 ? 's' : ''} issued before the last cash examination (${fmtDate(from)}) were not presented then${fn.groups.length > 1 ? ` (${fn.groups.map((g) => `${g.qty} ${g.short}`).join('; ')})` : ` (${fn.groups[0].short})`}; their collections were remitted only in this period (see the working paper: Accountable forms not presented at the last cash exam).`, `#/cer/reports?a=${audit.id}&e=${exam.id}&rep=fnp`,
     'fnp', fn.groups.flatMap((g) => g.rows.map((x) => [esc(g.short), String(x.a), String(x.z), String(x.qty), esc(fmtDate(x.date)), money(x.amount)])), fn.amount); }
   cutoffFindings(f, o, exam, from, to).forEach((x) => add(`af|${x.key}`, 'Accountable Forms', x.text, x.key === 'nocut' || x.key.startsWith('np|') || x.key.startsWith('nps|') || x.key.startsWith('nir|') ? `#/cer/count?a=${audit.id}&e=${exam.id}` : '#/cer/forms', 'af', [esc(x.text)]));
+  // Collector's RCDs credited to bank: each in an RCD (LGU) of type Bank transfer (Source Documents), and its amount credited in the
+  // bank statements (within 15 days).
+  { const mine = f.reports.filter((r) => r.officerId === o.id && !r.pending && r.bankCredit && r.bankCredit.on && (!r.date || inScope(r.date)));
+    if (mine.length) {
+      const tk = new Set(); Object.entries(f.settings || {}).forEach(([id, t]) => { if (id.startsWith('rcdtotal|') && t) (t.bankReps || []).forEach((rid) => tk.add(rid)); });
+      const auds = new Set(f.audits.filter((a) => a.lguId === audit.lguId).map((a) => a.id)), recs = bank0.map(flat), own = (id) => auds.has(String(id || '').split('|')[0]);
+      const credits = []; recs.forEach((r) => { if (r.part ? own(r.recId) : own(String(r.id).split('#')[0])) (r.lines || []).forEach((l) => { if (+l.credit > 0 && l.date) credits.push(l); }); });
+      mine.forEach((r) => { const amt = r2(f.ors.filter((x) => x.reportId === r.id && x.status !== 'cancelled').reduce((n, x) => n + r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0)), 0)), nm = `RCD No. ${r.no || '—'} (₱${money(amt)}, credited to bank)`;
+        if (!tk.has(r.id)) add(`bkrcd|${r.id}`, 'Collections', `${nm} is not yet in an RCD (LGU) of type Bank transfer (Source Documents › RCD (LGU)).`, '#/src/rcd');
+        if (r.date && amt > 0 && !credits.some((l) => Math.abs((+l.credit || 0) - amt) < 0.005 && Math.abs(Date.parse(l.date) - Date.parse(r.date)) <= 15 * 864e5)) add(`bkcr|${r.id}`, 'Collections', `${nm}: no credit of that amount in the bank statement within 15 days of ${fmtDate(r.date)}.`, '#/cer/banks'); });
+    } }
   // Booklets entered with irregular numbering (printing / binding error): listed so the booklet is checked physically.
   f.booklets.filter((b) => b.irregular && b.officerId === o.id && !b.noSerial).forEach((b) => add(`irr|${b.id}`, 'Accountable Forms',
     `${FORM_SHORT[b.form] || b.form} ${b.from}–${b.to} (${b.qty} pcs): irregular numbering (printing / binding error)${b.irregular.reason ? `. Reason: ${b.irregular.reason}` : ''}. Check the booklet physically.`, '#/cer/forms'));

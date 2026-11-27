@@ -20,6 +20,11 @@ const flat = (r) => ({ id: r.id, ...r.data });
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 export const rcdKey = (no) => String(no || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const totalId = (lguId, no) => `rcdtotal|${lguId}|${rcdKey(no)}`;
+// Bank transfer RCDs: the collectors' RCDs marked "Credited to bank" (Collections & Deposits) ticked into it (bankReps: their ids).
+// Each one's amount is its ORs; each is looked for in the bank statements (a credit of that amount within 15 days).
+const repAmt = (f, r) => r2((f.ors || []).filter((x) => x.reportId === r.id && x.status !== 'cancelled').reduce((n, x) => n + r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0)), 0));
+const bankRepsOf = (f, lguId) => (f.reports || []).filter((r) => !r.pending && r.bankCredit && r.bankCredit.on && (f.officers || []).some((o) => o.id === r.officerId && o.lguId === lguId));
+const tickedIn = (f, lguId) => { const m = new Map(); Object.entries(f.settings || {}).forEach(([id, t]) => { if (id.startsWith(`rcdtotal|${lguId}|`) && t && t.no) (t.bankReps || []).forEach((rid) => m.set(rid, t.no)); }); return m; };
 
 // The RCDs of an LGU's Liquidating Officers grouped by RCD No.: [{ key, no, date, parts[{ o, coll, id }], sum, whole, diff }].
 export function rcdGroups(refs, f, lguId) {
@@ -43,14 +48,16 @@ export function rcdGroups(refs, f, lguId) {
   Object.entries(f.settings || {}).filter(([id, t]) => id.startsWith(`rcdtotal|${lguId}|`) && t && t.no).forEach(([, t]) => {
     const k = rcdKey(t.no); if (!groups.has(k)) groups.set(k, { key: k, no: t.no, date: '', parts: [] }); });
   return [...groups.values()].map((g) => {
-    const t = f.settings[totalId(lguId, g.no)], whole = t && t.total !== null && t.total !== undefined && t.total !== '' ? +t.total : null;
+    const t = f.settings[totalId(lguId, g.no)] || null, whole = t && t.total !== null && t.total !== undefined && t.total !== '' ? +t.total : null;
     const type = (t && t.type) || 'col';
     g.parts.forEach((p) => { p.amt = type === 'dep' ? p.dep : p.coll; });
-    const sum = type === 'bank' ? null : r2(g.parts.reduce((n, p) => n + p.amt, 0));
+    // Bank transfer: its parts are the collectors' RCDs credited to bank ticked into it.
+    const bparts = type === 'bank' ? ((t && t.bankReps) || []).map((rid) => f.reports.find((r) => r.id === rid)).filter(Boolean).map((r) => ({ r, o: (f.officers || []).find((x) => x.id === r.officerId) || { name: '—' }, amt: repAmt(f, r) })) : [];
+    const sum = type === 'bank' ? (bparts.length ? r2(bparts.reduce((n, p) => n + p.amt, 0)) : null) : r2(g.parts.reduce((n, p) => n + p.amt, 0));
     const date = (t && t.date) || g.date;
     // An officer's RCD dated differently from the hard copy (the date typed here).
     const offDate = t && t.date ? g.parts.filter((p) => p.date && p.date !== t.date) : [];
-    return { ...g, date, reg: !!t, regDate: (t && t.date) || '', offDate, parts: g.parts.sort((a, b) => a.o.name.localeCompare(b.o.name)), type, sum, whole, diff: whole === null || type === 'bank' ? null : r2(whole - sum) };
+    return { ...g, date, reg: !!t, regDate: (t && t.date) || '', offDate, parts: g.parts.sort((a, b) => a.o.name.localeCompare(b.o.name)), bparts, type, sum, whole, diff: whole === null || sum === null ? null : r2(whole - sum) };
   }).sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.no.localeCompare(b.no, undefined, { numeric: true }));
 }
 
@@ -84,7 +91,13 @@ export async function rcdView(ctx) {
   const m = q.get('m') === 'all' ? 'all' : months.includes(q.get('m')) ? q.get('m') : months[0] || 'all';
   const rows = m === 'all' ? all : all.filter((g) => String(g.date).startsWith(m));
   const mLabel = (v) => (v === 'all' ? 'All months' : `${MONTHS[+v.slice(5, 7) - 1]} ${v.slice(0, 4)}`);
-  const check = (g) => g.type === 'bank' ? (g.whole === null ? '<span class="pill">Whole total not typed</span>' : (() => { const h = bankHit(g); return h ? `<span class="pill p-done" title="${esc(h.desc || '')}">Found in the bank statement · ${esc(fmtDate(h.date))}</span>` : '<span class="pill p-flag">Not found in the bank statement</span>'; })()) : `${g.type === 'dep' ? '<span class="pill">Deposits only</span> ' : ''}${!g.parts.length ? '<span class="pill p-flag">No officer\'s part yet</span> ' : ''}${g.whole === null ? '<span class="pill">Whole total not typed</span>' : Math.abs(g.diff) < 0.005 ? '<span class="pill p-done">Agrees</span>'
+  const partHit = (p) => { const d = p.r.date; if (!d) return null; const c = bankLines.filter((l) => Math.abs((+l.credit || 0) - p.amt) < 0.005 && l.date && Math.abs(Date.parse(l.date) - Date.parse(d)) <= 15 * 864e5);
+    return c.sort((a, b) => Math.abs(Date.parse(a.date) - Date.parse(d)) - Math.abs(Date.parse(b.date) - Date.parse(d)))[0] || false; };
+  const waiting = (() => { const tk = tickedIn(f, lgu.id); return bankRepsOf(f, lgu.id).filter((r) => !tk.has(r.id)); })();
+  const bankCell = (g) => `${g.bparts.length ? g.bparts.map((p) => { const h = partHit(p); return `<div>${esc(p.o.name)} <span class="dim">· RCD No. ${esc(p.r.no || '—')} · ₱ ${money(p.amt)}</span> ${h ? `<span class="pill p-done" title="${esc(h.desc || '')}">Bank ${esc(fmtDate(h.date))}</span>` : '<span class="pill p-flag">Not in the bank statement</span>'}</div>`; }).join('') : '<span class="dim">Directly transferred to the bank</span>'}
+    ${enc ? `<div style="margin-top:4px"><button class="btn sm" type="button" data-rcbank="${esc(g.no)}">Tick from the app · ${waiting.length} waiting</button></div>` : ''}`;
+  const check = (g) => g.type === 'bank' && g.bparts.length ? (g.whole === null ? '<span class="pill">Whole total not typed</span>' : Math.abs(g.diff) < 0.005 ? '<span class="pill p-done">Agrees</span>' : `<span class="pill p-flag">${g.diff > 0 ? 'Short' : 'Over'} ₱${money(Math.abs(g.diff))}</span>`)
+    : g.type === 'bank' ? (g.whole === null ? '<span class="pill">Whole total not typed</span>' : (() => { const h = bankHit(g); return h ? `<span class="pill p-done" title="${esc(h.desc || '')}">Found in the bank statement · ${esc(fmtDate(h.date))}</span>` : '<span class="pill p-flag">Not found in the bank statement</span>'; })()) : `${g.type === 'dep' ? '<span class="pill">Deposits only</span> ' : ''}${!g.parts.length ? '<span class="pill p-flag">No officer\'s part yet</span> ' : ''}${g.whole === null ? '<span class="pill">Whole total not typed</span>' : Math.abs(g.diff) < 0.005 ? '<span class="pill p-done">Agrees</span>'
     : `<span class="pill p-flag">${g.diff > 0 ? 'Short' : 'Over'} ₱${money(Math.abs(g.diff))}</span>`}${g.offDate.length ? ` <span class="pill p-flag" title="${esc(`Hard copy: ${fmtDate(g.regDate)}\n` + g.offDate.map((p) => `${p.o.name}: ${fmtDate(p.date)}`).join('\n'))}">Date differs ⓘ</span>` : ''}`;
   const wholeCell = (g) => (enc ? `<input class="input mono r sd-rcdw" data-rcdno="${esc(g.no)}" inputmode="decimal" value="${g.whole === null ? '' : esc(money(g.whole))}" placeholder="0.00" aria-label="Whole total per hard copy of RCD No. ${esc(g.no)}">`
     : g.whole === null ? '<span class="dim">—</span>' : money(g.whole));
@@ -94,7 +107,7 @@ export async function rcdView(ctx) {
     <div class="panel" style="margin-top:14px;padding:16px 20px"><div class="cd-scdhead"><h3 class="cer-h3">RCD of ${esc(agencyName(refs, lgu))} · ${esc(mLabel(m))}</h3><span class="crumb-i" title="${esc(tip)}">ⓘ</span>
       ${enc ? '<div class="btn-row" style="margin-left:auto"><button class="btn primary" type="button" id="rc-add">+ RCD</button><button class="btn" type="button" id="rc-imp">Import from Excel</button><a href="#" class="cd-link" id="rc-tpl" style="align-self:center;margin-left:6px">Template</a></div>' : ''}</div>
     ${rows.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg sd-rcd"><thead><tr><th scope="col">RCD No.</th><th scope="col">Date</th><th scope="col">Liquidating Officers (their parts)</th><th scope="col" class="r">Sum of the Parts (₱)</th><th scope="col" class="r">Whole Total per Hard Copy (₱)</th><th scope="col">Check</th>${enc ? '<th scope="col"></th>' : ''}</tr></thead>
-      <tbody>${rows.map((g) => `<tr><td><b>${esc(g.no)}</b></td><td>${esc(fmtDate(g.date))}</td><td>${g.type === 'bank' ? '<span class="dim">Directly transferred to the bank</span>' : g.parts.length ? g.parts.map((p) => `<div>${esc(p.o.name)} <span class="dim">· ₱ ${money(p.amt)}${g.type === 'dep' ? ' deposited' : ''}${g.parts.filter((x) => x.o.id === p.o.id).length > 1 && p.fund ? ' · ' + esc(p.fund) : ''}</span></div>`).join('') : '<span class="dim">Not yet entered under an officer</span>'}</td>
+      <tbody>${rows.map((g) => `<tr><td><b>${esc(g.no)}</b></td><td>${esc(fmtDate(g.date))}</td><td>${g.type === 'bank' ? bankCell(g) : g.parts.length ? g.parts.map((p) => `<div>${esc(p.o.name)} <span class="dim">· ₱ ${money(p.amt)}${g.type === 'dep' ? ' deposited' : ''}${g.parts.filter((x) => x.o.id === p.o.id).length > 1 && p.fund ? ' · ' + esc(p.fund) : ''}</span></div>`).join('') : '<span class="dim">Not yet entered under an officer</span>'}</td>
         <td class="r"><b>${g.sum === null ? '<span class="dim">—</span>' : money(g.sum)}</b></td><td class="r">${wholeCell(g)}</td><td>${check(g)}</td>${enc ? `<td><button class="btn sm" type="button" data-rcded="${esc(g.no)}">Edit</button></td>` : ''}</tr>`).join('')}</tbody></table></div>
       <p class="dim" style="margin:8px 0 0;font-size:12.5px">Each part comes from the RCD entered under that officer. Type the whole total once per RCD; it is the same for every officer of that RCD.</p>`
     : `<div class="empty"><b>No RCD of ${esc(agencyName(refs, lgu))} ${m === 'all' ? '' : 'in ' + esc(mLabel(m)) + ' '}yet.</b>The RCDs entered under the Liquidating Officers in Cash Examination › Collections &amp; Deposits are listed here.</div>`}</div>`;
@@ -122,11 +135,27 @@ export async function rcdView(ctx) {
     const a = $('#rc-add'); if (a) a.onclick = () => rcdModal(refs, f, lgu, all, null);
     $$('[data-rcded]').forEach((b) => { b.onclick = () => rcdModal(refs, f, lgu, all, all.find((g) => g.no === b.dataset.rcded)); });
     const im = $('#rc-imp'); if (im) im.onclick = () => importRcd(refs, f, lgu, all);
+    $$('[data-rcbank]').forEach((b) => { b.onclick = () => bankTick(refs, f, lgu, all.find((g) => g.no === b.dataset.rcbank)); });
     const tp = $('#rc-tpl'); if (tp) tp.onclick = (e) => { e.preventDefault(); exportXlsx('RCD template.xlsx', 'RCD', [{ 'RCD No.': '2026-101-02-0018', Date: '02/27/2026', Total: 483743.09 }]); };
   };
   return { body, wire: wire2 };
 }
 
+// Tick from the app: the collectors' RCDs credited to bank, not yet in another RCD; those ticked are this RCD's parts.
+async function bankTick(refs, f, lgu, g) {
+  const id = totalId(lgu.id, g.no), t = f.settings[id] || { no: g.no, type: 'bank' }, mine = new Set(t.bankReps || []), tk = tickedIn(f, lgu.id);
+  const list = bankRepsOf(f, lgu.id).filter((r) => mine.has(r.id) || !tk.has(r.id)).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const name = (r) => (f.officers || []).find((o) => o.id === r.officerId)?.name || '—';
+  const v = await modal({ title: `RCD No. ${g.no} · Collectors' RCDs credited to bank`, wide: true,
+    body: list.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th></th><th>Date</th><th>Collector</th><th>Their RCD</th><th>Reference</th><th class="r">Amount (₱)</th></tr></thead><tbody>${list.map((r) => `<tr><td><input type="checkbox" class="rb-k" value="${esc(r.id)}" ${mine.has(r.id) ? 'checked' : ''}></td><td>${esc(fmtDate(r.date))}</td><td>${esc(name(r))}</td><td class="mono">${esc(r.no || '—')}</td><td class="mono">${esc(r.bankCredit.ref || '')}</td><td class="r">${money(repAmt(f, r))}</td></tr>`).join('')}</tbody></table></div>
+      <p class="af-note">Tick those listed on the hard copy of this RCD. A collector's RCD is marked "Credited to bank" in Collections &amp; Deposits (Edit the RCD).</p>`
+      : '<p style="margin:0">No collector\'s RCD marked "Credited to bank" is waiting. Mark it in Collections &amp; Deposits: open the collector\'s RCD, Edit, Collections are: Credited to bank.</p>',
+    buttons: [{ label: 'Cancel', value: null }, ...(list.length ? [{ label: 'Save', cls: 'primary', value: 'ok', check: (bg) => { t.bankReps = $$('.rb-k', bg).filter((x) => x.checked).map((x) => x.value); return true; } }] : [])] });
+  if (v !== 'ok') return;
+  await store.save('cer_settings', id, { ...t, no: t.no || g.no, type: 'bank' }, by(refs));
+  toast(`RCD No. ${g.no}: ${t.bankReps.length} collector RCD${t.bankReps.length === 1 ? '' : 's'} ticked.`, 'ok');
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+}
 // + RCD / Edit: the RCD No., date and whole total per hard copy.
 async function rcdModal(refs, f, lgu, all, g) {
   const t = g ? f.settings[totalId(lgu.id, g.no)] || {} : {};
@@ -153,7 +182,8 @@ async function rcdModal(refs, f, lgu, all, g) {
   }
   if (!out) return;
   if (g && g.reg && rcdKey(out.no) !== g.key) await store.save('cer_settings', totalId(lgu.id, g.no), t, by(refs), { deleted: true });
-  await store.save('cer_settings', totalId(lgu.id, out.no), { no: out.no, date: out.date, total: out.total, ...(out.type && out.type !== 'col' ? { type: out.type } : {}) }, by(refs));
+  { const keep = t.bankReps && out.type === 'bank' ? { bankReps: t.bankReps } : {};
+    await store.save('cer_settings', totalId(lgu.id, out.no), { no: out.no, date: out.date, total: out.total, ...(out.type && out.type !== 'col' ? { type: out.type } : {}), ...keep }, by(refs)); }
   toast(`RCD No. ${out.no} saved.`, 'ok');
   location.hash = `#/src/rcd?l=${lgu.id}&m=${out.date.slice(0, 7)}`;
   window.dispatchEvent(new HashChangeEvent('hashchange'));
