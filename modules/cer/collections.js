@@ -19,8 +19,12 @@ import { loadForms, FORM_SHORT, exportXlsx, rangesText, mergeRanges, bookletUnus
 
 // Each auditee's funds: General Fund to start; the others are added with the Funds button. A fund already used stays listed.
 const DEFAULT_FUNDS = ['General Fund'];
-export const fundsOf = (f, lguId) => f.settings['funds|' + lguId]?.list || [...new Set([...DEFAULT_FUNDS,
+// The funds of the bank accounts (Bank Statements › Accounts) come first: Collections uses the same names, so each report's fund is
+// that of the account it goes to (Annex C by fund, Annex H per account).
+export const bankFundsOf = (f, lguId) => [...new Set(((f.settings || {})['banks|' + lguId]?.list || []).map((a) => String(a.fund || '').trim()).filter(Boolean))];
+const fundsOwn = (f, lguId) => f.settings['funds|' + lguId]?.list || [...new Set([...DEFAULT_FUNDS,
   ...(f.ors || []).filter((o) => o.lguId === lguId && o.fund).map((o) => o.fund), ...(f.reports || []).filter((r) => r.lguId === lguId && r.fund).map((r) => r.fund)])];
+export const fundsOf = (f, lguId) => { const bf = bankFundsOf(f, lguId); return [...bf, ...fundsOwn(f, lguId).filter((x) => !bf.includes(x))]; };
 const canEncode = (refs) => hasRole(refs, 'staff', 'member', 'atl', 'sa', 'admin');
 const isBrgy = (l) => !!l && l.data.kind === 'barangay';
 // Barangays: AF 51 (and other ORs) go to the SCD (deposited in the bank); CTC goes to the SCR (remitted to the MTO).
@@ -2433,24 +2437,52 @@ async function editOrModal(c, x) {
 
 /* ---------- funds of the auditee ---------- */
 async function fundsModal(refs, f, lguId) {
-  const list = [...fundsOf(f, lguId)];
-  const used = (x) => f.ors.some((o) => o.lguId === lguId && o.fund === x) || f.reports.some((r) => r.lguId === lguId && r.fund === x && !r.pending);
+  const bf = bankFundsOf(f, lguId);
+  const list = fundsOwn(f, lguId).filter((x) => !bf.includes(x));   // funds of this auditee without a bank account
+  const usedN = (x) => ({ r: f.reports.filter((r) => r.lguId === lguId && r.fund === x && !r.pending).length, o: f.ors.filter((o) => o.lguId === lguId && o.fund === x).length });
+  const used = (x) => { const u = usedN(x); return u.r + u.o > 0; };
   const enc = canEncode(refs);
+  // Names used in Collections that are not a bank account's fund: renamed to one of them (Rename fund).
+  const odd = () => [...new Set([...list, ...f.reports.filter((r) => r.lguId === lguId && r.fund && !r.pending).map((r) => r.fund), ...f.ors.filter((o) => o.lguId === lguId && o.fund).map((o) => o.fund)])].filter((x) => !bf.includes(x) && used(x));
+  let ren = null;
   const v = await modal({ title: `Funds · ${agencyName(refs, refs.lgu[lguId])}`,
-    body: `<p class="hint" style="margin:0">The funds of this auditee. Each ${kindOf(refs.lgu[lguId])} is for one fund, and its ORs follow that fund.</p>
+    body: `<p class="hint" style="margin:0">The funds come from the bank accounts (Bank Statements › Accounts); each ${kindOf(refs.lgu[lguId])} is for one fund, and its ORs follow that fund.</p>
       <div class="list-edit" id="fd-list"></div>
-      ${enc ? '<div class="af-pair"><label class="sr-only" for="fd-new">New fund</label><input class="input" id="fd-new" placeholder="e.g. 20% Development Fund"><button class="btn" type="button" id="fd-add">Add Fund</button></div>' : ''}`,
+      ${enc ? '<div class="af-pair"><label class="sr-only" for="fd-new">New fund</label><input class="input" id="fd-new" placeholder="A fund with no bank account yet"><button class="btn" type="button" id="fd-add">Add Fund</button></div>' : ''}
+      ${enc && bf.length && odd().length ? `<div class="fd-ren"><b>Rename fund</b> <span class="dim">(a name used in Collections that is not a bank account's fund)</span>
+        <div class="fd-renrow"><label>From <select class="input" id="fd-from">${odd().map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label>
+        <label>To <select class="input" id="fd-to">${bf.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label></div><p class="af-note" id="fd-rencount"></p>
+        <button class="btn" type="button" id="fd-ren">Rename</button></div>` : ''}`,
     onOpen: (bg) => {
-      const draw = () => { $('#fd-list', bg).innerHTML = list.map((x, i) => `<div><span class="txt">${esc(x)}</span>${enc && !used(x) ? `<button class="btn sm" type="button" data-rm="${i}">Remove</button>` : used(x) ? '<span class="dim">in use</span>' : ''}</div>`).join('');
+      const draw = () => { $('#fd-list', bg).innerHTML = [...bf.map((x) => `<div><span class="txt">${esc(x)}</span><span class="pill p-done">bank account</span></div>`),
+        ...list.map((x, i) => `<div><span class="txt">${esc(x)}</span>${bf.length ? ' <span class="pill p-flag">no bank account yet</span>' : ''}${enc && !used(x) ? `<button class="btn sm" type="button" data-rm="${i}">Remove</button>` : used(x) ? '<span class="dim">in use</span>' : ''}</div>`)].join('');
         $$('[data-rm]', bg).forEach((btn) => { btn.onclick = () => { list.splice(+btn.dataset.rm, 1); draw(); }; }); };
       draw();
       const add = $('#fd-add', bg), inp = $('#fd-new', bg);
-      if (add) { const doAdd = () => { const x = inp.value.trim().replace(/\s+/g, ' '); if (!x) return; if (list.some((y) => y.toUpperCase() === x.toUpperCase())) { toast('That fund is already in the list.', 'bad'); return; } list.push(x); inp.value = ''; draw(); inp.focus(); };
+      if (add) { const doAdd = () => { const x = inp.value.trim().replace(/\s+/g, ' '); if (!x) return; if ([...bf, ...list].some((y) => y.toUpperCase() === x.toUpperCase())) { toast('That fund is already in the list.', 'bad'); return; } list.push(x); inp.value = ''; draw(); inp.focus(); };
         add.onclick = doAdd; inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } }; }
+      const fr = $('#fd-from', bg);
+      if (fr) { const cnt = () => { const u = usedN(fr.value); $('#fd-rencount', bg).textContent = `${u.r} ${kindOf(refs.lgu[lguId])}${u.r === 1 ? '' : 's'} and ${u.o} OR${u.o === 1 ? '' : 's'} will be renamed.`; };
+        fr.onchange = cnt; cnt();
+        $('#fd-ren', bg).onclick = () => { ren = { from: fr.value, to: $('#fd-to', bg).value }; $$('.mf .btn', bg).find((b) => b.textContent.trim() === 'Cancel')?.click(); }; }
     },
     buttons: enc ? [{ label: 'Cancel', value: null }, { label: 'Save Funds', cls: 'primary', value: 'save' }] : [{ label: 'Close', cls: 'primary', value: null }] });
+  if (ren) return renameFund(refs, f, lguId, ren.from, ren.to);
   if (v !== 'save') return;
-  if (!list.length) return bad('Keep at least one fund.');
+  if (!list.length && !bf.length) return bad('Keep at least one fund.');
   await store.save('cer_settings', 'funds|' + lguId, { list }, by(refs));
   toast('Funds saved.', 'ok');
+}
+// Rename fund: every report and OR of the auditee with the old name takes the bank account's fund; the old name leaves the list.
+async function renameFund(refs, f, lguId, from, to) {
+  if (!from || !to || from === to) return;
+  const u = { r: f.reports.filter((r) => r.lguId === lguId && r.fund === from && !r.pending).length, o: f.ors.filter((o) => o.lguId === lguId && o.fund === from).length };
+  const ok = await modal({ title: 'Rename fund?', body: `<p style="margin:0"><b>${esc(from)}</b> → <b>${esc(to)}</b></p><p style="margin:8px 0 0">${u.r} report${u.r === 1 ? '' : 's'} and ${u.o} OR${u.o === 1 ? '' : 's'} will be renamed. Dates and amounts stay.</p>`,
+    buttons: [{ label: 'Cancel', value: false }, { label: 'Rename', cls: 'primary', value: true }] });
+  if (!ok) return;
+  const who = by(refs);
+  for (const r of await store.list('cer_reports')) if (r.data.lguId === lguId && r.data.fund === from) await store.save('cer_reports', r.id, { ...r.data, fund: to }, who, { quiet: true });
+  for (const r of await store.list('cer_ors')) if (r.data.lguId === lguId && r.data.fund === from) await store.save('cer_ors', r.id, { ...r.data, fund: to }, who, { quiet: true });
+  const own = f.settings['funds|' + lguId]?.list; if (own) await store.save('cer_settings', 'funds|' + lguId, { list: own.filter((x) => x !== from) }, who, { quiet: true });
+  emitChange('local'); toast(`${from} renamed to ${to}: ${u.r} report${u.r === 1 ? '' : 's'}, ${u.o} OR${u.o === 1 ? '' : 's'}.`, 'ok');
 }

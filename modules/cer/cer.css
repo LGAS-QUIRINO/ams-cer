@@ -1115,3 +1115,9 @@ body.rp-printing #cer-print .rp-scrollx{overflow:visible}
 .rp-brs tr.sp td{height:8px}
 .rp-brs tr.rp-scr td{padding-top:14px}
 body.rp-printing #cer-print .rp-brs tr.rp-scr{display:none}
+
+/* Funds: rename a fund to a bank account's fund */
+.fd-ren{border-top:1px solid var(--line,#dfe5ef); margin-top:12px; padding-top:10px; font-size:13px}
+.fd-renrow{display:flex; gap:10px; flex-wrap:wrap; margin:8px 0 4px}
+.fd-renrow label{display:flex; flex-direction:column; gap:4px; min-width:220px}
+.list-edit .pill{margin-left:8px}
