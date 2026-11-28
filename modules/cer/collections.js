@@ -1176,7 +1176,8 @@ function wireAll(c) {
       const col = f.officers.find((y) => y.id === m.collectorId), cl = col && refs.lgu[col.lguId]; if (!col) continue;
       const n = +m.from, bk = n ? f.booklets.find((x) => x.officerId === col.id && !x.noSerial && x.from <= n && n <= x.to) : null;
       const ckind = bk ? kindOfForm(cl, bk.form) : kindsOf(cl).includes('SCR') ? 'SCR' : kindsOf(cl)[0];
-      const hit = f.reports.find((r) => !r.pending && r.officerId === col.id && (r.kind || ckind) === ckind && String(r.no).trim().toUpperCase() === m.reportNo.toUpperCase());
+      const cfund = cl && isBrgy(cl) ? 'General Fund' : curFund;
+      const hit = f.reports.find((r) => !r.pending && r.officerId === col.id && (r.kind || ckind) === ckind && (r.fund || '') === cfund && String(r.no).trim().toUpperCase() === m.reportNo.toUpperCase());
       if (hit) { m.reportId = hit.id; continue; }
       const nid = newId('cerr');
       const rec = { lguId: col.lguId, officerId: col.id, kind: ckind, no: m.reportNo, date: m.date, fund: cl && isBrgy(cl) ? 'General Fund' : curFund, hardTotal: null,
@@ -1255,9 +1256,9 @@ function wireAll(c) {
     // already in this RCD → another series of it.
     const noCheck = (col) => { const no = nk($('#rm-no').value); if (!col || !no) return null;
       const mine = new Set(edGrp ? edGrp.map((x) => x.i) : []);
-      const other = f.reports.find((r) => r.officerId === o.id && !r.pending && r.id !== selId && (r.remittances || []).some((m) => !m.fromCol && m.collectorId === col.id && nk(m.reportNo) === no));
+      const other = f.reports.find((r) => r.officerId === o.id && !r.pending && r.id !== selId && (r.fund || '') === (curFund || '') && (r.remittances || []).some((m) => !m.fromCol && m.collectorId === col.id && nk(m.reportNo) === no));
       if (other) return { block: true, text: `${$('#rm-no').value.trim()} of ${col.name} is already in ${repName(other, K)} (${fmtDate(other.date)}). Check the number.` };
-      const own = f.reports.find((r) => r.officerId === col.id && !r.pending && nk(r.no) === no && !(r.madeFrom && r.madeFrom.officerId === o.id));
+      const own = f.reports.find((r) => r.officerId === col.id && !r.pending && nk(r.no) === no && (r.fund || '') === (isBrgy(refs.lgu[col.lguId]) ? 'General Fund' : curFund) && !(r.madeFrom && r.madeFrom.officerId === o.id));
       if (own) return { block: true, text: `${col.name}'s ${repName(own, own.kind)} is already in the app: tick it instead (Tick from the app).` };
       const here = typedNow().filter((m, i) => !mine.has(i) && m.collectorId === col.id && nk(m.reportNo) === no);
       if (here.length) return { block: false, text: `${$('#rm-no').value.trim()} is already in this ${K} (${here.length} series). It will be added as another series.` };
@@ -2205,7 +2206,7 @@ function dupReport(c, K, hit, bg) {
   const why = !hit.date ? '' : exam && exam.lastExamDate && hit.date <= exam.lastExamDate ? `its date is on or before the last cash exam (${fmtDate(exam.lastExamDate)})` : audit.countDate && hit.date > audit.countDate ? `its date is after the cash count (${fmtDate(audit.countDate)})` : '';
   if (bg) $('.x', bg)?.click();
   setTimeout(async () => {
-    const v = await modal({ title: `${repName(hit, hit.kind || K)} is already encoded for this officer`, body: `<p style="margin:0">Dated <b>${esc(fmtDate(hit.date) || '—')}</b> · ${esc(hit.fund || '—')} · ${ors.length} OR${ors.length === 1 ? '' : 's'} · ₱${money(amt)}</p>
+    const v = await modal({ title: `${repName(hit, hit.kind || K)}${hit.fund ? ` (${hit.fund})` : ''} is already encoded for this officer`, body: `<p style="margin:0">Dated <b>${esc(fmtDate(hit.date) || '—')}</b> · ${esc(hit.fund || '—')} · ${ors.length} OR${ors.length === 1 ? '' : 's'} · ₱${money(amt)}</p>
         ${why ? `<p style="margin:8px 0 0">Not in the list: <b>${esc(why)}</b>. Open it and correct its date (Edit), or delete it.</p>` : '<p style="margin:8px 0 0">Open it to see or correct it.</p>'}`,
       buttons: [{ label: 'Cancel', value: null }, { label: 'Open it', cls: 'primary', value: 'open' }] });
     if (v === 'open') { Object.assign(OPEN, { rep: true, col: false, dep: false }); go({ r: hit.id, k: hit.kind || K }); }
@@ -2283,7 +2284,7 @@ async function reportModal(c, K, g) {
   const read = (bg) => {
     const no = $('#rp-no', bg).value.trim(), date = $('#rp-date', bg).value, fund = $('#rp-fund', bg).value, hard = $('#rp-hard', bg).value.trim();
     if (!date) return bad(`Enter the ${K} date.`) || null;
-    { const hit = f.reports.find((r) => !r.pending && !orphanShell(f, r) && r.id !== (g ? g.id : '') && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return hit.madeFrom ? bad(`${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.`) : dupReport(c, K, hit, bg); }
+    { const hit = f.reports.find((r) => !r.pending && !orphanShell(f, r) && r.id !== (g ? g.id : '') && r.officerId === o.id && (r.kind || K) === K && (r.fund || '') === fund && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return hit.madeFrom ? bad(`${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.`) : dupReport(c, K, hit, bg); }
     const rr = pureLO ? { ranges: [], rangeForms: [] } : readRows(bg);
     if (rr.error) return bad(rr.error) || null;
     if (!pureLO && !rr.ranges.length) return bad(`Type the OR Range of the ${K}: the form, OR From and OR To of each series.`) || null;
@@ -2382,7 +2383,7 @@ async function newReportModal(c, K) {
     buttons: [{ label: 'Cancel', value: null }, { label: `Save ${K}`, cls: 'primary', value: 'ok', check: (bg) => {
       const no = $('#nr-no', bg).value.trim(), date = $('#nr-date', bg).value, fund = $('#nr-fund', bg).value, hard = $('#nr-hard', bg).value.trim();
       if (!date) return bad(`Enter the ${K} date.`);
-      { const hit = f.reports.find((r) => !r.pending && !orphanShell(f, r) && r.officerId === o.id && (r.kind || K) === K && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return hit.madeFrom ? bad(`${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.`) : dupReport(c, K, hit, bg); }
+      { const hit = f.reports.find((r) => !r.pending && !orphanShell(f, r) && r.officerId === o.id && (r.kind || K) === K && (r.fund || '') === fund && String(r.no).trim().toUpperCase() === no.toUpperCase()); if (no && hit) return hit.madeFrom ? bad(`${K} No. ${no} is already here (made from ${hit.madeFrom.name || 'the LO'}'s RCD${hit.madeFrom.no ? ' No. ' + hit.madeFrom.no : ''}). Open it to encode its collections.`) : dupReport(c, K, hit, bg); }
       out = { no, date, fund, hardTotal: hard ? num(hard) : null, received: $('#nr-recv', bg).value, dupe: no ? 0 : dupeOf(f, o.id, K, date, fund) }; return true;
     } }] });
   if (!out) return;
