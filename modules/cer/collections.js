@@ -1344,6 +1344,8 @@ function wireAll(c) {
       const other = f.reports.find((r) => r.officerId === o.id && !r.pending && r.id !== selId && (r.fund || '') === (curFund || '') && (r.remittances || []).some((m) => !m.fromCol && m.collectorId === col.id && nk(m.reportNo) === no));
       if (other) return { block: true, text: `${$('#rm-no').value.trim()} of ${col.name} is already in ${repName(other, K)} (${fmtDate(other.date)}). Check the number.` };
       const own = f.reports.find((r) => r.officerId === col.id && !r.pending && nk(r.no) === no && (r.fund || '') === (isBrgy(refs.lgu[col.lguId]) ? 'General Fund' : curFund) && !(r.madeFrom && r.madeFrom.officerId === o.id));
+      // Credited to bank: it never waits in Tick from the app (nothing remitted to an LO); typed here, it is linked to it.
+      if (own && own.bankCredit && own.bankCredit.on) return { block: false, text: `${col.name}'s ${repName(own, own.kind)} is credited to bank: it is linked to it and counted here as credited to bank.` };
       if (own) return { block: true, text: `${col.name}'s ${repName(own, own.kind)} is already in the app: tick it instead (Tick from the app).` };
       const here = typedNow().filter((m, i) => !mine.has(i) && m.collectorId === col.id && nk(m.reportNo) === no);
       if (here.length) return { block: false, text: `${$('#rm-no').value.trim()} is already in this ${K} (${here.length} series). It will be added as another series.` };
