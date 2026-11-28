@@ -65,6 +65,24 @@ async function saveEnding(refs, exam, st, lgu, f, countDate) {
   const r = await store.get('cer_exams', exam.id); if (!r || r.deleted) return;
   await store.save('cer_exams', exam.id, { ...r.data, endBalances: endingOf(r.data, st, lgu), endOrs: f ? endOrsOf(f, r.data, countDate) : (r.data.endOrs || {}), endAt: new Date().toISOString().slice(0, 10) }, by(refs), { quiet: true });
 }
+// Annex C by fund: a collections column whose entries are of two or more funds, split per fund (the Audit Setup beginning goes
+// to the General Fund): [{ fund, pd, pc (before the last cash exam), start, lines[{ m, d, c, b }], d, c, bal }], else null.
+export function fundSplit(A, key) {
+  const mv = A.moves[key]; if (!mv || key === 'ca') return null;
+  const gf = mv.gf || '', fu0 = (x) => x.fund || gf;
+  const funds = [...new Set(mv.list.map(fu0))].filter(Boolean);
+  if (funds.length < 2) return null;
+  const order = [...funds.filter((x) => x === gf), ...funds.filter((x) => x !== gf)];
+  const inS = (y) => !A.from || y.date >= A.from, sm = (ls, k) => r2(ls.reduce((n, y) => n + (y[k] || 0), 0));
+  return order.map((fund) => {
+    const ls = mv.list.filter((y) => fu0(y) === fund), pre = ls.filter((y) => !inS(y)), beg0 = fund === gf ? mv.beg : 0;
+    const pd = sm(pre, 'debit'), pc = sm(pre, 'credit'), start = r2(beg0 + pd - pc);
+    let run = start;
+    const lines = [...new Set(ls.filter(inS).map((y) => y.date.slice(0, 7)))].sort().map((m) => { const x = ls.filter((y) => inS(y) && y.date.startsWith(m)), d = sm(x, 'debit'), c = sm(x, 'credit'); run = r2(run + d - c); return { m, d, c, b: run }; });
+    const d = sm(ls, 'debit'), c = sm(ls, 'credit');
+    return { fund, pd, pc, start, lines, d, c, bal: r2(beg0 + d - c) };
+  });
+}
 export function accountability(refs, f, audit, exam, advs, liqs, counts) {
   const lgu = refs.lgu[audit.lguId];
   const from = exam.lastExamDate || '', to = audit.countDate;
@@ -103,12 +121,13 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
       const face = (x) => r2((x.items || []).reduce((n, i) => n + (+i.amt || 0), 0));
       Object.values(fig.chains).filter((c) => c.kind === kind).forEach((c) => [...c.figs, c.pend].forEach((g) => {
         const s = part ? ctcAlloc(c, bs) : null;
-        (g.ors || []).filter((x) => x.status !== 'cancelled' && partOk(part, x.form) && inP(x.date) && orOk(x)).forEach((x) => m.push({ date: x.date, debit: face(x), credit: 0 }));
-        (g.rec?.deposits || []).filter((d) => inP(d.date)).forEach((d) => { const a = part ? depPart(part, d, s) : +d.amount || 0; if (a || !part) m.push({ date: at(d.date), debit: 0, credit: a }); });
-        if (part !== 'ctc') (g.rec?.remittances || []).filter((d) => inP(d.date) && !d.beg).forEach((d) => m.push({ date: at(d.date), debit: +d.amount || 0, credit: 0 }));
+        const fund = c.fund || '';
+        (g.ors || []).filter((x) => x.status !== 'cancelled' && partOk(part, x.form) && inP(x.date) && orOk(x)).forEach((x) => m.push({ date: x.date, debit: face(x), credit: 0, fund }));
+        (g.rec?.deposits || []).filter((d) => inP(d.date)).forEach((d) => { const a = part ? depPart(part, d, s) : +d.amount || 0; if (a || !part) m.push({ date: at(d.date), debit: 0, credit: a, fund }); });
+        if (part !== 'ctc') (g.rec?.remittances || []).filter((d) => inP(d.date) && !d.beg).forEach((d) => m.push({ date: at(d.date), debit: +d.amount || 0, credit: 0, fund }));
       }));
     }
-    moves[b.key] = { beg: r2(beg), list: m.sort((x, y) => x.date.localeCompare(y.date)) };
+    moves[b.key] = { beg: r2(beg), list: m.sort((x, y) => x.date.localeCompare(y.date)), gf: (fig.funds || []).find((x) => /general/i.test(x)) || (fig.funds || [])[0] || '' };
   });
   const st = books.map((b) => {
     const mv = moves[b.key];

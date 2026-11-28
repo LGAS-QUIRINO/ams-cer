@@ -14,7 +14,7 @@ import { tagSameDay } from './collections.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, autoPreparer, autoReviewer } from './cer.js';
 import { loadForms, saafRows, unusedFormsOf, notPresentedOf, countRanges, FORM_SHORT, faceOf } from './forms.js';
-import { accountability } from './verify.js';
+import { accountability, fundSplit } from './verify.js';
 import { WP, wpLines, wpHtml, rsaHtml, wireWp, downloadReport, downloadWp } from './wp.js';
 
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -296,6 +296,30 @@ function soa(c, which) {
   const drName = (x) => (x.key === 'ca' ? 'Cash Advances' : 'Collections');
   const tot = (key) => { const ls = A.moves[key].list; return { d: r2(ls.reduce((n, y) => n + y.debit, 0)), cr: r2(ls.reduce((n, y) => n + y.credit, 0)) }; };
   const all = multi ? { beg: r2(cols.reduce((n, x) => n + A.moves[x.key].beg + pre[x.key].d - pre[x.key].cr, 0)), d: r2(cols.reduce((n, x) => n + pre[x.key].d, 0)), cr: r2(cols.reduce((n, x) => n + pre[x.key].cr, 0)) } : null;
+  // Two or more funds in one column (e.g. General Fund, Trust Fund, PHIC): one continuous table, each fund with its own beginning,
+  // months and balance, then the total of all funds.
+  const fs = which !== 'ca' && cols.length === 1 ? fundSplit(A, cols[0].key) : null;
+  if (fs) {
+    const x = cols[0], mName = (m) => `${MONTHS[+m.slice(5) - 1]} ${m.slice(0, 4)}`;
+    const TD = r2(fs.reduce((n, g) => n + g.d, 0)), TC = r2(fs.reduce((n, g) => n + g.c, 0));
+    const body2 = fs.map((g) => `<tr class="rp-fundh"><td colspan="4"><b>${esc(g.fund.toUpperCase())}</b></td></tr>
+      <tr><td>Balance, ${esc(fmtDate(A.from))}</td><td class="r">${nz(g.pd)}</td><td class="r">${nz(g.pc)}</td><td class="r">${amt(g.start)}</td></tr>
+      ${g.lines.map((l) => `<tr><td>${mName(l.m)}</td><td class="r">${money(l.d)}</td><td class="r">${money(l.c)}</td><td class="r">${amt(l.b)}</td></tr>`).join('')}
+      <tr class="rp-fundt"><td>Balance, ${esc(fmtDate(A.to))}</td><td class="r">${money(g.d)}</td><td class="r">${money(g.c)}</td><td class="r">${amt(g.bal)}</td></tr>`).join('');
+    const html2 = `<div class="rp-page rp-wide"><div class="rp-top"><span></span><span class="r"><b>${annex}</b></span></div>
+    <p class="c">Republic of the Philippines<br><b>${esc(agency)}</b><br>${esc(station)}</p>
+    <p class="c"><b>${esc(o.name)}</b><br>${esc(o.designation || '')}</p>
+    <h2 class="rp-title">Statement of Accountability</h2><p class="c">${esc(fmtDate(A.from))} to ${esc(fmtDate(A.to))}</p>
+    <table class="rp-t"><thead><tr><th rowspan="2">Particulars</th><th colspan="3">${esc(x.label)}</th></tr>
+      <tr><th class="r">${drName(x)}</th><th class="r">${crName(x)}</th><th class="r">Balance</th></tr></thead>
+      <tbody>${body2}
+      <tr class="tot"><td>TOTAL, ALL FUNDS, ${esc(fmtDate(A.to))}</td><td class="r">${money(TD)}</td><td class="r">${money(TC)}</td><td class="r">${amt(x.balance)}</td></tr></tbody></table>
+    <div class="rp-signs">${sign('Prepared by', prep)}${sign('Reviewed by', rev)}</div></div>`;
+    const rows2 = fs.flatMap((g) => [{ Month: g.fund.toUpperCase() }, { Month: `Balance, ${fmtDate(A.from)}`, [drName(x)]: g.pd || '', [crName(x)]: g.pc || '', Balance: g.start },
+      ...g.lines.map((l) => ({ Month: mName(l.m), [drName(x)]: l.d, [crName(x)]: l.c, Balance: l.b })), { Month: `Balance, ${fmtDate(A.to)}`, [drName(x)]: g.d, [crName(x)]: g.c, Balance: g.bal }])
+      .concat([{ Month: `TOTAL, ALL FUNDS, ${fmtDate(A.to)}`, [drName(x)]: TD, [crName(x)]: TC, Balance: x.balance }]);
+    return { html: html2, rows: rows2 };
+  }
   const html = `<div class="rp-page rp-wide"><div class="rp-top"><span></span><span class="r"><b>${annex}</b></span></div>
     <p class="c">Republic of the Philippines<br><b>${esc(agency)}</b><br>${esc(station)}</p>
     <p class="c"><b>${esc(o.name)}</b><br>${esc(o.designation || '')}</p>

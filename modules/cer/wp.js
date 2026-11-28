@@ -11,6 +11,7 @@ import { by, fmtDate, money, num } from './cer.js';
 import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart, repName, depsBeforeOrs, partOf, bnLineText, formOfSer } from './collections.js';
 import { accountsOf, caFund, begByFund, restFund, fundOrder } from './funds.js';
 import { saafRows, unusedFormsOf, notPresentedOf, countRanges, FORM_SHORT, faceOf } from './forms.js';
+import { fundSplit } from './verify.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -520,6 +521,26 @@ export async function downloadReport(c, ver) {
     heads(ws);
     const bA = colBooks.find((x) => !isCtcKey(x.key)), bC = colBooks.find((x) => isCtcKey(x.key));
     if (bA && bA.key === 'col-RCD' && !bA.part) set(ws, 'D12', 'Collections');
+    // Two or more funds (no CTC column): one continuous table, each fund with its heading, beginning, months and balance; the last
+    // line is the total of all funds. Rows 14 to 50 of the form; more than that: the funds together, as before.
+    const fs = bA && !bC ? fundSplit(A, bA.key) : null;
+    const need = fs ? fs.reduce((n, g) => n + g.lines.length + 3, 0) : 0;
+    if (fs && need <= 37) {
+      const bold = (addr) => { const cl = ws.getCell(addr); cl.font = { ...(cl.font || {}), bold: true }; };
+      const row = (r, label, d, c, b, strong) => { set(ws, `B${r}`, label); set(ws, `D${r}`, d); set(ws, `E${r}`, c); set(ws, `F${r}`, b); set(ws, `J${r}`, d); set(ws, `K${r}`, c); set(ws, `L${r}`, b); if (strong) ['B', 'D', 'E', 'F', 'J', 'K', 'L'].forEach((k) => bold(`${k}${r}`)); };
+      let rr = 14;
+      fs.forEach((g) => {
+        set(ws, `B${rr}`, g.fund.toUpperCase()); if (rr === 14) set(ws, 'C14', null); bold(`B${rr}`); rr++;
+        row(rr++, `Balance, ${fmtDate(A.from)}`, g.pd || null, g.pc || null, g.start);
+        g.lines.forEach((l) => row(rr++, mLabel(l.m), l.d, l.c, l.b));
+        row(rr++, `Balance, ${fmtDate(A.to)}`, g.d, g.c, g.bal, true);
+      });
+      hideRows(ws, rr, 50);
+      const TD = r2(fs.reduce((n, g) => n + g.d, 0)), TC = r2(fs.reduce((n, g) => n + g.c, 0));
+      set(ws, 'B51', 'TOTAL, ALL FUNDS, '); set(ws, 'C51', fmtDate(A.to));
+      set(ws, 'D51', TD); set(ws, 'E51', TC); set(ws, 'F51', bA.balance); set(ws, 'J51', TD); set(ws, 'K51', TC); set(ws, 'L51', bA.balance);
+      set(ws, 'D55', prep.name); set(ws, 'D56', prep.pos); set(ws, 'D57', prep.des); set(ws, 'J55', rev.name); set(ws, 'J56', rev.pos); set(ws, 'J57', rev.des);
+    } else {
     const keys = colBooks.map((x) => x.key);
     const pa = bA ? preOf(bA.key) : { d: 0, c: 0 }, pc = bC ? preOf(bC.key) : { d: 0, c: 0 };
     const run = { a: bA ? r2(bA.beg + pa.d - pa.c) : 0, c: bC ? r2(bC.beg + pc.d - pc.c) : 0 };
@@ -539,6 +560,7 @@ export async function downloadReport(c, ver) {
     set(ws, 'D51', sA.debit); set(ws, 'E51', sA.credit); set(ws, 'F51', sA.balance); set(ws, 'G51', sC.debit); set(ws, 'H51', sC.credit); set(ws, 'I51', sC.balance);
     set(ws, 'J51', r2(sA.debit + sC.debit)); set(ws, 'K51', r2(sA.credit + sC.credit)); set(ws, 'L51', r2(sA.balance + sC.balance));
     set(ws, 'D55', prep.name); set(ws, 'D56', prep.pos); set(ws, 'D57', prep.des); set(ws, 'J55', rev.name); set(ws, 'J56', rev.pos); set(ws, 'J57', rev.des);
+    }
   }
   ws = wb.getWorksheet('Accountability-CA');
   if (!caS) wb.removeWorksheet(ws.id);

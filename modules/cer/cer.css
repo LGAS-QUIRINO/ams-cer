@@ -1100,3 +1100,7 @@ body.rp-printing #cer-print .rp-scrollx{overflow:visible}
 .rp-bkh{margin:8px 0 6px; font-size:13px}
 .rp-bkrow{display:grid; grid-template-columns:170px 160px auto; gap:8px; margin:0 0 6px; align-items:center}
 .rp-bkfoot{display:flex; gap:14px; align-items:center; font-size:13px; flex-wrap:wrap}
+
+/* Annex C by fund: fund heading and fund balance lines */
+.rp-t tr.rp-fundh td{background:#f3f4f6; letter-spacing:.3px}
+.rp-t tr.rp-fundt td{font-weight:700}
