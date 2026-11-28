@@ -606,6 +606,9 @@ export async function collectionsView(ctx) {
   const fSel = WF;
   if (WF) realFigs.splice(0, realFigs.length, ...realFigs.filter((g) => g.rec.fund === WF));
   if (RSORT.v === 'need' && !loOnly) realFigs.sort((a, b) => (needsWork(a) ? 0 : 1) - (needsWork(b) ? 0 : 1) || byRepNo(a, b));
+  // All funds: by fund (General Fund first, then in the order of the funds), each fund in the order above.
+  if (!WF) { const fo = [...fig.funds].sort((x, y) => (/general/i.test(y) ? 1 : 0) - (/general/i.test(x) ? 1 : 0)), fi = (g) => { const i = fo.indexOf(g.rec.fund || ''); return i < 0 ? 999 : i; };
+    const pos = new Map(realFigs.map((g, i) => [g, i])); realFigs.sort((a, b) => fi(a) - fi(b) || pos.get(a) - pos.get(b)); }
   const pends = fig.keys.map((k) => fig.chains[k]).filter((ch) => usedKinds.includes(ch.kind) && (!WF || ch.fund === WF) && (ch.pend.nOrs || ch.pend.dep || ch.pend.remTotal));
   const notice = pends.map((ch) => { const p = ch.pend, last = ch.figs[ch.figs.length - 1];
     const what = [p.nOrs ? `${p.nOrs} OR${p.nOrs > 1 ? 's' : ''} (₱ ${money(p.orsTotal)})` : '', p.dep ? `₱ ${money(p.dep)} ${ch.kind === 'SCR' ? 'remitted' : 'deposits'}` : '', p.remTotal ? `₱ ${money(p.remTotal)} remittances received` : ''].filter(Boolean).join(' and ');
