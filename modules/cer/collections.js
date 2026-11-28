@@ -374,8 +374,16 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
     const myColAll = kind === kinds[0] ? colLines.filter((m) => (m.fund || allFunds[0]) === fund) : [];
     // A line already in a report of the previous exam (ticked there, or typed in it) stays with that exam: not shown here.
     const colTgt = (m) => { const inc = list.find((r) => (r.colIn || []).includes(m.key)); return inc ? inc.id : oldReps.some((r) => (r.colIn || []).includes(m.key)) ? null : pid; };   // only where ticked
-    const myLoAll = loLines.filter((m) => loKind(m) === kind && ((reals.find((r) => r.id === m.reportId)?.fund) || m.fund || allFunds[0]) === fund);
-    const loTgt = (m) => (list.some((r) => r.id === m.reportId) ? m.reportId : oldIds.has(m.reportId) ? null : pid);
+    // The fund of the LO's RCD decides the fund (the collector's RCD it names may be of another fund: numbers restart per fund).
+    const myLoAll = loLines.filter((m) => loKind(m) === kind && (m.fund || (reals.find((r) => r.id === m.reportId)?.fund) || allFunds[0]) === fund);
+    // Where the LO's line goes: the RCD it was linked to; else (typed before the collector's RCD was made, or linked to another
+    // fund's RCD) the RCD of this fund holding its OR From, else the one with its report No.; else not yet in a report.
+    const nk0 = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^(SCR|RCD|SCD)(NO)?/, '');
+    const holdsOr = (r, m, fm) => { const a = +m.from; if (!(a > 0)) return false;
+      return ors.some((x) => x.reportId === r.id && x.status !== 'cancelled' && !x.bnLine && +x.serial <= a && a <= maxSer(x) && (!fm || remForm(x.form) === fm)); };
+    const loTgt = (m) => { if (list.some((r) => r.id === m.reportId)) return m.reportId; if (oldIds.has(m.reportId)) return null;
+      const fm = formOfSer(m), byOr = list.find((r) => holdsOr(r, m, fm)) || list.find((r) => holdsOr(r, m, '')); if (byOr) return byOr.id;
+      const no = nk0(m.reportNo), byNo = no && list.filter((r) => nk0(r.no) === no); return byNo && byNo.length === 1 ? byNo[0].id : pid; };
     const withSide = (r) => { const c0 = clean(r); const ds = myLoAll.filter((m) => loTgt(m) === r.id), rs = myColAll.filter((m) => colTgt(m) === r.id);
       return ds.length || rs.length ? { ...c0, deposits: [...c0.deposits, ...ds].sort((a, b) => String(a.date).localeCompare(String(b.date))), remittances: [...c0.remittances, ...rs].sort((a, b) => String(a.date).localeCompare(String(b.date))) } : c0; };
     const figs = list.map((r, i) => { const fg = build(r.id, withSide(r), ors.filter((x) => x.reportId === r.id), i === 0 ? start : beg, add[r.id] || 0); if (fg.begAdd) fg.begSer = serTxt; if (i === 0) markOpening(fg, op); beg = fg.end; return fg; });
@@ -1142,7 +1150,8 @@ function wireAll(c) {
   const dupOf = (m) => shownCol().find((x) => x.collectorId === m.collectorId && ((x.from && m.from && String(x.from) === String(m.from)) || (m.reportNo && x.colNo && nk(m.reportNo) === nk(x.colNo)) || (x.date === m.date && Math.abs(x.amount - m.amount) < 0.005)));
   const lineOf = (date, col, no, fr0, to0, amt, form = '', pcs = 0, bn = 0) => {
     const fr = String(fr0 || '').replace(/\D/g, ''), to = String(to0 || '').replace(/\D/g, '') || fr;
-    const cr = no ? f.reports.find((r) => !r.pending && r.officerId === col.id && String(r.no).trim().toUpperCase() === String(no).trim().toUpperCase()) : null;
+    // The collector's RCD of that No. in this RCD's fund (numbers restart per fund); none: placed by its OR range on her side.
+    const cr = no ? f.reports.find((r) => !r.pending && r.officerId === col.id && (r.fund || '') === (curFund || '') && String(r.no).trim().toUpperCase() === String(no).trim().toUpperCase()) : null;
     return { date, collectorId: col.id, reportNo: String(no || '').trim(), reportId: cr ? cr.id : '', amount: r2(amt), ...(fr ? { from: fr, to } : {}), ...(form && form !== 'af51' ? { form } : {}), ...(pcs ? { pcs } : {}), ...(bn ? { bn } : {}), ...(c.exam.lastExamDate && date < c.exam.lastExamDate ? { beg: true } : {}) };
   };
   // Saves the typed list of this report: a remittance already in the collector's records is not saved again; one whose
