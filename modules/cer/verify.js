@@ -196,7 +196,9 @@ export async function verifyView(ctx) {
       const credits = []; recs.forEach((r) => { if (r.part ? own(r.recId) : own(String(r.id).split('#')[0])) (r.lines || []).forEach((l) => { if (+l.credit > 0 && l.date) credits.push(l); }); });
       mine.forEach((r) => { const amt = r2(f.ors.filter((x) => x.reportId === r.id && x.status !== 'cancelled').reduce((n, x) => n + r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0)), 0)), nm = `RCD No. ${r.no || '—'} (₱${money(amt)}, credited to bank)`;
         if (!tk.has(r.id)) add(`bkrcd|${r.id}`, 'Collections', `${nm} is not yet in an RCD (LGU) of type Bank transfer (Source Documents › RCD (LGU)).`, '#/src/rcd');
-        if (r.date && amt > 0 && !credits.some((l) => Math.abs((+l.credit || 0) - amt) < 0.005 && Math.abs(Date.parse(l.date) - Date.parse(r.date)) <= 15 * 864e5)) add(`bkcr|${r.id}`, 'Collections', `${nm}: no credit of that amount in the bank statement within 15 days of ${fmtDate(r.date)}.`, '#/cer/banks'); });
+        const cr = (r.bankCredit.credits || []).filter((c) => c.date && +c.amount > 0), hit = (a, d) => credits.some((l) => Math.abs((+l.credit || 0) - a) < 0.005 && Math.abs(Date.parse(l.date) - Date.parse(d)) <= 15 * 864e5);
+        if (cr.length) cr.filter((c) => !hit(+c.amount, c.date)).forEach((c) => add(`bkcr|${r.id}|${c.date}|${c.amount}`, 'Collections', `${nm}: bank credit of ${fmtDate(c.date)}, ₱${money(c.amount)}, not found in the bank statement.`, '#/cer/banks'));
+        else if (r.date && amt > 0 && !hit(amt, r.date)) add(`bkcr|${r.id}`, 'Collections', `${nm}: no credit of that amount in the bank statement within 15 days of ${fmtDate(r.date)}.`, '#/cer/banks'); });
     } }
   // Booklets entered with irregular numbering (printing / binding error): listed so the booklet is checked physically.
   f.booklets.filter((b) => b.irregular && b.officerId === o.id && !b.noSerial).forEach((b) => add(`irr|${b.id}`, 'Accountable Forms',
@@ -211,8 +213,8 @@ export async function verifyView(ctx) {
   Object.values(fig.chains).filter((c) => c.kind !== 'SCR' && !exam.remitToLO).forEach((c) => {   // remitted to the LO: no deposit deadline
     const gs = [...c.figs, c.pend];
     const coll = {}; const put = (d, a) => { if (inScope(d) && a) coll[d] = r2((coll[d] || 0) + a); };
-    gs.forEach((g) => { (g.ors || []).filter((x) => x.status !== 'cancelled' && orOk(x)).forEach((x) => put(x.date, +x.amount || 0)); (g.rec?.remittances || []).forEach((m) => put(m.date, +m.amount || 0)); });
-    const deps = {}; gs.forEach((g) => (g.rec?.deposits || []).filter((d) => inScope(d.date)).forEach((d) => { deps[d.date] = r2((deps[d.date] || 0) + (+d.amount || 0)); }));
+    gs.forEach((g) => { if (g.rec?.bankCredit?.on) return; (g.ors || []).filter((x) => x.status !== 'cancelled' && orOk(x)).forEach((x) => put(x.date, +x.amount || 0)); (g.rec?.remittances || []).forEach((m) => put(m.date, +m.amount || 0)); });
+    const deps = {}; gs.forEach((g) => (g.rec?.deposits || []).filter((d) => inScope(d.date) && !d.bankAuto).forEach((d) => { deps[d.date] = r2((deps[d.date] || 0) + (+d.amount || 0)); }));
     const queue = []; const begAmt = r2(+(gs[0]?.beg) || 0);
     if (begAmt > 0.004 && from) queue.push({ date: from, amt: begAmt, due: from, beg: true });
     const late = [];

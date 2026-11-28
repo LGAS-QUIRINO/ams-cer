@@ -281,13 +281,18 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   const build = (id, rec, list, beg, begAdd = 0) => {
     const own = list.filter((x) => x.status !== 'cancelled');
     // Credited to bank (transfer, credit memo, check deposited by the payor): its collections count as deposited on their dates.
-    if (rec && !rec.pending && rec.bankCredit && rec.bankCredit.on) { const byD = {}; own.filter((x) => !isBeg(x)).forEach((x) => { byD[x.date] = r2((byD[x.date] || 0) + amtOf(x)); });
+    // The bank credits typed (date and amount, often before the OR, on several dates); none typed: one per OR date.
+    let bankCr = null;
+    if (rec && !rec.pending && rec.bankCredit && rec.bankCredit.on) { const byD = {}; const typedCr = (rec.bankCredit.credits || []).filter((x) => x.date && +x.amount > 0);
+      if (typedCr.length) typedCr.forEach((x) => { byD[x.date] = r2((byD[x.date] || 0) + (+x.amount || 0)); }); else own.filter((x) => !isBeg(x)).forEach((x) => { byD[x.date] = r2((byD[x.date] || 0) + amtOf(x)); });
+      if (typedCr.length) bankCr = r2(typedCr.reduce((t, x) => t + (+x.amount || 0), 0));
       rec = { ...rec, deposits: [...(rec.deposits || []).filter((d) => !d.bankAuto), ...Object.entries(byD).sort().map(([d, a]) => ({ date: d, ref: 'Credited to bank', ...(rec.bankCredit.ref ? { no: rec.bankCredit.ref } : {}), amount: a, bankAuto: true }))] }; }
     const rem = (rec?.remittances || []).filter((m) => !m.beg);
     const fig = { id, rec, ors: list, beg, orsTotal: sum(own.map((x) => ({ a: amtOf(x) })), 'a'), remTotal: sum(rem, 'amount'), dep: sum(rec?.deposits || [], 'amount'),
       begRaw: r2(own.filter(isBeg).reduce((n, x) => n + r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0)), 0)),   // ORs of the beginning (Before the period), at face
       nOrs: list.length, nCancelled: list.length - own.length, from: '', to: '', range: rangeByForm(list), issues: [] };
     fig.coll = r2(fig.orsTotal + fig.remTotal);
+    if (bankCr !== null && Math.abs(bankCr - fig.coll) > 0.004) fig.issues.push(`Bank credits ₱${money(bankCr)}; collections of the ORs ₱${money(fig.coll)} (₱${money(Math.abs(r2(bankCr - fig.coll)))} ${bankCr > fig.coll ? 'more' : 'less'} credited).`);
     fig.begAdd = r2(begAdd);
     fig.end = r2(beg + fig.begAdd + fig.coll - fig.dep);
     const dates = [...list.map((x) => x.date), ...rem.map((x) => x.date)].filter(Boolean).sort();
@@ -2270,7 +2275,10 @@ async function reportModal(c, K, g) {
       return bad(same ? `This ${K} is already entered (${repName(clash.rec, K)}).` : `Part of that range is already in ${repName(clash.rec, K)}.`) || null;
     }
     const v = { no, date, fund, ranges: rr.ranges, rangeForms: rr.rangeForms, hardTotal: hard ? num(hard) : null, received: $('#rp-recv', bg).value, dupe: no ? 0 : dupeOf(f, o.id, K, date, fund, g ? g.id : undefined) };
-    { const bk = $('input[name="rp-bk"]:checked', bg); if (bk) v.bankCredit = bk.value === '1' ? { on: true, ref: $('#rp-bkref', bg).value.trim() } : null; }
+    { const bk = $('input[name="rp-bk"]:checked', bg); if (bk) { if (bk.value !== '1') v.bankCredit = null; else {
+      const credits = []; for (const r of $$('.rp-bkrow', bg)) { const [di, ai] = $$('input', r), d = di.value, a = num(ai.value); if (!d && (a === null || ai.value.trim() === '')) continue;
+        if (!d) return bad('Enter the date of each bank credit.') || null; if (a === null || !(a > 0)) return bad('Enter the amount of each bank credit.') || null; credits.push({ date: d, amount: r2(a) }); }
+      v.bankCredit = { on: true, ...(rec.bankCredit?.ref ? { ref: rec.bankCredit.ref } : {}), credits: credits.sort((x, y) => x.date.localeCompare(y.date)) }; } } }
     if (firstOf(fund)) { const t = num($('#rp-beg', bg).value); v.begTyped = t === null ? '' : t; }
     return v;
   };
@@ -2285,13 +2293,22 @@ async function reportModal(c, K, g) {
         ${!pureLO && K === 'RCD' ? `<fieldset class="field rp-bank"><legend>Collections are</legend>
           <label class="cer-chip"><input type="radio" name="rp-bk" value="0" ${rec.bankCredit?.on ? '' : 'checked'}> Cash${exam.remitToLO ? ', remitted to the LO' : ', deposited'}</label>
           <label class="cer-chip"><input type="radio" name="rp-bk" value="1" ${rec.bankCredit?.on ? 'checked' : ''}> Credited to bank <small class="dim">(transfer, credit memo, check deposited by the payor)</small></label>
-          <input class="input mono" id="rp-bkref" placeholder="Reference No. (optional), e.g. CM-2026-0045" value="${esc(rec.bankCredit?.ref || '')}" ${rec.bankCredit?.on ? '' : 'hidden'}></fieldset>` : ''}
+          <div id="rp-bkbox" ${rec.bankCredit?.on ? '' : 'hidden'}><div class="rp-bkh"><b>Bank credits</b> <span class="dim">(date credited and amount, as in the bank statement)</span></div>
+            <div id="rp-bkrows">${[...(rec.bankCredit?.credits || []), {}].map((x) => `<div class="rp-bkrow"><input class="input" type="date" value="${esc(x.date || '')}" aria-label="Date credited"><input class="input r" inputmode="decimal" placeholder="0.00" value="${x.amount ? esc(money(x.amount)) : ''}" aria-label="Amount"><button class="btn sm" type="button" aria-label="Remove">✕</button></div>`).join('')}</div>
+            <div class="rp-bkfoot"><a href="#" class="cd-link" id="rp-bkadd">+ Add credit</a><span id="rp-bktot"></span></div></div></fieldset>` : ''}
         <div class="field" id="rp-begbox"><label for="rp-beg">${UND} per last ${K} (first in the app)</label><input class="input r" id="rp-beg" inputmode="decimal" placeholder="0.00" value="${esc(beg0)}"></div>
       </div>
 
       <p class="af-note">${pureLO ? `${K} Date: the date written on the ${K}. Its remittances are typed or ticked in tab 2 · Collections.` : `${K} Date: the date written on the ${K}; if none, the date of the last OR it covers. ORs go into the ${K} by their number in the OR Range.`}</p>
       <p class="af-note" id="rp-prev"></p>`,
-    onOpen: (bg) => { $$('input[name="rp-bk"]', bg).forEach((r) => { r.onchange = () => { $('#rp-bkref', bg).hidden = $('input[name="rp-bk"]:checked', bg).value !== '1'; }; }); if ($('#rp-rows', bg)) wireRows(bg); $$('#rp-date, #rp-fund, #rp-hard, [data-rpk]', bg).forEach((el) => { el.addEventListener('input', () => preview(bg)); el.addEventListener('change', () => preview(bg)); }); preview(bg); },
+    onOpen: (bg) => { $$('input[name="rp-bk"]', bg).forEach((r) => { r.onchange = () => { $('#rp-bkbox', bg).hidden = $('input[name="rp-bk"]:checked', bg).value !== '1'; }; });
+      { const box = $('#rp-bkrows', bg); if (box) {
+        const coll = g ? r2(g.coll) : null;
+        const tot = () => { const t = r2($$('.rp-bkrow', bg).reduce((n, r) => n + (num($$('input', r)[1].value) || 0), 0)); $('#rp-bktot', bg).innerHTML = t ? `Total credits <b>₱${money(t)}</b>${coll === null ? '' : Math.abs(t - coll) < 0.005 ? ' <span class="pill p-done">agrees with the collections</span>' : ` <span class="pill p-flag">₱${money(Math.abs(r2(t - coll)))} ${t > coll ? 'more' : 'less'} than the collections (₱${money(coll)})</span>`}` : ''; };
+        const wireRow = (r) => { $$('input', r).forEach((i) => i.addEventListener('input', tot)); $$('input', r)[1].addEventListener('blur', (e) => { const v = num(e.target.value); if (v !== null) e.target.value = money(v); }); $('button', r).onclick = () => { if ($$('.rp-bkrow', bg).length > 1) r.remove(); else $$('input', r).forEach((i) => { i.value = ''; }); tot(); }; };
+        $$('.rp-bkrow', box).forEach(wireRow);
+        $('#rp-bkadd', bg).onclick = (e) => { e.preventDefault(); const r = document.createElement('div'); r.className = 'rp-bkrow'; r.innerHTML = '<input class="input" type="date" aria-label="Date credited"><input class="input r" inputmode="decimal" placeholder="0.00" aria-label="Amount"><button class="btn sm" type="button" aria-label="Remove">✕</button>'; box.appendChild(r); wireRow(r); $('input', r).focus(); };
+        tot(); } } if ($('#rp-rows', bg)) wireRows(bg); $$('#rp-date, #rp-fund, #rp-hard, [data-rpk]', bg).forEach((el) => { el.addEventListener('input', () => preview(bg)); el.addEventListener('change', () => preview(bg)); }); preview(bg); },
     buttons: [...(isNew ? [] : [{ label: 'Delete', cls: 'danger', value: 'del' }]), { label: 'Cancel', value: null },
       { label: `Save ${K}`, cls: 'primary', value: 'save', check: (bg) => { out = read(bg); return !!out; } }] }).then((v) => { act = v; });
   if (act === 'del') return deleteReport(c, K, g);
