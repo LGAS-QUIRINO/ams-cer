@@ -1127,3 +1127,5 @@ body.rp-printing #cer-print .rp-brs tr.rp-scr{display:none}
 .sd-rcd tr.rc-fundt td{font-weight:700; border-bottom:2px solid var(--line,#dfe5ef)}
 
 .cd-sortrow .cd-sortsep{width:10px}
+
+.cer-selbar .sb-fund{min-width:220px}
