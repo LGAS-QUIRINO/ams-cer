@@ -13,7 +13,7 @@ import { store } from '../../js/store.js';
 import { esc, toast, modal, $, $$ } from '../../js/ui.js';
 import { hasRole, by, mayView, agencyName, fmtDate, money, num, getPick } from '../cer/cer.js';
 import { loadForms, loadXlsx, excelDate, exportXlsx } from '../cer/forms.js';
-import { figuresOf, fundsOf, tagSameDay } from '../cer/collections.js';
+import { figuresOf, fundsOf, tagSameDay, colRepOf } from '../cer/collections.js';
 
 const r2 = (n) => Math.round((+n || 0) * 100) / 100;
 const flat = (r) => ({ id: r.id, ...r.data });
@@ -111,8 +111,9 @@ export async function rcdView(ctx) {
     return miss.length ? `<span class="pill p-flag" title="${esc('Not found: ' + miss.map((c) => `${fmtDate(c.date)} ₱${money(c.amount)}`).join('; '))}">Bank: ${cr.length - miss.length} of ${cr.length} credits found</span>` : `<span class="pill p-done">Bank: ${cr.length} of ${cr.length} credits found</span>`; };
   const partHit = (p) => { const d = p.r.date; if (!d) return null; const c = bankLines.filter((l) => Math.abs((+l.credit || 0) - p.amt) < 0.005 && l.date && Math.abs(Date.parse(l.date) - Date.parse(d)) <= 15 * 864e5);
     return c.sort((a, b) => Math.abs(Date.parse(a.date) - Date.parse(d)) - Math.abs(Date.parse(b.date) - Date.parse(d)))[0] || false; };
-  const waiting = (() => { const tk = tickedIn(f, lgu.id); return bankRepsOf(f, lgu.id).filter((r) => !tk.has(r.id)); })();
-  const bankCell = (g) => `${g.bparts.length ? g.bparts.map((p) => { return `<div>${esc(p.o.name)} <span class="dim">· RCD No. ${esc(p.r.no || '—')} · ₱ ${money(p.amt)}</span> ${partBank(p)}</div>`; }).join('') : '<span class="dim">Directly transferred to the bank</span>'}
+  const inLo = inLoRcd(f, lgu.id);
+  const waiting = (() => { const tk = tickedIn(f, lgu.id); return bankRepsOf(f, lgu.id).filter((r) => !tk.has(r.id) && !inLo.has(r.id)); })();
+  const bankCell = (g) => `${g.bparts.length ? g.bparts.map((p) => { return `<div>${esc(p.o.name)} <span class="dim">· RCD No. ${esc(p.r.no || '—')} · ₱ ${money(p.amt)}</span> ${partBank(p)}${inLo.has(p.r.id) ? ` <span class="pill p-flag" title="It comes into the LGU's RCD through the Liquidating Officer's RCD: counted twice while ticked here.">Already in ${esc(loTag(f, inLo.get(p.r.id)))}: untick it</span>` : ''}</div>`; }).join('') : '<span class="dim">Directly transferred to the bank</span>'}
     ${enc ? `<div style="margin-top:4px"><button class="btn sm" type="button" data-rcbank="${esc(g.key)}">Tick from the app · ${waiting.length} waiting</button></div>` : ''}`;
   const check = (g) => g.type === 'bank' && g.bparts.length ? (g.whole === null ? '<span class="pill">Whole total not typed</span>' : Math.abs(g.diff) < 0.005 ? '<span class="pill p-done">Agrees</span>' : `<span class="pill p-flag">${g.diff > 0 ? 'Short' : 'Over'} ₱${money(Math.abs(g.diff))}</span>`)
     : g.type === 'bank' ? (g.whole === null ? '<span class="pill">Whole total not typed</span>' : (() => { const h = bankHit(g); return h ? `<span class="pill p-done" title="${esc(h.desc || '')}">Found in the bank statement · ${esc(fmtDate(h.date))}</span>` : '<span class="pill p-flag">Not found in the bank statement</span>'; })()) : `${g.type === 'dep' ? '<span class="pill">Deposits only</span> ' : ''}${!g.parts.length ? '<span class="pill p-flag">No officer\'s part yet</span> ' : ''}${g.whole === null ? '<span class="pill">Whole total not typed</span>' : Math.abs(g.diff) < 0.005 ? '<span class="pill p-done">Agrees</span>'
@@ -170,10 +171,19 @@ export async function rcdView(ctx) {
   return { body, wire: wire2 };
 }
 
+// Collectors' RCDs credited to bank that a Liquidating Officer has in her RCD (her line of it): id → that LO's report. Those
+// come into the LGU's RCD through the LO's RCD, so they are not ticked here (one ticked before is flagged).
+function inLoRcd(f, lguId) {
+  const out = new Map(), offs = new Set((f.officers || []).filter((o) => o.lguId === lguId).map((o) => o.id));
+  (f.reports || []).filter((r) => offs.has(r.officerId) && !r.deleted).forEach((L) => (L.remittances || []).filter((m) => !m.fromCol && m.collectorId && !m.beg).forEach((m) => {
+    const cr = colRepOf(f, m, L.fund || ''); if (cr && cr.bankCredit && cr.bankCredit.on && !out.has(cr.id)) out.set(cr.id, L); }));
+  return out;
+}
+const loTag = (f, L) => `${(f.officers || []).find((o) => o.id === L.officerId)?.name || 'the LO'}'s ${L.pending ? 'records (not yet in a report)' : `RCD No. ${L.no || '—'}`}`;
 // Tick from the app: the collectors' RCDs credited to bank, not yet in another RCD; those ticked are this RCD's parts.
 async function bankTick(refs, f, lgu, g) {
-  const id = g.tid, t = f.settings[id] || { no: g.no, type: 'bank', ...(g.fund ? { fund: g.fund } : {}) }, mine = new Set(t.bankReps || []), tk = tickedIn(f, lgu.id);
-  const list = bankRepsOf(f, lgu.id).filter((r) => mine.has(r.id) || !tk.has(r.id)).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const id = g.tid, t = f.settings[id] || { no: g.no, type: 'bank', ...(g.fund ? { fund: g.fund } : {}) }, mine = new Set(t.bankReps || []), tk = tickedIn(f, lgu.id), inLo = inLoRcd(f, lgu.id);
+  const list = bankRepsOf(f, lgu.id).filter((r) => mine.has(r.id) || (!tk.has(r.id) && !inLo.has(r.id))).sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const name = (r) => (f.officers || []).find((o) => o.id === r.officerId)?.name || '—';
   const v = await modal({ title: `RCD No. ${g.no} · Collectors' RCDs credited to bank`, wide: true,
     body: list.length ? `<div class="af-tbl"><table class="af-reg"><thead><tr><th></th><th>Date</th><th>Collector</th><th>Their RCD</th><th>Reference</th><th class="r">Amount (₱)</th></tr></thead><tbody>${list.map((r) => `<tr><td><input type="checkbox" class="rb-k" value="${esc(r.id)}" ${mine.has(r.id) ? 'checked' : ''}></td><td>${esc(fmtDate(r.date))}</td><td>${esc(name(r))}</td><td class="mono">${esc(r.no || '—')}</td><td class="mono">${esc(r.bankCredit.ref || '')}</td><td class="r">${money(repAmt(f, r))}</td></tr>`).join('')}</tbody></table></div>

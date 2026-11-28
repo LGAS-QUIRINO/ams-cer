@@ -123,8 +123,8 @@ export function accountability(refs, f, audit, exam, advs, liqs, counts) {
         const s = part ? ctcAlloc(c, bs) : null;
         const fund = c.fund || '';
         (g.ors || []).filter((x) => x.status !== 'cancelled' && partOk(part, x.form) && inP(x.date) && orOk(x)).forEach((x) => m.push({ date: x.date, debit: face(x), credit: 0, fund }));
-        (g.rec?.deposits || []).filter((d) => inP(d.date)).forEach((d) => { const a = part ? depPart(part, d, s) : +d.amount || 0; if (a || !part) m.push({ date: at(d.date), debit: 0, credit: a, fund }); });
-        if (part !== 'ctc') (g.rec?.remittances || []).filter((d) => inP(d.date) && !d.beg).forEach((d) => m.push({ date: at(d.date), debit: +d.amount || 0, credit: 0, fund }));
+        (g.rec?.deposits || []).filter((d) => inP(d.date) && !d.bankLO).forEach((d) => { const a = part ? depPart(part, d, s) : +d.amount || 0; if (a || !part) m.push({ date: at(d.date), debit: 0, credit: a, fund }); });
+        if (part !== 'ctc') (g.rec?.remittances || []).filter((d) => inP(d.date) && !d.beg && !d.bkLO).forEach((d) => m.push({ date: at(d.date), debit: +d.amount || 0, credit: 0, fund }));
       }));
     }
     moves[b.key] = { beg: r2(beg), list: m.sort((x, y) => x.date.localeCompare(y.date)), gf: (fig.funds || []).find((x) => /general/i.test(x)) || (fig.funds || [])[0] || '' };
@@ -232,7 +232,7 @@ export async function verifyView(ctx) {
   Object.values(fig.chains).filter((c) => c.kind !== 'SCR' && !exam.remitToLO).forEach((c) => {   // remitted to the LO: no deposit deadline
     const gs = [...c.figs, c.pend];
     const coll = {}; const put = (d, a) => { if (inScope(d) && a) coll[d] = r2((coll[d] || 0) + a); };
-    gs.forEach((g) => { if (g.rec?.bankCredit?.on) return; (g.ors || []).filter((x) => x.status !== 'cancelled' && orOk(x)).forEach((x) => put(x.date, +x.amount || 0)); (g.rec?.remittances || []).forEach((m) => put(m.date, +m.amount || 0)); });
+    gs.forEach((g) => { if (g.rec?.bankCredit?.on) return; (g.ors || []).filter((x) => x.status !== 'cancelled' && orOk(x)).forEach((x) => put(x.date, +x.amount || 0)); (g.rec?.remittances || []).filter((m) => !m.bkLO).forEach((m) => put(m.date, +m.amount || 0)); });
     const deps = {}; gs.forEach((g) => (g.rec?.deposits || []).filter((d) => inScope(d.date) && !d.bankAuto).forEach((d) => { deps[d.date] = r2((deps[d.date] || 0) + (+d.amount || 0)); }));
     const queue = []; const begAmt = r2(+(gs[0]?.beg) || 0);
     if (begAmt > 0.004 && from) queue.push({ date: from, amt: begAmt, due: from, beg: true });

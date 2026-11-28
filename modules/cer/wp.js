@@ -78,13 +78,13 @@ export function wpLines(c, paper, ver) {
       const preNote = (d) => (pre(d.date) ? ` · ${kind === 'SCR' || d.toLO ? 'remitted' : 'deposited'} before the last cash exam; ${where}` : '');
       const earlyNote = (d) => { const x = early.get(d); return x ? ` · before its ORs (${d.from}–${d.to || d.from}, dated ${fmtDate(x.first)}${x.last !== x.first ? `–${fmtDate(x.last)}` : ''})` : ''; };
       if (part !== 'ctc') {
-        const rs = (g.rec?.remittances || []).filter((m) => m.date && m.date <= to && !m.beg);
+        const rs = (g.rec?.remittances || []).filter((m) => m.date && m.date <= to && !m.beg && !m.bkLO);   // credited to bank: not in the SAAF
         // The Liquidating Officer's working paper: one line per series remitted, Particulars "Collector · RCD No. · Form",
         // OR From / OR To (Cash Ticket (Booklet No.): its Booklet No. across both); within a date grouped by form.
         rs.filter((m) => !pre(m.date)).forEach((m, i) => remSeries(c.f, m).forEach((x, j) => lines.push({ key: `rem|${g.id}|${i}|${m.date}|${m.amount}${j ? '|' + j : ''}`, date: m.date, part: x.part, no: '', from: x.from, to: x.to, bn: x.bn, fr: x.fr, sn: x.sn, rem: true, d: x.amount, c: 0, ord: 0 })));
         rs.filter((m) => pre(m.date)).forEach((m, i) => remSeries(c.f, m).forEach((x, j) => lines.push({ key: `remx|${g.id}|${i}|${m.date}|${m.amount}${j ? '|' + j : ''}`, date: m.date, sd: from, part: `${x.part} · received before the last cash exam; ${where}`, no: '', from: x.from, to: x.to, bn: x.bn, fr: x.fr, sn: x.sn, rem: true, d: x.amount, c: 0, ord: -1 })));
       }
-      const ds = (g.rec?.deposits || []).filter((d) => d.date && d.date <= to && (!part || share(d)));
+      const ds = (g.rec?.deposits || []).filter((d) => d.date && d.date <= to && !d.bankLO && (!part || share(d)));
       const depText = (d) => (kind === 'SCR' ? `Remittance to MTO${depRefText(d, true) ? ', ' + depRefText(d, true) : ''}` : d.toLO ? `Remittance to the Liquidating Officer${d.ref ? ', ' + d.ref : ''}` : `Deposit${depRefText(d) ? ', ' + depRefText(d) : ''}${part && share(d) !== r2(+d.amount || 0) ? ` (${part === 'ctc' ? 'CTC' : 'AF 51'} part of ₱${money(d.amount)})` : ''}`);
       ds.filter((d) => !pre(d.date)).forEach((d, i) => lines.push({ key: `dep|${g.id}|${i}|${d.date}|${d.amount}`, date: d.date, part: depText(d) + earlyNote(d), no: '', d: 0, c: share(d), ord: 1 }));
       ds.filter((d) => pre(d.date)).forEach((d, i) => lines.push({ key: `depx|${g.id}|${i}|${d.date}|${d.amount}`, date: d.date, sd: from, part: depText(d) + preNote(d) + earlyNote(d), no: '', d: 0, c: share(d), ord: -1 }));

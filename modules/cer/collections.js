@@ -88,6 +88,16 @@ export function tagSameDay(list) {
 }
 const KIND_NAME = { SCD: 'Summary of Collections and Deposits', SCR: 'Summary of Collections and Remittances', RCD: 'Report of Collections and Deposits' };
 const pendId = (officerId, kind, fund) => `nyr|${officerId}|${kind}|${fund}`;
+// The collector's RCD a Liquidating Officer's line goes with, in the LO's fund: the one it is linked to, else the one holding
+// its OR From, else the only one of its report No. (null: none yet).
+const nkNo = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^(SCR|RCD|SCD)(NO)?/, '');
+export function colRepOf(f, m, fund) {
+  if (!m || !m.collectorId) return null;
+  const mine = f.reports.filter((r) => !r.pending && !r.deleted && r.officerId === m.collectorId && (r.fund || '') === (fund || ''));
+  const t = m.reportId && mine.find((r) => r.id === m.reportId); if (t) return t;
+  const a = +m.from; if (a > 0) { const h = mine.find((r) => f.ors.some((y) => y.reportId === r.id && y.status !== 'cancelled' && !y.bnLine && +y.serial <= a && a <= maxSer(y))); if (h) return h; }
+  const no = nkNo(m.reportNo), xs = no ? mine.filter((r) => nkNo(r.no) === no) : []; return xs.length === 1 ? xs[0] : null;
+}
 const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5);
 const int = (s) => { const v = parseInt(String(s ?? '').replace(/[^\d]/g, ''), 10); return isNaN(v) ? null : v; };
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -291,6 +301,12 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
       if (typedCr.length) typedCr.forEach((x) => { byD[x.date] = r2((byD[x.date] || 0) + (+x.amount || 0)); }); else own.filter((x) => !isBeg(x)).forEach((x) => { byD[x.date] = r2((byD[x.date] || 0) + amtOf(x)); });
       if (typedCr.length) bankCr = r2(typedCr.reduce((t, x) => t + (+x.amount || 0), 0));
       rec = { ...rec, deposits: [...(rec.deposits || []).filter((d) => !d.bankAuto), ...Object.entries(byD).sort().map(([d, a]) => ({ date: d, ref: 'Credited to bank', ...(rec.bankCredit.ref ? { no: rec.bankCredit.ref } : {}), amount: a, bankAuto: true }))] }; }
+    // A Liquidating Officer's line whose collector's RCD is credited to bank: in her RCD (remittances received) and deposited
+    // (credited to bank) on its date, so her undeposited is not changed; left out of her SAAF, days with the LO, late deposits.
+    if (rec && (rec.remittances || []).some((m) => !m.fromCol && m.collectorId)) { const bl = [];
+      const rs = rec.remittances.map((m) => { if (m.fromCol || !m.collectorId || m.beg) return m; const cr = colRepOf(f, m, rec.fund || '');
+        if (!cr || !cr.bankCredit || !cr.bankCredit.on) return m; const x = { ...m, bkLO: true, bkNo: cr.no || '' }; bl.push(x); return x; });
+      if (bl.length) rec = { ...rec, remittances: rs, deposits: [...(rec.deposits || []), ...bl.map((m) => ({ date: m.date, ref: 'Credited to bank', amount: +m.amount || 0, bankAuto: true, bankLO: true }))] }; }
     const rem = (rec?.remittances || []).filter((m) => !m.beg);
     const fig = { id, rec, ors: list, beg, orsTotal: sum(own.map((x) => ({ a: amtOf(x) })), 'a'), remTotal: sum(rem, 'amount'), dep: sum(rec?.deposits || [], 'amount'),
       begRaw: r2(own.filter(isBeg).reduce((n, x) => n + r2((x.items || []).reduce((t, i) => t + (+i.amt || 0), 0)), 0)),   // ORs of the beginning (Before the period), at face
@@ -384,7 +400,9 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
     const loTgt = (m) => { if (list.some((r) => r.id === m.reportId)) return m.reportId; if (oldIds.has(m.reportId)) return null;
       const fm = formOfSer(m), byOr = list.find((r) => holdsOr(r, m, fm)) || list.find((r) => holdsOr(r, m, '')); if (byOr) return byOr.id;
       const no = nk0(m.reportNo), byNo = no && list.filter((r) => nk0(r.no) === no); return byNo && byNo.length === 1 ? byNo[0].id : pid; };
-    const withSide = (r) => { const c0 = clean(r); const ds = myLoAll.filter((m) => loTgt(m) === r.id), rs = myColAll.filter((m) => colTgt(m) === r.id);
+    const withSide = (r) => { const c0 = clean(r); let ds = myLoAll.filter((m) => loTgt(m) === r.id); const rs = myColAll.filter((m) => colTgt(m) === r.id);
+      // Credited to bank: the LO's lines of it are in her RCD only (credited to bank there), not remittances to the LO here.
+      if (r.bankCredit && r.bankCredit.on && ds.length) { c0.loBank = ds; ds = []; }
       return ds.length || rs.length ? { ...c0, deposits: [...c0.deposits, ...ds].sort((a, b) => String(a.date).localeCompare(String(b.date))), remittances: [...c0.remittances, ...rs].sort((a, b) => String(a.date).localeCompare(String(b.date))) } : c0; };
     const figs = list.map((r, i) => { const fg = build(r.id, withSide(r), ors.filter((x) => x.reportId === r.id), i === 0 ? start : beg, add[r.id] || 0); if (fg.begAdd) fg.begSer = serTxt; if (i === 0) markOpening(fg, op); beg = fg.end; return fg; });
     const pr0 = prec ? { ...clean(prec), pending: true } : { pending: true, kind, fund, deposits: [], remittances: [] };
@@ -405,11 +423,11 @@ const quickColl = (f, r) => r2(f.ors.filter((x) => x.reportId === r.id && x.stat
 function loDays(f, o, chains, countDate) {
   const items = [], deps = [];
   Object.values(chains).forEach(({ figs, pend }) => [...figs, pend].forEach((fg) => {
-    (fg.rec?.remittances || []).forEach((m) => items.push({ date: m.date, from: f.officers.find((x) => x.id === m.collectorId)?.name || '', no: String(m.colNo || m.reportNo || (m.reportId ? f.reports.find((r) => r.id === m.reportId)?.no : '') || '').replace(/^\s*(SCR|RCD|SCD)\s*(No\.?)?\s*/i, '').trim(), amount: +m.amount || 0, fund: fg.rec?.fund || fg.fund,
+    (fg.rec?.remittances || []).filter((m) => !m.bkLO).forEach((m) => items.push({ date: m.date, from: f.officers.find((x) => x.id === m.collectorId)?.name || '', no: String(m.colNo || m.reportNo || (m.reportId ? f.reports.find((r) => r.id === m.reportId)?.no : '') || '').replace(/^\s*(SCR|RCD|SCD)\s*(No\.?)?\s*/i, '').trim(), amount: +m.amount || 0, fund: fg.rec?.fund || fg.fund,
       m, repId: fg.id, pending: !!fg.pending, noOnly: true, repName: fg.pending ? '' : (fg.rec?.no ? `RCD ${fg.rec.no}` : 'RCD') }));
     const own = {}; fg.ors.filter((x) => x.status !== 'cancelled').forEach((x) => { own[x.date] = r2((own[x.date] || 0) + orAmount(x)); });
     Object.entries(own).forEach(([d, a]) => items.push({ date: d, from: 'Own collections (ORs)', no: '', amount: a, own: true, fund: fg.rec?.fund || fg.fund, repId: fg.id }));
-    (fg.rec?.deposits || []).forEach((d) => deps.push({ ...d, amount: +d.amount || 0, fund: fg.rec?.fund || fg.fund, repId: fg.id }));
+    (fg.rec?.deposits || []).filter((d) => !d.bankLO).forEach((d) => deps.push({ ...d, amount: +d.amount || 0, fund: fg.rec?.fund || fg.fund, repId: fg.id }));
   }));
   const out = [];
   // Each RCD's deposits cover that RCD's remittances (in date order); a remittance its RCD has not deposited stays undeposited.
@@ -892,6 +910,8 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   const depBody = `<div class="af-tbl cd-tblbox"><table class="af-reg cd-edit"><thead><tr><th scope="col">${isRem ? 'Date Received by MTO' : toLO ? 'Date Remitted to LO' : 'Deposit Date'}</th><th scope="col">${remish ? 'Liquidating Officer' : 'Reference'}</th>${remish ? '' : '<th scope="col">No.</th>'}${cbook ? '<th scope="col">OR From</th><th scope="col">OR To</th>' : ''}${lgSer && perSer.length ? '<th scope="col">OR Series</th>' : ''}<th scope="col" class="r">Amount (₱)</th>${lgSer && perSer.length ? '<th scope="col">Check</th>' : ''}<th scope="col"></th></tr></thead>
       <tbody id="cd-deps" data-next="${lastTo ? lastTo + 1 : isFinite(firstOr) ? firstOr : ''}" ${lgSer ? `data-sers="${esc(JSON.stringify(sers.map((x) => [x.a, x.z, x.fk, x.tot, x.label])))}" data-lastlo="${esc(lastLO)}" data-rdate="${esc(cur.rec.date || '')}"` : ''}>${loGrp.map(loRow).join('')}${bankRows()}${depRows0.map(depRow).join('')}</tbody></table></div>
       ${loGrp.filter((g) => g.loReportNo).length ? `<p class="af-note cd-lotag">${[...new Map(loGrp.filter((g) => g.loReportNo).map((g) => [g.loReportNo, g])).values()].map((g) => `${loHref(g) ? `<a href="${esc(loHref(g))}">From RCD No. ${esc(g.loReportNo)}</a>` : `From RCD No. ${esc(g.loReportNo)}`} of ${esc(g.ref)}`).join('; ')} · changed in the LO's RCD.</p>` : ''}
+      ${(cur.rec?.loBank || []).length ? `<p class="af-note cd-lotag">${[...new Map(cur.rec.loBank.map((d) => [`${d.ref}|${d.loReportNo}`, d])).values()].map((d) => { const its = cur.rec.loBank.filter((x) => x.ref === d.ref && x.loReportNo === d.loReportNo), g = { loReportId: d.loReportId };
+        return `Also in ${loHref(g) ? `<a href="${esc(loHref(g))}">${esc(d.ref)}'s RCD${d.loReportNo ? ' No. ' + esc(d.loReportNo) : ''}</a>` : `${esc(d.ref)}'s ${d.loReportNo ? 'RCD No. ' + esc(d.loReportNo) : 'records (not yet in a report)'}`} (₱${money(r2(its.reduce((t, x) => t + (+x.amount || 0), 0)))}, credited to bank)`; }).join('; ')}: not counted again here; this RCD is deposited by its bank credits.</p>` : ''}
       ${serBreak}
     
     <datalist id="cd-reflist">${(remish ? loNames(refs, f, lgu) : depRefs(f, audit.lguId)).map((v) => `<option value="${esc(v)}">`).join('')}</datalist>
@@ -1893,7 +1913,9 @@ function presentedIn(m, ownId) {
   return out;
 }
 const presentedText = (hits) => hits.map((h) => `${h.a === h.z ? h.a : `${h.a}–${h.z}`} in ${repName(h.rec, h.kind || 'RCD')}`).join('; ');
-function remCheck(f, m, ownId) {
+// The collector's RCD of the line is credited to bank: tagged (in her RCD, deposited by the bank credit; not in her SAAF).
+function remCheck(f, m, ownId) { return remCheck0(f, m, ownId) + (m && m.bkLO ? ` <span class="pill p-part" title="${esc(`The collector's RCD${m.bkNo ? ' No. ' + m.bkNo : ''} is credited to bank: counted here as received and credited to bank on the same date (not in the undeposited, not in the SAAF).`)}">Credited to bank</span>` : ''); }
+function remCheck0(f, m, ownId) {
   // Numbers already presented in another RCD of this LO: shown first (delete the line, or correct its series).
   if (ownId !== undefined) { const hits = presentedIn(m, ownId); if (hits.length) return `<span class="pill p-bad" title="${esc(`Already presented: ${presentedText(hits)}`)}">Already presented · ${esc(presentedText(hits))}</span>`; }
   // Cash Ticket (Booklet No.): the collector's lines of that booklet in the collector's report (else in any report of hers).
