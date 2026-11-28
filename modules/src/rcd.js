@@ -57,7 +57,9 @@ export function rcdGroups(refs, f, lguId) {
     const date = (t && t.date) || g.date;
     // An officer's RCD dated differently from the hard copy (the date typed here).
     const offDate = t && t.date ? g.parts.filter((p) => p.date && p.date !== t.date) : [];
-    return { ...g, date, reg: !!t, regDate: (t && t.date) || '', offDate, parts: g.parts.sort((a, b) => a.o.name.localeCompare(b.o.name)), bparts, type, sum, whole, diff: whole === null || sum === null ? null : r2(whole - sum) };
+    // Its fund: typed here (+ RCD / Edit), else that of the officers' RCDs (or of the collectors' RCDs ticked into a bank transfer).
+    const fund = (t && t.fund) || g.parts.find((p) => p.fund)?.fund || bparts.find((p) => p.r.fund)?.r.fund || '';
+    return { ...g, date, fund, reg: !!t, regDate: (t && t.date) || '', offDate, parts: g.parts.sort((a, b) => a.o.name.localeCompare(b.o.name)), bparts, type, sum, whole, diff: whole === null || sum === null ? null : r2(whole - sum) };
   }).sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.no.localeCompare(b.no, undefined, { numeric: true }));
 }
 
@@ -89,7 +91,11 @@ export async function rcdView(ctx) {
     return c.sort((a, b) => Math.abs(Date.parse(a.date) - Date.parse(g.date)) - Math.abs(Date.parse(b.date) - Date.parse(g.date)))[0] || false; };
   const months = [...new Set(all.map((g) => String(g.date).slice(0, 7)).filter(Boolean))].sort().reverse();
   const m = q.get('m') === 'all' ? 'all' : months.includes(q.get('m')) ? q.get('m') : months[0] || 'all';
-  const rows = m === 'all' ? all : all.filter((g) => String(g.date).startsWith(m));
+  // Fund: one fund, or all of them in sections (General Fund first, then in the order of the bank accounts).
+  const fundList = (() => { const fl = fundsOf(f, lgu.id), extra = [...new Set(all.map((g) => g.fund).filter((x) => x && !fl.includes(x)))]; return [...fl, ...extra]; })();
+  const fd = fundList.includes(q.get('fd')) ? q.get('fd') : 'all';
+  const rows0 = m === 'all' ? all : all.filter((g) => String(g.date).startsWith(m));
+  const rows = fd === 'all' ? rows0 : rows0.filter((g) => g.fund === fd);
   const mLabel = (v) => (v === 'all' ? 'All months' : `${MONTHS[+v.slice(5, 7) - 1]} ${v.slice(0, 4)}`);
   const hitOf = (amt, d) => bankLines.filter((l) => Math.abs((+l.credit || 0) - amt) < 0.005 && l.date && Math.abs(Date.parse(l.date) - Date.parse(d)) <= 15 * 864e5).sort((a, b) => Math.abs(Date.parse(a.date) - Date.parse(d)) - Math.abs(Date.parse(b.date) - Date.parse(d)))[0] || false;
   // The bank credits typed on the collector's RCD: each looked for; none typed: one credit of the whole.
@@ -107,20 +113,31 @@ export async function rcdView(ctx) {
     : `<span class="pill p-flag">${g.diff > 0 ? 'Short' : 'Over'} ₱${money(Math.abs(g.diff))}</span>`}${g.offDate.length ? ` <span class="pill p-flag" title="${esc(`Hard copy: ${fmtDate(g.regDate)}\n` + g.offDate.map((p) => `${p.o.name}: ${fmtDate(p.date)}`).join('\n'))}">Date differs ⓘ</span>` : ''}`;
   const wholeCell = (g) => (enc ? `<input class="input mono r sd-rcdw" data-rcdno="${esc(g.no)}" inputmode="decimal" value="${g.whole === null ? '' : esc(money(g.whole))}" placeholder="0.00" aria-label="Whole total per hard copy of RCD No. ${esc(g.no)}">`
     : g.whole === null ? '<span class="dim">—</span>' : money(g.whole));
+  // All funds: one section per fund (heading, its RCDs, subtotal); one fund shown, or only one in the month: as a plain list.
+  const secs = (rowFn) => {
+    const fs = [...new Set(rows.map((g) => g.fund))], ord = [...fundList.filter((x) => fs.includes(x)), ...fs.filter((x) => !fundList.includes(x))];
+    if (fd !== 'all' || ord.length < 2) return rows.map(rowFn).join('');
+    const n = enc ? 7 : 6;
+    return ord.map((fu) => { const gs = rows.filter((g) => g.fund === fu), sum = r2(gs.reduce((t, g) => t + (g.sum || 0), 0)), wh = r2(gs.reduce((t, g) => t + (g.whole || 0), 0));
+      return `<tr class="rc-fundh"><td colspan="${n}"><b>${esc((fu || 'No fund').toUpperCase())}</b></td></tr>${gs.map(rowFn).join('')}
+        <tr class="rc-fundt"><td colspan="3">Subtotal, ${esc(fu || 'No fund')}</td><td class="r">${money(sum)}</td><td class="r">${money(wh)}</td><td colspan="${n - 5}"></td></tr>`; }).join('');
+  };
   const tip = 'Each part is the Collections of the RCD entered under that Liquidating Officer in Cash Examination › Collections & Deposits (it changes there). Typed here, from the hard copy: the RCD No., its date and the whole total (+ RCD or Import from Excel), once per RCD No.';
   const body = `<div class="panel sd-top" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end"><div class="field" style="min-width:240px"><label for="rc-lgu">Office</label><select class="input" id="rc-lgu">${offices.map((l) => `<option value="${esc(l.id)}" ${l.id === lgu.id ? 'selected' : ''}>${esc(agencyName(refs, l))}</option>`).join('')}</select></div>
+      <div class="field"><label for="rc-fd">Fund</label><select class="input" id="rc-fd"><option value="all" ${fd === 'all' ? 'selected' : ''}>All funds</option>${fundList.map((x) => `<option value="${esc(x)}" ${x === fd ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
       <div class="field"><label for="rc-m">Month</label><select class="input" id="rc-m">${[...months, 'all'].map((v) => `<option value="${esc(v)}" ${v === m ? 'selected' : ''}>${esc(mLabel(v))}</option>`).join('')}</select></div></div>
     <div class="panel" style="margin-top:14px;padding:16px 20px"><div class="cd-scdhead"><h3 class="cer-h3">RCD of ${esc(agencyName(refs, lgu))} · ${esc(mLabel(m))}</h3><span class="crumb-i" title="${esc(tip)}">ⓘ</span>
       ${enc ? '<div class="btn-row" style="margin-left:auto"><button class="btn primary" type="button" id="rc-add">+ RCD</button><button class="btn" type="button" id="rc-imp">Import from Excel</button><a href="#" class="cd-link" id="rc-tpl" style="align-self:center;margin-left:6px">Template</a></div>' : ''}</div>
     ${rows.length ? `<div class="af-tbl cd-tblbox"><table class="af-reg sd-rcd"><thead><tr><th scope="col">RCD No.</th><th scope="col">Date</th><th scope="col">Liquidating Officers (their parts)</th><th scope="col" class="r">Sum of the Parts (₱)</th><th scope="col" class="r">Whole Total per Hard Copy (₱)</th><th scope="col">Check</th>${enc ? '<th scope="col"></th>' : ''}</tr></thead>
-      <tbody>${rows.map((g) => `<tr><td><b>${esc(g.no)}</b></td><td>${esc(fmtDate(g.date))}</td><td>${g.type === 'bank' ? bankCell(g) : g.parts.length ? g.parts.map((p) => `<div>${esc(p.o.name)} <span class="dim">· ₱ ${money(p.amt)}${g.type === 'dep' ? ' deposited' : ''}${g.parts.filter((x) => x.o.id === p.o.id).length > 1 && p.fund ? ' · ' + esc(p.fund) : ''}</span></div>`).join('') : '<span class="dim">Not yet entered under an officer</span>'}</td>
-        <td class="r"><b>${g.sum === null ? '<span class="dim">—</span>' : money(g.sum)}</b></td><td class="r">${wholeCell(g)}</td><td>${check(g)}</td>${enc ? `<td><button class="btn sm" type="button" data-rcded="${esc(g.no)}">Edit</button></td>` : ''}</tr>`).join('')}</tbody></table></div>
+      <tbody>${secs((g) => `<tr><td><b>${esc(g.no)}</b></td><td>${esc(fmtDate(g.date))}</td><td>${g.type === 'bank' ? bankCell(g) : g.parts.length ? g.parts.map((p) => `<div>${esc(p.o.name)} <span class="dim">· ₱ ${money(p.amt)}${g.type === 'dep' ? ' deposited' : ''}${g.parts.filter((x) => x.o.id === p.o.id).length > 1 && p.fund ? ' · ' + esc(p.fund) : ''}</span></div>`).join('') : '<span class="dim">Not yet entered under an officer</span>'}</td>
+        <td class="r"><b>${g.sum === null ? '<span class="dim">—</span>' : money(g.sum)}</b></td><td class="r">${wholeCell(g)}</td><td>${check(g)}</td>${enc ? `<td><button class="btn sm" type="button" data-rcded="${esc(g.no)}">Edit</button></td>` : ''}</tr>`)}</tbody></table></div>
       <p class="dim" style="margin:8px 0 0;font-size:12.5px">Each part comes from the RCD entered under that officer. Type the whole total once per RCD; it is the same for every officer of that RCD.</p>`
     : `<div class="empty"><b>No RCD of ${esc(agencyName(refs, lgu))} ${m === 'all' ? '' : 'in ' + esc(mLabel(m)) + ' '}yet.</b>The RCDs entered under the Liquidating Officers in Cash Examination › Collections &amp; Deposits are listed here.</div>`}</div>`;
   const go = (params) => { const p = new URLSearchParams(location.hash.split('?')[1] || ''); Object.entries(params).forEach(([k, v]) => (v ? p.set(k, v) : p.delete(k))); location.hash = '#/src/rcd?' + p.toString(); };
   const wire = () => {
     $('#rc-lgu').onchange = (e) => go({ l: e.target.value, m: '' });
     $('#rc-m').onchange = (e) => go({ m: e.target.value });
+    $('#rc-fd').onchange = (e) => go({ fd: e.target.value === 'all' ? '' : e.target.value });
     $$('.sd-rcdw').forEach((inp) => {
       const was = inp.value;
       const save = async () => {
@@ -170,6 +187,7 @@ async function rcdModal(refs, f, lgu, all, g) {
   const v = await modal({ title: g ? `RCD No. ${g.no}` : '+ RCD · from the hard copy',
     body: `<div class="cd-g2"><div class="field"><label for="rq-no">RCD No.</label><input class="input mono" id="rq-no" autocomplete="off" value="${esc(g ? g.no : '')}" ${g && g.parts.length ? 'readonly title="Entered under the officers with this number"' : ''}></div>
       <div class="field"><label for="rq-date">Date</label><input class="input" type="date" id="rq-date" value="${esc(t.date || (g ? g.date : ''))}"></div>
+      <div class="field"><label for="rq-fund">Fund</label><select class="input" id="rq-fund">${[...new Set([...fundsOf(f, lgu.id), ...(t.fund || (g && g.fund) ? [t.fund || g.fund] : [])])].map((x) => `<option value="${esc(x)}" ${(t.fund || (g && g.fund) || '') === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
       <div class="field"><label for="rq-type">Type</label><select class="input" id="rq-type">${[['col', 'Collections'], ['dep', 'Deposits only'], ['bank', 'Bank transfer']].map(([k, l]) => `<option value="${k}" ${(t.type || 'col') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       <div class="field"><label for="rq-tot">Whole Total per Hard Copy (₱)</label><input class="input r" id="rq-tot" inputmode="decimal" value="${t.total !== undefined && t.total !== null && t.total !== '' ? esc(money(t.total)) : ''}" placeholder="0.00"></div></div>
       <p class="af-note">${g && g.parts.length ? 'The RCD No. is the one the officers entered; change it in their Collections &amp; Deposits.' : 'The officers\' parts join this line when they enter this RCD No. in Collections &amp; Deposits.'}</p>`,
@@ -179,7 +197,7 @@ async function rcdModal(refs, f, lgu, all, g) {
       if (!date) return bad('Enter the date of the RCD.');
       if (raw !== '' && (tot === null || isNaN(tot))) return bad('Type the whole total, e.g. 483,743.09.');
       if ((!g || rcdKey(no) !== g.key) && all.some((x) => x.key === rcdKey(no))) return bad(`RCD No. ${no} is already listed. Edit that line.`);
-      out = { no, date, total: tot, type: $('#rq-type', bg).value }; return true; } }] });
+      out = { no, date, total: tot, type: $('#rq-type', bg).value, fund: $('#rq-fund', bg).value }; return true; } }] });
   if (v === 'del') {
     if (!(await modal({ title: 'Delete this RCD?', body: `<p style="margin:0">Remove RCD No. ${esc(g.no)} typed here (its date and whole total)? The officers' RCDs stay in Collections &amp; Deposits.</p>`,
       buttons: [{ label: 'Cancel', value: false }, { label: 'Delete', cls: 'primary', value: true }] }))) return;
@@ -189,7 +207,7 @@ async function rcdModal(refs, f, lgu, all, g) {
   if (!out) return;
   if (g && g.reg && rcdKey(out.no) !== g.key) await store.save('cer_settings', totalId(lgu.id, g.no), t, by(refs), { deleted: true });
   { const keep = t.bankReps && out.type === 'bank' ? { bankReps: t.bankReps } : {};
-    await store.save('cer_settings', totalId(lgu.id, out.no), { no: out.no, date: out.date, total: out.total, ...(out.type && out.type !== 'col' ? { type: out.type } : {}), ...keep }, by(refs)); }
+    await store.save('cer_settings', totalId(lgu.id, out.no), { no: out.no, date: out.date, total: out.total, ...(out.type && out.type !== 'col' ? { type: out.type } : {}), ...(out.fund ? { fund: out.fund } : {}), ...keep }, by(refs)); }
   toast(`RCD No. ${out.no} saved.`, 'ok');
   location.hash = `#/src/rcd?l=${lgu.id}&m=${out.date.slice(0, 7)}`;
   window.dispatchEvent(new HashChangeEvent('hashchange'));

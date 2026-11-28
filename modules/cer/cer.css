@@ -1121,3 +1121,7 @@ body.rp-printing #cer-print .rp-brs tr.rp-scr{display:none}
 .fd-renrow{display:flex; gap:10px; flex-wrap:wrap; margin:8px 0 4px}
 .fd-renrow label{display:flex; flex-direction:column; gap:4px; min-width:220px}
 .list-edit .pill{margin-left:8px}
+
+/* RCD (LGU): one section per fund */
+.sd-rcd tr.rc-fundh td{background:#f3f4f6; letter-spacing:.3px; font-size:12.5px}
+.sd-rcd tr.rc-fundt td{font-weight:700; border-bottom:2px solid var(--line,#dfe5ef)}
