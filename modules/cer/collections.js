@@ -429,6 +429,34 @@ function loDays(f, o, chains, countDate) {
   return out.sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
+// A Liquidating Officer's line linked to the collector's RCD of the same No. but of another fund (numbers restart per fund;
+// linked before the fund was checked): linked again to the collector's RCD of the LO's fund (the one holding its OR, else
+// the one of that No.; none: not yet in a report), and its OR series taken out of the wrong RCD (when none of its ORs is in it).
+async function crossFundFix(f, refs, lguId) {
+  const offs = new Set(f.officers.filter((x) => x.lguId === lguId).map((x) => x.id));
+  const nk1 = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  let n = 0;
+  for (const r of f.reports.filter((x) => offs.has(x.officerId) && !x.pending && (x.remittances || []).length)) {
+    let ch = false;
+    const rems = (r.remittances || []).map((m) => {
+      const t = m.reportId && f.reports.find((x) => x.id === m.reportId);
+      if (!t || (t.fund || '') === (r.fund || '')) return m;
+      const mine = f.reports.filter((x) => !x.pending && x.officerId === m.collectorId && (x.fund || '') === (r.fund || '') && !x.deleted);
+      const a = +m.from, byOr = a > 0 && mine.find((x) => f.ors.some((y) => y.reportId === x.id && y.status !== 'cancelled' && !y.bnLine && +y.serial <= a && a <= maxSer(y)));
+      const byNo = !byOr && m.reportNo ? mine.filter((x) => nk1(x.no) === nk1(m.reportNo)) : [];
+      const to = byOr || (byNo.length === 1 ? byNo[0] : null);
+      // The series this line wrote into the wrong RCD: out of it, unless an OR of that RCD is in it.
+      if (a > 0 && Array.isArray(t.ranges)) { const z = +(m.to || m.from), i = t.ranges.findIndex(([p, q]) => +p === a && +q === z);
+        if (i >= 0 && !f.ors.some((y) => y.reportId === t.id && y.status !== 'cancelled' && +y.serial >= a && +y.serial <= z)) {
+          t.ranges = t.ranges.filter((_, k) => k !== i); if (Array.isArray(t.rangeForms)) t.rangeForms = t.rangeForms.filter((_, k) => k !== i); t.fixMe = true; } }
+      ch = true; n++; return { ...m, reportId: to ? to.id : '' };
+    });
+    if (ch) { r.remittances = rems; await store.save('cer_reports', r.id, { ...strip(r), remittances: rems }, by(refs), { quiet: true }); }
+  }
+  for (const t of f.reports.filter((x) => x.fixMe)) { delete t.fixMe; await store.save('cer_reports', t.id, { ...strip(t), ranges: t.ranges, rangeForms: t.rangeForms || [] }, by(refs), { quiet: true }); }
+  return n;
+}
+
 /* ---------- screen ---------- */
 export async function collectionsView(ctx) {
   const { refs, q } = ctx;
@@ -459,6 +487,7 @@ export async function collectionsView(ctx) {
   let fig = figuresOf(f, o, funds, audit.countDate, lgu, exam);
   // Records dated on or before a submitted report go into it (e.g. ORs encoded after the SCD was added).
   if (canEncode(refs) && misplaced(fig)) { await sweepChains(f, fig, refs); return collectionsView(ctx); }
+  if (canEncode(refs) && !isBrgy(lgu) && await crossFundFix(f, refs, audit.lguId)) return collectionsView(ctx);
   const isLO = (exam.functions || []).includes('liquidating');
   LO_REMS = isLO ? Object.values(fig.chains).flatMap((ch) => ch.figs).flatMap((g) => (g.rec?.remittances || []).map((m) => ({ id: g.id, rec: g.rec, kind: g.kind, m }))) : [];
   const allForms = [...new Set([...((exam.forms || []).length ? exam.forms : f.ors.filter((x) => x.officerId === o.id).map((x) => x.form)), ...(f.booklets.some((b) => b.officerId === o.id && b.form === 'cashbn') ? ['cashbn'] : [])].map((k) => fixBrgyForm(lgu, k)))];
@@ -1184,6 +1213,8 @@ function wireAll(c) {
       if (dup) { bad(`Already in ${f.officers.find((y) => y.id === m.collectorId)?.name || 'the collector'}'s ${dup.reportNo} (${fmtDate(dup.date)}, ₱${money(dup.amount)}). No need to type it: tick it in the list above.`); return false; }
     }
     for (const m of list) {
+      { const lt = m.reportId && f.reports.find((r) => r.id === m.reportId), cl0 = lt && refs.lgu[(f.officers.find((y) => y.id === m.collectorId) || {}).lguId];
+        if (lt && !(cl0 && isBrgy(cl0)) && (lt.fund || '') !== (curFund || '')) m.reportId = ''; }
       if (m.reportId || !m.reportNo) continue;
       const col = f.officers.find((y) => y.id === m.collectorId), cl = col && refs.lgu[col.lguId]; if (!col) continue;
       const n = +m.from, bk = n ? f.booklets.find((x) => x.officerId === col.id && !x.noSerial && x.from <= n && n <= x.to) : null;
