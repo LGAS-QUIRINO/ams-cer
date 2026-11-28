@@ -14,7 +14,7 @@
 //   cer_settings 'funds|<lguId>' { list }  the auditee's funds (General Fund, Special Education Fund, Trust Fund, plus any added)
 import { store, newId, emitChange } from '../../js/store.js';
 import { esc, modal, toast, $, $$ } from '../../js/ui.js';
-import { FORMS, fixBrgyForm, hasRole, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, personKey, samePerson } from './cer.js';
+import { FORMS, fixBrgyForm, hasRole, isAuditor, by, mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, personKey, samePerson } from './cer.js';
 import { loadForms, FORM_SHORT, exportXlsx, rangesText, mergeRanges, bookletUnused, countRanges, loadXlsx, excelDate, faceOf as faceOfBk } from './forms.js';
 
 // Each auditee's funds: General Fund to start; the others are added with the Funds button. A fund already used stays listed.
@@ -269,7 +269,7 @@ export function figuresOf(f, o, funds, countDate, lgu, exam = null) {
   // A collector's remittances recorded by a Liquidating Officer (from the LO's cashbook): the collector's remittances to the LO.
   const loLines = f.reports.filter((r) => r.officerId !== o.id).flatMap((r) => (r.remittances || []).filter((m) => m.collectorId === o.id && !m.fromCol && !m.beg && m.date)
     .map((m) => ({ date: m.date, ref: f.officers.find((x) => x.id === r.officerId)?.name || 'Liquidating Officer', amount: +m.amount || 0, toLO: true, fromLO: true, form: m.form || '', from: m.from || '', to: m.to || '', fund: r.fund || '',
-      reportId: m.reportId || '', reportNo: m.reportNo || '', loReportNo: r.pending ? '' : r.no || '', loReportId: r.pending ? '' : r.id })))
+      reportId: m.reportId || '', reportNo: m.reportNo || '', loReportNo: r.pending ? '' : r.no || '', loReportId: r.pending ? '' : r.id, loSrc: r.id })))
     // Typed by the collector too (same OR range, or date and amount): counted once, as the collector typed it.
     .filter((m) => !myDeps.some((d) => (d.from && m.from && String(d.from) === String(m.from)) || (d.date === m.date && sameAmt(d.amount, m.amount))));
   // The report type of a line typed by the LO: its report's; else the form of the booklet holding its OR From; else SCR for a
@@ -842,12 +842,13 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
   // Remittances recorded by the LO in her RCD: in the same table, one row per date (its total), locked; the details are in
   // Series of the RCD. Changed only in the LO's RCD (the tag opens it).
   const loGrp = []; (cur.rec?.deposits || []).filter((d) => d.fromLO).forEach((d) => { const k = `${d.date}|${d.ref}|${d.loReportId || ''}`; const g = loGrp.find((x) => x.k === k);
-    if (g) g.amount = r2(g.amount + (+d.amount || 0)); else loGrp.push({ k, date: d.date, ref: d.ref, amount: +d.amount || 0, loReportNo: d.loReportNo || '', loReportId: d.loReportId || '' }); });
+    const it = d.loSrc ? [[d.loSrc, d.date || '', r2(+d.amount || 0), d.from || '']] : [];
+    if (g) { g.amount = r2(g.amount + (+d.amount || 0)); g.dels.push(...it); } else loGrp.push({ k, date: d.date, ref: d.ref, amount: +d.amount || 0, loReportNo: d.loReportNo || '', loReportId: d.loReportId || '', dels: it }); });
   const loHref = (g) => { const rr = g.loReportId && f.reports.find((r) => r.id === g.loReportId); const ex = rr && (f.exams || []).filter((e) => e.officerId === rr.officerId).sort((a, b) => (a.auditId === audit.id ? -1 : b.auditId === audit.id ? 1 : 0))[0];
     return ex ? `#/cer/collections?a=${ex.auditId}&e=${ex.id}&r=${rr.id}` : ''; };
   const loRow = (g) => `<tr class="cd-dep cd-lolock"><td><input class="input" type="date" value="${esc(g.date || '')}" disabled aria-label="Date remitted"></td>
       <td><input class="input" value="${esc(g.ref || '')}" disabled aria-label="Liquidating Officer"></td>
-      ${remish ? '' : '<td></td>'}${cbook ? '<td></td><td></td>' : ''}${lgSer && perSer.length ? '<td></td>' : ''}<td><input class="input r" value="${esc(money(g.amount))}" disabled aria-label="Amount"></td>${lgSer && perSer.length ? '<td></td>' : ''}<td></td></tr>`;
+      ${remish ? '' : '<td></td>'}${cbook ? '<td></td><td></td>' : ''}${lgSer && perSer.length ? '<td></td>' : ''}<td><input class="input r" value="${esc(money(g.amount))}" disabled aria-label="Amount"></td>${lgSer && perSer.length ? '<td></td>' : ''}<td>${isAuditor(refs) && g.dels && g.dels.length ? `<button class="btn sm cd-lodel" type="button" data-lodx="${esc(JSON.stringify(g.dels))}" title="Remove this remittance from ${esc(g.ref || 'the LO')}'s records" aria-label="Remove this remittance">✕</button>` : ''}</td></tr>`;
   // Credited to bank: its collections shown as deposited on their dates (locked; they follow the ORs).
   const bankRows = () => (cur.rec?.deposits || []).filter((d) => d.bankAuto).map((d) => `<tr class="cd-dep cd-lolock"><td><input class="input" type="date" value="${esc(d.date || '')}" disabled aria-label="Date credited"></td>
       <td><input class="input" value="Credited to bank${d.no ? ' · ' + esc(d.no) : ''}" disabled aria-label="Credited to bank"></td>${remish ? '' : '<td></td>'}${cbook ? '<td></td><td></td>' : ''}${lgSer && perSer.length ? '<td></td>' : ''}<td><input class="input r" value="${esc(money(d.amount))}" disabled aria-label="Amount"></td>${lgSer && perSer.length ? '<td></td>' : ''}<td></td></tr>`).join('');
@@ -961,6 +962,27 @@ ${pick && enc ? `<td><button class="btn sm" type="button" data-editrep="${esc(g.
 /* ---------- wiring ---------- */
 function wireAll(c) {
   const { refs, f, audit, K, o, cur, curFund, selId, isLO, enc } = c;
+  // A remittance recorded by the Liquidating Officer (wrong line): removed from the LO's records, from here (auditor, admin).
+  // The collector's RCD made only from it (no OR, no other LO line) goes with it.
+  $$('.cd-lodel').forEach((b) => { b.onclick = async () => {
+    const dels = JSON.parse(b.dataset.lodx || '[]'), hits = [];
+    for (const [sid, date, amt, from] of dels) { const src = f.reports.find((r) => r.id === sid);
+      const i = src ? (src.remittances || []).findIndex((m, k) => m.collectorId === o.id && m.date === date && Math.abs((+m.amount || 0) - +amt) < 0.005 && String(m.from || '') === String(from) && !hits.some((h) => h.src === src && h.i === k)) : -1;
+      if (i >= 0) hits.push({ src, i, m: src.remittances[i] }); }
+    if (!hits.length) return toast('That line was not found in the LO\'s records. Reload and try again.', 'bad');
+    const lo = f.officers.find((x) => x.id === hits[0].src.officerId)?.name || 'the Liquidating Officer', src0 = hits[0].src;
+    const gone = (r, k) => hits.some((h) => h.src.id === r.id && h.i === k);
+    const shs = [...new Set(hits.map((h) => h.m.reportId).filter(Boolean))].map((id) => f.reports.find((r) => r.id === id && r.madeFrom)).filter((sh) => sh
+      && !f.ors.some((x) => x.reportId === sh.id) && !(sh.deposits || []).some((d) => !d.fromLO) && !f.reports.some((r) => (r.remittances || []).some((x, k) => x.reportId === sh.id && !gone(r, k))));
+    const tot = r2(hits.reduce((t, h) => t + (+h.m.amount || 0), 0)), sers = hits.filter((h) => h.m.from).map((h) => h.m.from + (h.m.to && h.m.to !== h.m.from ? '–' + h.m.to : ''));
+    const ok = await modal({ title: 'Remove this remittance?', body: `<p style="margin:0">${esc(fmtDate(hits[0].m.date))} · ₱${money(tot)}${sers.length ? ` · OR ${esc(sers.join(', '))}` : ''}, recorded by <b>${esc(lo)}</b>${src0.pending ? ' (not yet in a report)' : src0.no ? ` in RCD No. ${esc(src0.no)}` : ''}. It is taken out of ${esc(lo)}'s records.</p>
+      ${shs.map((sh) => `<p style="margin:8px 0 0">${esc(o.name)}'s ${esc(repName(sh, sh.kind || K))} was made only from this remittance (no OR encoded): it is removed too${sh.bankCredit?.on ? ', with the bank credits typed on it' : ''}.</p>`).join('')}`,
+      buttons: [{ label: 'Cancel', value: false }, { label: 'Remove', cls: 'primary', value: true }] });
+    if (!ok) return;
+    for (const src of [...new Set(hits.map((h) => h.src))]) { const rems = src.remittances.filter((_, k) => !gone(src, k)); await store.save('cer_reports', src.id, { ...strip(src), remittances: rems }, by(refs), { quiet: true }); }
+    for (const sh of shs) await store.save('cer_reports', sh.id, strip(sh), by(refs), { deleted: true, quiet: true });
+    toast('Remittance removed.', 'ok'); emitChange('local');
+  }; });
   $$('.cd-tab').forEach((t) => { t.onclick = () => {
     Object.keys(OPEN).forEach((k) => { OPEN[k] = k === t.dataset.tab; });
     $$('.cd-tab').forEach((x) => { const on = x === t; x.classList.toggle('on', on); x.setAttribute('aria-selected', String(on)); $('#cd-pane-' + x.dataset.tab).hidden = !on; });
