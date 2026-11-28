@@ -1125,3 +1125,5 @@ body.rp-printing #cer-print .rp-brs tr.rp-scr{display:none}
 /* RCD (LGU): one section per fund */
 .sd-rcd tr.rc-fundh td{background:#f3f4f6; letter-spacing:.3px; font-size:12.5px}
 .sd-rcd tr.rc-fundt td{font-weight:700; border-bottom:2px solid var(--line,#dfe5ef)}
+
+.cd-sortrow .cd-sortsep{width:10px}
