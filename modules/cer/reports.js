@@ -9,7 +9,7 @@ import { cnpHtml, fnpHtml } from './cnp.js';
 import { itemText } from './count.js';
 import { listT, liqOwners } from '../src/journal.js';
 import { store } from '../../js/store.js';
-import { covOf, inCov, withLines, isPart } from './banks.js';
+import { covOf, inCov, withLines, isPart, bankReconSets } from './banks.js';
 import { tagSameDay } from './collections.js';
 import { esc, toast, $, $$ } from '../../js/ui.js';
 import { mayView, cycleOk, loadCer, pickAudit, pickExam, remember, getPick, agencyName, fmtDate, money, num, autoPreparer, autoReviewer } from './cer.js';
@@ -23,7 +23,7 @@ const go = (params) => { const q = new URLSearchParams(location.hash.split('?')[
 const BILLS = [1000, 500, 200, 100, 50, 20];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const REPORTS = [['74a', 'GF 74-A · Report of Cash Examination'], ['saaf', 'Annex B · SAAF'], ['soac', 'Annex C · Statement of Accountability (Collections)'], ['soad', 'Annex D · Statement of Accountability (Cash Advances)'],
-  ['rsa', 'Annex E–G · Reconciliation Statements of Accountability'], ['a1a', 'Annex A.1a · Working paper: ORs, collections and deposits'],
+  ['rsa', 'Annex E–G · Reconciliation Statements of Accountability'], ['brs', 'Annex H · Bank Reconciliation Statement (Schedules H-1 to H-4)'], ['a1a', 'Annex A.1a · Working paper: ORs, collections and deposits'],
   ['a1b', 'Annex A.1b · Working paper: CTC, collections and remittances'], ['a2a', 'Annex A.2a · Working paper: cash advances and liquidations'], ['cnp', 'Working paper: Collections not remitted as of the last cash exam'], ['fnp', 'Working paper: Accountable forms not presented at the last cash exam']];
 const amt = (n) => (n === null || n === undefined ? '' : n < -0.004 ? `(${money(-n)})` : money(n));
 
@@ -84,10 +84,11 @@ export async function reportsView(ctx) {
   const prep = person(prepId), rev = person(revId);
   const sign = (label, p, extra = '') => `<div class="rp-sign"><span>${label}</span><b>${esc(p.name || ' ')}</b><small>${esc([p.pos, p.des].filter(Boolean).join(' · ') || extra)}</small></div>`;
   const ctx2 = { refs, f, audit, exam, o, A, agency, station, prep, rev, sign, ver, advs, liqs, annexNo: both ? 'ANNEX B.1' : 'ANNEX B', annexMv: both ? 'ANNEX B.2' : 'ANNEX B', hasMv, hasNo: sRows.some((r) => !isMvRow(r)) };
+  if (rep === 'brs') ctx2.brs = await bankReconSets(audit, refs);
   const isWp = WP[rep];
   const w = isWp ? wpLines(ctx2, rep, ver) : null;
   const doc = rep === '74a' ? gf74a(ctx2) : rep === 'saaf' ? saaf(ctx2) : rep === 'saafm' ? saafMv(ctx2) : rep === 'soac' ? soa(ctx2, 'col') : rep === 'soad' ? soa(ctx2, 'ca')
-    : rep === 'rsa' ? { html: rsaHtml(ctx2, ver) } : rep === 'cnp' ? cnpHtml(ctx2) : rep === 'fnp' ? fnpHtml(ctx2) : { html: wpHtml(ctx2, rep, ver, true) };
+    : rep === 'rsa' ? { html: rsaHtml(ctx2, ver) } : rep === 'brs' ? brsHtml(ctx2) : rep === 'cnp' ? cnpHtml(ctx2) : rep === 'fnp' ? fnpHtml(ctx2) : { html: wpHtml(ctx2, rep, ver, true) };
   const miss = [!prepId && 'the ATM in Prepared by', !revId && 'the ATL in Reviewed by'].filter(Boolean);
   const who = miss.length ? `<div class="cd-info">Choose ${miss.join(' and ')} in Audit Setup; the reports show blank names until then.</div>` : '';
   const note = who + (!A.count && rep === '74a' ? '<div class="cd-info">No cash count saved yet for this officer: part B is blank. Save it in Cash Count.</div>' : '');
@@ -116,6 +117,44 @@ export async function reportsView(ctx) {
     $('#rp-xw').onclick = (e) => run(e.currentTarget, () => downloadWp(ctx2, ver, bank));
     if (isWp) wireWp(ctx2, rep, ver, refs);
   } };
+}
+
+/* ---------- Annex H · Bank Reconciliation Statement, one set per bank account (H-1 to H-4: its schedules) ---------- */
+function brsHtml(c) {
+  const { audit, agency, station, prep, rev, sign } = c, sets = c.brs || [];
+  if (!sets.length) return { html: '<div class="rp-page"><p class="c">No bank account of this auditee yet. Add them in Bank Statements (Accounts).</p></div>' };
+  const asOf = fmtDate(audit.countDate), neg = (v) => (v ? `(${money(v)})` : '—');
+  const head = (x, title, annex) => `<div class="rp-top"><span></span><span class="r"><b>${annex}</b></span></div>
+    <p class="c">Republic of the Philippines<br><b>${esc(agency)}</b><br>${esc(station)}</p>
+    <h2 class="rp-title">${title}</h2><p class="c">${esc(x.acct.bank || 'Bank')}<br>Account No. ${esc(x.acct.accountNo || '—')} · ${esc(x.acct.fund || '')}<br>As of ${esc(asOf)}</p>`;
+  const signs = `<div class="rp-signs">${sign('Prepared by', prep)}${sign('Reviewed by', rev)}</div>`;
+  const sched = (x, n, title, cols, rows, total) => `<div class="rp-page">${head(x, `Schedule ${n} · ${title}`, `ANNEX H-${n}`)}
+    <table class="rp-t"><thead><tr>${cols.map(([l, r]) => `<th class="${r ? 'r' : ''}">${l}</th>`).join('')}</tr></thead>
+      <tbody>${rows.length ? rows.join('') : `<tr><td colspan="${cols.length}" class="c">None.</td></tr>`}
+      <tr class="tot"><td>Total</td>${cols.slice(1).map(([, r]) => `<td class="r">${r ? money(total) : ''}</td>`).join('')}</tr></tbody></table>${signs}</div>`;
+  const html = sets.map((x) => {
+    if (x.state !== 'ok') return `<div class="rp-page">${head(x, 'Bank Reconciliation Statement', 'ANNEX H')}<p class="c">${x.state === 'nostmt' ? `Bank statement not available.${x.note ? ' ' + esc(x.note) : ''}` : 'No bank statement entered yet (Bank Statements).'}</p></div>`;
+    const v = (n) => (n === null ? '—' : money(n));
+    const brs = `<div class="rp-page">${head(x, 'Bank Reconciliation Statement', 'ANNEX H')}
+      <table class="rp-brs">
+        <tr class="b"><td>Balance per bank statement, ${esc(asOf)}</td><td></td><td class="r">${v(x.ending)}</td></tr>
+        <tr><td class="i">Add: Deposits in transit (Schedule 1)</td><td class="r">${money(x.T.dit)}</td><td></td></tr>
+        <tr><td class="i">Less: Outstanding checks (Schedule 2)</td><td class="r">${neg(x.T.oc)}</td><td class="r">${amt(r2(x.T.dit - x.T.oc))}</td></tr>
+        <tr class="t"><td>Adjusted bank balance</td><td></td><td class="r">${v(x.adjBank)}</td></tr>
+        <tr class="sp"><td colspan="3"></td></tr>
+        <tr class="b"><td>Balance per books (cashbook), ${esc(asOf)}</td><td></td><td class="r">${v(x.book)}</td></tr>
+        <tr><td class="i">Add: Bank credits not yet in the books (Schedule 3)</td><td class="r">${money(x.T.cr)}</td><td></td></tr>
+        <tr><td class="i">Less: Bank debits not yet in the books (Schedule 4)</td><td class="r">${neg(x.T.db)}</td><td class="r">${amt(r2(x.T.cr - x.T.db))}</td></tr>
+        <tr class="t"><td>Adjusted book balance</td><td></td><td class="r">${v(x.adjBook)}</td></tr>
+        ${x.adjBank !== null && x.adjBook !== null ? `<tr class="rp-scr"><td>Difference <small>(shown on screen only)</small></td><td></td><td class="r">${Math.abs(x.adjBank - x.adjBook) < 0.005 ? '<span class="pill p-done">0.00 · agree</span>' : `<span class="pill p-flag">${amt(r2(x.adjBank - x.adjBook))}</span>`}</td></tr>` : ''}
+      </table>${signs}</div>`;
+    return brs
+      + sched(x, 1, 'Deposits in Transit', [['Date deposited'], ['RCD / Deposit slip'], ['Amount (₱)', 1], ['Shown in the bank']], x.dit.map((d) => `<tr><td>${esc(fmtDate(d.date))}</td><td>${esc(d.ref)}</td><td class="r">${money(d.amount)}</td><td>${esc(fmtDate(d.shown) || '')}</td></tr>`), x.T.dit)
+      + sched(x, 2, 'Outstanding Checks', [['Date issued'], ['Check No.'], ['Payee'], ['Amount (₱)', 1]], x.oc.map((d) => `<tr><td>${esc(fmtDate(d.date))}</td><td class="mono">${esc(d.no)}</td><td>${esc(d.payee)}</td><td class="r">${money(d.amount)}</td></tr>`), x.T.oc)
+      + sched(x, 3, 'Bank Credits not yet in the Books', [['Date credited'], ['Particulars'], ['Amount (₱)', 1]], x.cr.map((d) => `<tr><td>${esc(fmtDate(d.date))}</td><td>${esc(d.part)}</td><td class="r">${money(d.amount)}</td></tr>`), x.T.cr)
+      + sched(x, 4, 'Bank Debits not yet in the Books', [['Date debited'], ['Particulars'], ['Amount (₱)', 1]], x.db.map((d) => `<tr><td>${esc(fmtDate(d.date))}</td><td>${esc(d.part)}</td><td class="r">${money(d.amount)}</td></tr>`), x.T.db);
+  }).join('');
+  return { html, portrait: true };
 }
 
 /* ---------- GF 74-A ---------- */

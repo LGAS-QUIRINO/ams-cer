@@ -1104,3 +1104,14 @@ body.rp-printing #cer-print .rp-scrollx{overflow:visible}
 /* Annex C by fund: fund heading and fund balance lines */
 .rp-t tr.rp-fundh td{background:#f3f4f6; letter-spacing:.3px}
 .rp-t tr.rp-fundt td{font-weight:700}
+
+/* Annex H · Bank Reconciliation Statement */
+.rp-brs{width:100%; border-collapse:collapse; margin-top:14px; font-size:13px}
+.rp-brs td{padding:5px 8px}
+.rp-brs td:nth-child(2),.rp-brs td:nth-child(3){width:150px}
+.rp-brs .i{padding-left:28px}
+.rp-brs tr.b td{font-weight:600}
+.rp-brs tr.t td{font-weight:700; border-top:1px solid #444}
+.rp-brs tr.sp td{height:8px}
+.rp-brs tr.rp-scr td{padding-top:14px}
+body.rp-printing #cer-print .rp-brs tr.rp-scr{display:none}

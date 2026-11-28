@@ -686,6 +686,62 @@ export async function accountsModal(refs, lguId, accounts, funds, enc) {
 }
 
 /* ---------- for Verification: the bank accounts of the auditee, as findings ---------- */
+// Annex H · Bank Reconciliation, as of the cash count, one set per bank account of the auditee: the same figures as Bank
+// Statements (tab 3), with the lists behind them: deposits in transit, outstanding checks, bank credits and debits not in the books.
+// [{ acct, name, state: 'ok' | 'none' | 'nostmt', ending, book, dit[], oc[], cr[], db[], T: { dit, oc, cr, db }, adjBank, adjBook }]
+export async function bankReconSets(audit, refs) {
+  const [settings0, reports0, advs0, recs0, exams0, books0, cut0, jr0, liq0, audits0] = await Promise.all(['cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj', 'cer_liquid', 'cer_audits'].map(listT));
+  const accounts = (settings0.map(flat).find((x) => x.id === 'banks|' + audit.lguId) || {}).list || [];
+  const examIds = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id).map((e) => e.id));
+  const cuts = lastChecksOf({ cutoffs: cut0.map(flat), booklets: books0.map(flat) }, examIds);
+  const asOf = audit.countDate, out = [];
+  const sum = (a, g) => r2(a.reduce((n, x) => n + (+g(x) || 0), 0));
+  for (const acct of accounts) {
+    const recsAll = recs0.map(flat), rec0 = recsAll.find((r) => r.id === `${audit.id}|${acct.id}`);
+    const rec = rec0 ? inCov(withLines(rec0, recsAll), covOf(audit, exams0.map(flat))) : rec0;
+    const base = { acct, name: acctLabel(acct) };
+    if (!rec) { out.push({ ...base, state: 'none' }); continue; }
+    if (rec.noStmt) { out.push({ ...base, state: 'nostmt', note: rec.noStmtNote || '' }); continue; }
+    const items = [];
+    const toLOs = new Set(exams0.map(flat).filter((e) => e.auditId === audit.id && e.remitToLO).map((e) => e.officerId));
+    reports0.map(flat).filter((r) => r.lguId === audit.lguId && r.fund === acct.fund && r.kind !== 'SCR' && !toLOs.has(r.officerId)).forEach((r) => depItems(r).filter(({ d }) => !d.toLO).forEach(({ d, key, old }) => items.push({ key, old, kind: 'dep', date: d.date, ref: [r.no ? `RCD No. ${r.no}` : '', d.no ? `DS No. ${d.no}` : d.ref || ''].filter(Boolean).join(' · '), amount: +d.amount || 0 })));
+    advs0.map(flat).filter((a) => a.lguId === audit.lguId && !a.beg && (() => { const ac = caAcct(a, { booklets: books0.map(flat), accounts, jr: jr0.map(flat) }); return ac ? ac.id === acct.id : acct.id === accounts[0]?.id; })()).forEach((a) => items.push({ key: `chk|${a.id}`, kind: 'chk', date: a.date, ref: a.checkNo, payee: a.payee || a.officerName || '', amount: +a.amount || 0 }));
+    const jrChecks = bankChecksOf(jr0.map(flat), acct.id), jrNos = new Set(jrChecks.map((c) => chkNo(c.checkNo)));
+    jrChecks.forEach((c) => items.push({ key: `jr|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, payee: c.payee || '', amount: checkAmountOf(c) }));
+    depRefunds(liq0.map(flat), audit.lguId, acct, accounts).forEach((l) => items.push({ key: `rf|${l.id}`, kind: 'dep', label: 'Refund', date: l.date, ref: `Refund${l.ref ? ' · ' + l.ref : ''}`, amount: +l.amount || 0 }));
+    (rec.otherChecks || []).filter((c) => !jrNos.has(chkNo(c.checkNo))).forEach((c) => items.push({ key: `oth|${c.id}`, kind: 'chk', date: c.date, ref: c.checkNo, payee: c.payee || '', amount: +c.amount || 0 }));
+    items.push(...cashbookItems(settings0.map(flat), examIds, acct.id));
+    (remOf(Object.fromEntries(settings0.map((x) => [x.id, x.data])), audit.lguId).list || []).filter((r) => remAcctId(r, accounts) === acct.id).forEach((r) => items.push({ key: `tx|${r.id}`, kind: 'chk', cb: true, win: 3, date: r.date, ref: remText(r), amount: +r.amount || 0 }));
+    { const cbCr = items.filter((x) => x.cb && x.kind === 'dep');
+      transfersInto(jr0.map(flat), acct, audit.lguId).filter((c) => !cbCr.some((x) => typedTransfer(c, { date: x.date, amount: x.amount, text: x.ref })))
+        .forEach((c) => items.push({ key: `tr|${c.id}`, kind: 'dep', date: c.date, ref: `Check No. ${c.checkNo}`, amount: checkAmountOf(c) })); }
+    const tidy = tidyFound(rec, items); const found = tidy.found; rec.found = tidy.found; rec.lineOf = tidy.lineOf;
+    const prevB = prevBankOf(audit, audits0.map(flat), recsAll, acct);
+    const cv = covOf(audit, exams0.map(flat));
+    const list = items.filter((x) => x.date && x.date <= asOf && keepPrev(x, cv.from, prevB));
+    const after = (x) => { const n = +chqKey(x.ref); return x.kind === 'chk' && !x.cb && !!n && cuts.some((c) => n >= c.from && n <= c.to && n > c.last); };
+    const dits = list.filter((x) => x.kind === 'dep' && !found[x.key]), ocs = list.filter((x) => x.kind === 'chk' && !found[x.key] && !after(x) && !preCheck(x, cv.from, rec));
+    const linked = new Set(Object.entries(rec.lineOf || {}).filter(([k]) => found[k]).map(([, i]) => i));
+    const cand = (rec.lines || []).filter((l) => !(rec.lineOf ? linked.has(l.i) : l.matched) && !l.added && l.date <= asOf);
+    const begS = begLinesOf(rec, cand, jr0.map(flat), acct, books0.map(flat), cv);
+    const un = cand.filter((l) => !begS.has(l.i));
+    const bi = (rec.bankItems || []).filter((b) => !b.date || b.date <= asOf);
+    // A deposit in transit seen in the statement after the count: the date it was shown.
+    const later = (rec.lines || []).filter((l) => l.date > asOf && +l.credit > 0), usedL = new Set();
+    const shown = (x) => { const l = later.find((y) => !usedL.has(y.i) && Math.abs(+y.credit - x.amount) < 0.005); if (!l) return ''; usedL.add(l.i); return l.date; };
+    const dit = dits.sort((a, b) => String(a.date).localeCompare(String(b.date))).map((x) => ({ date: x.date, ref: x.ref || x.label || 'Deposit', amount: r2(x.amount), shown: shown(x) }));
+    const oc = ocs.sort((a, b) => String(a.date).localeCompare(String(b.date))).map((x) => ({ date: x.date, no: x.ref || '', payee: x.payee || x.label || '', amount: r2(x.amount) }));
+    const lineTxt = (l) => [l.desc, l.chq ? `Check No. ${l.chq}` : ''].filter(Boolean).join(' · ') || (l.credit ? 'Bank credit' : 'Bank debit');
+    const cr = [...un.filter((l) => +l.credit > 0).map((l) => ({ date: l.date, part: lineTxt(l), amount: r2(+l.credit) })), ...bi.filter((b) => b.type === 'credit').map((b) => ({ date: b.date || '', part: b.particulars || 'Bank credit', amount: r2(+b.amount || 0) }))].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const db = [...un.filter((l) => +l.debit > 0).map((l) => ({ date: l.date, part: lineTxt(l), amount: r2(+l.debit) })), ...bi.filter((b) => b.type === 'debit').map((b) => ({ date: b.date || '', part: b.particulars || 'Bank debit', amount: r2(+b.amount || 0) }))].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    if (rec.book === null || rec.book === undefined || rec.book === '') { const e = await (await import('./cashbook.js')).cashbookEnding(refs, audit, acct).catch(() => null); if (e !== null && e !== undefined) rec.book = e; }
+    const has = (v) => v !== null && v !== undefined && v !== '';
+    const T = { dit: sum(dit, (x) => x.amount), oc: sum(oc, (x) => x.amount), cr: sum(cr, (x) => x.amount), db: sum(db, (x) => x.amount) };
+    const ending = has(rec.ending) ? r2(+rec.ending) : null, book = has(rec.book) ? r2(+rec.book) : null;
+    out.push({ ...base, state: 'ok', ending, book, dit, oc, cr, db, T, adjBank: ending === null ? null : r2(ending + T.dit - T.oc), adjBook: book === null ? null : r2(book + T.cr - T.db) });
+  }
+  return out;
+}
 export async function bankFindings(audit, refs) {
   const [settings0, reports0, advs0, recs0, exams0, books0, cut0, jr0, liq0, audits0] = await Promise.all(['cer_settings', 'cer_reports', 'cer_cashadv', 'cer_bankrec', 'cer_exams', 'cer_booklets', 'cer_cutoff', 'src_ckdj', 'cer_liquid', 'cer_audits'].map(listT));
   const accounts = (settings0.map(flat).find((x) => x.id === 'banks|' + audit.lguId) || {}).list || [];

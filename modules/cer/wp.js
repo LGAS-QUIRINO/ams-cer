@@ -12,6 +12,7 @@ import { kindOfForm, depRefText, partOk, ctcBegShare, ctcAlloc, depPart, repName
 import { accountsOf, caFund, begByFund, restFund, fundOrder } from './funds.js';
 import { saafRows, unusedFormsOf, notPresentedOf, countRanges, FORM_SHORT, faceOf } from './forms.js';
 import { fundSplit } from './verify.js';
+import { bankReconSets } from './banks.js';
 
 const r2 = (n) => Math.round(n * 100) / 100;
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -340,6 +341,53 @@ function saafMvSheet(wb, after, groups, c) {
   ws.pageSetup = { paperSize: 14, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 }, printArea: `A1:AC${r + 1}`, printTitlesRow: '9:10' };
   return ws;
 }
+function brsSheets(wb, x, c, sfx) {
+  const { audit, agency, station, prep, rev } = c;
+  const F = { name: 'Times New Roman', size: 11 }, thin = { style: 'thin' }, box = { top: thin, left: thin, bottom: thin, right: thin }, NUM = '#,##0.00;(#,##0.00);"-"';
+  const asOf = fmtDate(audit.countDate);
+  const top = (ws, title, annex, n) => {
+    const L = String.fromCharCode(64 + n);
+    ws.getCell(1, n).value = annex; ws.getCell(1, n).font = { ...F, bold: true }; ws.getCell(1, n).alignment = { horizontal: 'right' };
+    [['Republic of the Philippines'], [agency, true], [station], [''], [title, true], [x.acct.bank || 'Bank'], [`Account No. ${x.acct.accountNo || '—'} · ${x.acct.fund || ''}`], [`As of ${asOf}`]].forEach(([t, b], i) => {
+      ws.mergeCells(`A${2 + i}:${L}${2 + i}`); const cl = ws.getCell(`A${2 + i}`); cl.value = clean(t); cl.font = { ...F, bold: !!b }; cl.alignment = { horizontal: 'center' }; });
+  };
+  const signs = (ws, r, n) => {
+    const put = (rr, cc, v, b) => { const cl = ws.getCell(rr, cc); cl.value = clean(v); cl.font = { ...F, bold: !!b }; };
+    put(r, 1, 'Prepared by:'); put(r, n - 1, 'Reviewed by:');
+    put(r + 3, 1, prep.name, true); put(r + 3, n - 1, rev.name, true); put(r + 4, 1, [prep.pos, prep.des].filter(Boolean).join(' · ')); put(r + 4, n - 1, [rev.pos, rev.des].filter(Boolean).join(' · '));
+  };
+  const setup = (ws) => { ws.pageSetup = { paperSize: 14, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0, horizontalCentered: true, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } }; };
+  // The statement
+  const ws = wb.addWorksheet(`H${sfx}`.slice(0, 31)); setup(ws);
+  [58, 18, 18].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  top(ws, 'BANK RECONCILIATION STATEMENT', 'ANNEX H', 3);
+  const line = (r, label, b, cc, bold, rule) => { const a = ws.getCell(r, 1); a.value = label; a.font = { ...F, bold: !!bold };
+    [[2, b], [3, cc]].forEach(([k, v]) => { if (v === null || v === undefined) return; const cl = ws.getCell(r, k); cl.value = v; cl.numFmt = NUM; cl.font = { ...F, bold: !!bold }; });
+    if (rule) ws.getCell(r, 3).border = { top: thin }; };
+  line(11, `Balance per bank statement, ${asOf}`, null, x.ending, true);
+  line(12, '     Add: Deposits in transit (Schedule 1)', x.T.dit, null);
+  line(13, '     Less: Outstanding checks (Schedule 2)', -x.T.oc, r2(x.T.dit - x.T.oc));
+  line(14, 'Adjusted bank balance', null, x.adjBank, true, true);
+  line(16, `Balance per books (cashbook), ${asOf}`, null, x.book, true);
+  line(17, '     Add: Bank credits not yet in the books (Schedule 3)', x.T.cr, null);
+  line(18, '     Less: Bank debits not yet in the books (Schedule 4)', -x.T.db, r2(x.T.cr - x.T.db));
+  line(19, 'Adjusted book balance', null, x.adjBook, true, true);
+  signs(ws, 23, 3);
+  // The schedules
+  const sched = (n, title, cols, widths, rows, total) => {
+    const w = wb.addWorksheet(`H-${n}${sfx}`.slice(0, 31)); setup(w); widths.forEach((v, i) => { w.getColumn(i + 1).width = v; });
+    top(w, `SCHEDULE ${n} · ${title}`, `ANNEX H-${n}`, cols.length);
+    cols.forEach(([h], j) => { const cl = w.getCell(11, j + 1); cl.value = h; cl.font = { ...F, bold: true }; cl.border = box; cl.alignment = { horizontal: 'center', wrapText: true }; cl.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F0F0' } }; });
+    rows.forEach((row, i) => row.forEach((v, j) => { const cl = w.getCell(12 + i, j + 1); cl.value = clean(v); cl.font = F; cl.border = box; if (cols[j][1]) cl.numFmt = NUM; }));
+    const tr = 12 + rows.length;
+    cols.forEach(([, isAmt], j) => { const cl = w.getCell(tr, j + 1); cl.border = box; cl.font = { ...F, bold: true }; if (j === 0) cl.value = rows.length ? 'Total' : 'None'; if (isAmt) { cl.value = total; cl.numFmt = NUM; } });
+    signs(w, tr + 4, cols.length);
+  };
+  sched(1, 'DEPOSITS IN TRANSIT', [['Date deposited'], ['RCD / Deposit slip'], ['Amount (₱)', 1], ['Shown in the bank']], [16, 44, 18, 18], x.dit.map((d) => [fmtDate(d.date), d.ref, d.amount, fmtDate(d.shown) || '']), x.T.dit);
+  sched(2, 'OUTSTANDING CHECKS', [['Date issued'], ['Check No.'], ['Payee'], ['Amount (₱)', 1]], [16, 14, 36, 18], x.oc.map((d) => [fmtDate(d.date), d.no, d.payee, d.amount]), x.T.oc);
+  sched(3, 'BANK CREDITS NOT YET IN THE BOOKS', [['Date credited'], ['Particulars'], ['Amount (₱)', 1]], [16, 58, 18], x.cr.map((d) => [fmtDate(d.date), d.part, d.amount]), x.T.cr);
+  sched(4, 'BANK DEBITS NOT YET IN THE BOOKS', [['Date debited'], ['Particulars'], ['Amount (₱)', 1]], [16, 58, 18], x.db.map((d) => [fmtDate(d.date), d.part, d.amount]), x.T.db);
+}
 const hideRows = (ws, from, to) => { for (let r = from; r <= to; r++) ws.getRow(r).hidden = true; };
 async function save(wb, file) {
   // Excel refuses a file whose first tab (from the original workbook) is past the last sheet, or whose filters point to a removed sheet.
@@ -586,6 +634,10 @@ export async function downloadReport(c, ver) {
     else { set(w2, 'F24', 0); set(w2, 'F25', x.cbDr); set(w2, 'F26', x.cbCr); set(w2, 'F27', x.adjCb); }
     set(w2, `A${sig}`, prep.name); set(w2, `A${sig + 1}`, prep.pos); set(w2, `A${sig + 2}`, prep.des); set(w2, `E${sig}`, rev.name); set(w2, `E${sig + 1}`, rev.pos); set(w2, `E${sig + 2}`, rev.des);
   });
+  // Annex H: the bank reconciliation of each bank account, with its schedules (no Difference line: the form ends with the two
+  // adjusted balances).
+  { const sets = (c.brs || await bankReconSets(c.audit, c.refs).catch(() => [])).filter((x) => x.state === 'ok');
+    sets.forEach((x, i) => brsSheets(wb, x, c, sets.length > 1 ? ` ${i + 1}` : '')); }
   await save(wb, `CER - ${fileBase(c)}.xlsx`);
 }
 
